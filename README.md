@@ -599,3 +599,7 @@ Matthew Stanley.
 
 Bundled third-party code (Dear ImGui, stb, tinyfiledialogs) retains its own
 licenses under `src/third_party/`.
+
+## Development history
+
+Older source and separate candidates are preserved as fixed tags. See [the archive and recovery instructions](docs/BRANCH_ARCHIVE.md).
