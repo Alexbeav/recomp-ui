@@ -20,7 +20,8 @@ static void require(int condition, const char *message)
 
 static int file_contains(const char *path, const char *needle)
 {
-    FILE *file = fopen(path, "rb");
+    /* The writer uses text mode, including CRLF translation on Windows. */
+    FILE *file = fopen(path, "r");
     char text[8192];
     size_t size;
     if (!file) return 0;

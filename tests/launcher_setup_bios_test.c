@@ -83,9 +83,12 @@ static LauncherModel* make_model(const char* dir, char* disc_out, size_t cap) {
 static void test_staged_in_wizard(const char* dir) {
     char disc[512];
     char bios[512];
+    char expected[512];
     LauncherModel* m = make_model(dir, disc, sizeof(disc));
     if (!m) { fprintf(stderr, "FAIL: out of memory\n"); ++fails; return; }
     snprintf(bios, sizeof(bios), "%s/setupbios_retail.bin", dir);
+    /* Staging stores the canonical path, which differs on Windows. */
+    lm_normalize_bios_path(bios, expected, sizeof(expected));
 
     launcher_model_request_bios_path(m, bios);
 
@@ -93,7 +96,7 @@ static void test_staged_in_wizard(const char* dir) {
            "no nested Switch BIOS? modal while the wizard is open");
     expect(m->setup_wizard_open && !m->setup_wizard_suspended_for_bios,
            "the wizard stays up, so the disc rows stay reachable");
-    expect(m->bios_switch_uncommitted && !strcmp(m->s.bios_path, bios),
+    expect(m->bios_switch_uncommitted && !strcmp(m->s.bios_path, expected),
            "the pick is staged on the model, not discarded");
     expect(launcher_model_setup_needs_bios_regen(m),
            "the wizard's primary button becomes Generate & rebuild");
@@ -121,14 +124,16 @@ static void test_staged_in_wizard(const char* dir) {
 static void test_second_pick_keeps_revert_target(const char* dir) {
     char disc[512];
     char a[512], b[512];
+    char expected[512];
     LauncherModel* m = make_model(dir, disc, sizeof(disc));
     if (!m) { fprintf(stderr, "FAIL: out of memory\n"); ++fails; return; }
     snprintf(a, sizeof(a), "%s/setupbios_a.bin", dir);
     snprintf(b, sizeof(b), "%s/setupbios_b.bin", dir);
+    lm_normalize_bios_path(b, expected, sizeof(expected));
 
     launcher_model_request_bios_path(m, a);
     launcher_model_request_bios_path(m, b);
-    expect(!strcmp(m->s.bios_path, b), "second pick replaces the first");
+    expect(!strcmp(m->s.bios_path, expected), "second pick replaces the first");
     expect(m->bios_revert_path[0] == '\0',
            "revert target is still OpenBIOS, not the first unlinked pick");
 
