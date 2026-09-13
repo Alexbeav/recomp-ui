@@ -46,11 +46,18 @@ void launcher_debug_init(void) {
 
 bool launcher_capture_png(const char* path, int w, int h) {
     if (w <= 0 || h <= 0) return false;
-    unsigned char* px = (unsigned char*)malloc((size_t)w * h * 3);
+    unsigned char* px = (unsigned char*)malloc((size_t)w * h * 4);
     if (!px) return false;
 
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, px);
+    // RGBA/UNSIGNED_BYTE is portable to GLES default framebuffers; RGB reads
+    // can fail with GL_INVALID_OPERATION on ANGLE. Keep the saved PNG RGB.
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    for (size_t i = 0; i < (size_t)w * h; ++i) {
+        px[i * 3] = px[i * 4];
+        px[i * 3 + 1] = px[i * 4 + 1];
+        px[i * 3 + 2] = px[i * 4 + 2];
+    }
 
     // GL origin is bottom-left; PNG wants top-down. Flip rows in place.
     const size_t stride = (size_t)w * 3;
