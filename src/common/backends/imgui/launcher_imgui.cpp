@@ -4464,20 +4464,28 @@ void draw_assist_binding_editor(LauncherModel* m, const LauncherTheme& th,
             ImGui::TableSetColumnIndex(1);
             bool capture_key = m->capturing && m->capture_assist &&
                                !m->capture_pad && m->capture_btn == action;
+            /* The two cells of a row are both Buttons whose ID is their
+             * label, and a row with nothing bound in either column showed
+             * "(unbound)" twice -- the same ID, and Dear ImGui's conflict
+             * warning over the Fast-forward toggle row. Scope each column. */
+            ImGui::PushID("key");
             if (ImGui::Button(
                     capture_key ? "[ press a key... ]" :
                         settings_key_label(m->s.assist_key_bind[action]),
                     ImVec2(px(170), 0)))
                 launcher_model_begin_assist_capture(m, action, false);
+            ImGui::PopID();
             ImGui::TableSetColumnIndex(2);
             bool capture_pad = m->capturing && m->capture_assist &&
                                m->capture_pad && m->capture_btn == action;
             char pad[48];
             settings_pad_label(m->s.assist_pad_bind[action], pad, sizeof pad);
+            ImGui::PushID("pad");
             if (ImGui::Button(
                     capture_pad ? "[ press a button... ]" : pad,
                     ImVec2(px(170), 0)))
                 launcher_model_begin_assist_capture(m, action, true);
+            ImGui::PopID();
             ImGui::PopID();
         }
         ImGui::EndTable();
@@ -4487,7 +4495,7 @@ void draw_assist_binding_editor(LauncherModel* m, const LauncherTheme& th,
                                         : "Reset Host Shortcuts"))
         launcher_model_reset_assist_bindings(m);
     if (m->capturing && m->capture_assist)
-        ImGui::TextColored(col(th.warn), "Listening... (Esc cancels)");
+        ImGui::TextColored(col(th.warn), "Listening... (Esc cancels, Backspace unbinds)");
 }
 
 void draw_controller_assist_shortcuts(LauncherModel* m,
@@ -4519,25 +4527,30 @@ void draw_controller_assist_shortcuts(LauncherModel* m,
             ImGui::TableSetColumnIndex(1);
             bool capture_key = m->capturing && m->capture_assist &&
                                !m->capture_pad && m->capture_btn == action;
+            /* Per-column IDs: see draw_assist_binding_editor. */
+            ImGui::PushID("key");
             if (ImGui::Button(
                     capture_key ? "[ key... ]" :
                         settings_key_label(m->s.assist_key_bind[action]),
                     ImVec2(-FLT_MIN, 0)))
                 launcher_model_begin_assist_capture(m, action, false);
+            ImGui::PopID();
             ImGui::TableSetColumnIndex(2);
             bool capture_pad = m->capturing && m->capture_assist &&
                                m->capture_pad && m->capture_btn == action;
             char pad[48];
             settings_pad_label(m->s.assist_pad_bind[action], pad, sizeof pad);
+            ImGui::PushID("pad");
             if (ImGui::Button(capture_pad ? "[ button... ]" : pad,
                               ImVec2(-FLT_MIN, 0)))
                 launcher_model_begin_assist_capture(m, action, true);
+            ImGui::PopID();
             ImGui::PopID();
         }
         ImGui::EndTable();
     }
     if (m->capturing && m->capture_assist)
-        ImGui::TextColored(col(th.warn), "Listening... (Esc cancels)");
+        ImGui::TextColored(col(th.warn), "Listening... (Esc cancels, Backspace unbinds)");
 }
 
 void draw_assist_tools(LauncherModel* m, const LauncherTheme& th) {
@@ -4628,6 +4641,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
     const SystemProfile* cfg_prof = (const SystemProfile*)m->profile;
     const bool cfg_psx = cfg_prof && cfg_prof->id && !strcmp(cfg_prof->id, "psx");
     const bool cfg_snes = cfg_prof && cfg_prof->id && !strcmp(cfg_prof->id, "snes");
+    const bool cfg_n64 = cfg_prof && cfg_prof->id && !strcmp(cfg_prof->id, "n64");
     if (cfg_psx && m->s.player_src[p] == 2 &&
         m->s.player_gamepad_guid[p][0] && !m->player_pad_name[p][0])
         launcher_binds_hydrate_psx_pad_names(m);
@@ -4706,6 +4720,80 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                     launcher_binds_rename_snes_gamepad(m, p + 1,
                                                        s_snes_rename_buf);
                     s_snes_rename_open = false;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndDisabled();
+                ImGui::EndPopup();
+            }
+        }
+
+        /* N64: the same three actions, on the per-GUID input.ini store that
+         * n64lle's host reads. Every capture already writes the mapping;
+         * Save commits the name and deadzone beside it, Rename pins a name
+         * the driver's reconnect must not overwrite, Delete forgets the
+         * section and releases the slots that pointed at it. */
+        if (cfg_n64) {
+            static bool s_n64_rename_open = false;
+            static char s_n64_rename_buf[64] = {};
+            static double s_n64_saved_until = 0.0;
+            const bool can_pad = m->s.player_src[p] == 2 &&
+                                 m->s.player_gamepad_guid[p][0];
+
+            ImGui::SameLine();
+            if (!can_pad) ImGui::BeginDisabled();
+            if (ImGui::Button(ui_text("Save Profile"))) {
+                launcher_binds_save_n64_gamepad(m, p + 1);
+                s_n64_saved_until = ImGui::GetTime() + 2.5;
+            }
+            if (ImGui::IsItemHovered() && can_pad)
+                ImGui::SetTooltip("Store this controller's mapping, name and "
+                                  "deadzone so it comes back next time it is "
+                                  "selected");
+            ImGui::SameLine();
+            if (ImGui::Button(ui_text("Rename Gamepad"))) {
+                std::snprintf(s_n64_rename_buf, sizeof(s_n64_rename_buf),
+                              "%s", m->player_pad_name[p]);
+                s_n64_rename_open = true;
+            }
+            {
+                const float del_w = px(130.0f);
+                const float right = ImGui::GetWindowContentRegionMax().x;
+                if (right - del_w > ImGui::GetCursorPosX())
+                    ImGui::SameLine(right - del_w);
+                else
+                    ImGui::SameLine();
+                if (ImGui::Button(ui_text("Delete Gamepad"), ImVec2(del_w, 0)))
+                    launcher_binds_delete_n64_gamepad(m, p + 1);
+                if (ImGui::IsItemHovered() && can_pad)
+                    ImGui::SetTooltip("Forget this controller's saved mapping, "
+                                      "name and deadzone.");
+            }
+            if (!can_pad) ImGui::EndDisabled();
+            if (ImGui::GetTime() < s_n64_saved_until)
+                ImGui::TextColored(col(th.accent2), "Input Profile Saved!");
+
+            if (s_n64_rename_open) ImGui::OpenPopup(ui_text("Rename Gamepad"));
+            ImVec2 c3 = ImGui::GetMainViewport()->GetCenter();
+            ImGui::SetNextWindowPos(c3, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+            if (ImGui::BeginPopupModal(ui_text("Rename Gamepad"), &s_n64_rename_open,
+                                       ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::TextUnformatted(ui_text("Display name for this gamepad:"));
+                ImGui::SetNextItemWidth(px(320));
+                const bool enter = ImGui::InputText(
+                    "##n64_rename_pad", s_n64_rename_buf,
+                    sizeof(s_n64_rename_buf),
+                    ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGui::Spacing();
+                if (ImGui::Button(ui_text("Cancel"), ImVec2(px(120), 0))) {
+                    s_n64_rename_open = false;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                const bool ok = s_n64_rename_buf[0] != '\0';
+                ImGui::BeginDisabled(!ok);
+                if ((ImGui::Button("OK", ImVec2(px(120), 0)) || enter) && ok) {
+                    launcher_binds_rename_n64_gamepad(m, p + 1, s_n64_rename_buf);
+                    s_n64_rename_open = false;
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::EndDisabled();
@@ -5012,7 +5100,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                 launcher_binds_reset_camera(m);
             if (m->camera_capturing)
                 ImGui::TextColored(
-                    col(th.warn), "Listening... (Esc cancels)");
+                    col(th.warn), "Listening... (Esc cancels, Backspace unbinds)");
         } end_panel();
     }
 
@@ -5178,7 +5266,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                          m->capture_btn < LNG_PSX_PAD_BUTTON_COUNT)
                             ? spec.buttons[m->capture_btn].label : "?";
                     ImGui::TextColored(col(th.warn),
-                        "Map %s to %s (Esc cancels)%s",
+                        "Map %s to %s (Esc cancels, Backspace unbinds)%s",
                         m->capture_slot == 1 ? "an alternate key / mouse button"
                                              : "a key",
                         label,
@@ -5263,11 +5351,11 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                             ? spec.buttons[m->capture_btn].label : "?";
                     if (m->map_all_wait_release) {
                         ImGui::TextColored(col(th.warn),
-                            "Release Button (Esc cancels)%s",
+                            "Release Button (Esc cancels, Backspace unbinds)%s",
                             m->map_all_active ? " — Map All" : "");
                     } else {
                         ImGui::TextColored(col(th.warn),
-                            "Map an input to %s (Esc cancels)%s",
+                            "Map an input to %s (Esc cancels, Backspace unbinds)%s",
                             label,
                             m->map_all_active ? " — Map All" : "");
                     }
@@ -5544,7 +5632,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                                    pad_src ? " on the controller" : "");
             }
         } else if (m->capturing) {
-            ImGui::TextColored(col(th.warn), "Listening... (Esc cancels)");
+            ImGui::TextColored(col(th.warn), "Listening... (Esc cancels, Backspace unbinds)");
         }
         } // !is_psx
     } end_panel();
@@ -12501,6 +12589,51 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
         launcher_model_cancel_capture(m);
         launcher_model_cancel_hk_capture(m);
         launcher_model_cancel_camera_capture(m);
+        return true;
+    }
+
+    /* Backspace UNBINDS the input being captured -- every capture kind, so a
+     * mapping button never needs a separate clear gesture. Each branch is the
+     * same commit path a real press takes, handed the store's own "nothing"
+     * value: scancode 0 for a keyboard slot, LNG_PADBIND_NONE for a pad slot,
+     * keycode 0 for a hotkey. Inside a Map All / Auto Map run this clears the
+     * current input and moves to the next, which is how you skip one. */
+    if (ev.type == SDL_EVENT_KEY_DOWN && LNG_EVKEY(ev) == SDLK_BACKSPACE &&
+        !LNG_EVKEYREPEAT(ev)) {
+        if (m->camera_capturing) {
+            launcher_binds_set_camera(m, m->capture_camera, 0);
+            launcher_model_cancel_camera_capture(m);
+            return true;
+        }
+        if (m->hk_capturing) {
+            launcher_binds_set_hotkey(m, m->capture_hk, 0, 0);
+            launcher_model_cancel_hk_capture(m);
+            return true;
+        }
+        if (m->capturing && m->capture_pad) {
+            if (m->capture_assist)
+                launcher_model_set_captured_pad(m, 0);
+            else
+                launcher_binds_set_pad_button(m, m->cfg_player + 1, m->capture_btn,
+                                              LNG_PADBIND_NONE, 0, 0);
+        } else if (m->capturing) {
+            const SystemProfile* prof = (const SystemProfile*)m->profile;
+            if (m->capture_assist)
+                launcher_model_set_captured_key(m, 0);
+            else if (prof && prof->controller.binds_per_input >= 2 && prof->id &&
+                     !strcmp(prof->id, "psx"))
+                launcher_binds_set_button_slot(m, m->cfg_player + 1, m->capture_btn,
+                                               m->capture_slot, 0);
+            else if (prof && prof->controller.binds_per_input >= 2)
+                launcher_binds_set_field(m, m->cfg_player + 1, m->capture_btn,
+                                         m->capture_slot, RUI_N64_FIELD_NONE, -1);
+            else
+                launcher_binds_set_button(m, m->cfg_player + 1, m->capture_btn, 0);
+        } else {
+            return true;
+        }
+        if (m->map_all_active) launcher_model_map_all_advance(m);
+        else                   launcher_model_cancel_capture(m);
         return true;
     }
 
