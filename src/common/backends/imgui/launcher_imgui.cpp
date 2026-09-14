@@ -11128,7 +11128,12 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
                                 resource_index, &resource))
                             continue;
                         ImGui::PushID(resource.id);
-                        ImGui::TextUnformatted(resource.label);
+                        if (resource.required) {
+                            ImGui::TextUnformatted(resource.label);
+                        } else {
+                            ImGui::Text("%s %s", resource.label,
+                                        ui_text("(optional)"));
+                        }
                         if (resource.description[0])
                             ImGui::TextWrapped("%s", resource.description);
                         ImGui::TextColored(
