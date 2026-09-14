@@ -74,6 +74,7 @@ static const char* const kPsxDiscPatterns[] = {
     "*.cue",
     "*.bin",
     "*.car",
+    "*.chd",
 };
 #define LNG_PSX_DISC_PATTERN_COUNT \
     ((int)(sizeof(kPsxDiscPatterns) / sizeof(kPsxDiscPatterns[0])))
