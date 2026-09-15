@@ -70,22 +70,9 @@ static const char* const kPanelsSettingsPsx[]   =
 // Bare .bin is accepted for single-file dumps, and .car for official Steam
 // re-release payloads (extension-renamed raw images, e.g. Tomba! Special
 // Edition's t_data_u.car); the runtime mounts an owning .cue when one exists.
-// Keep this in step with the runtime's own disc filters in psxrecomp
-// (runtime/src/main.cpp): cue, chd, bin, iso, img, car. A format the runtime
-// mounts but this array omits is unselectable in first-run setup, and there is
-// no "All files" entry here to work around it.
-//
-// .chd has been dropped twice by commits unrelated to disc pickers -- 5360e41
-// "rollback connectivity SFU" and 84d3732 "hardening toolchain and build" --
-// and the 87bbf43 restore brought back only .bin and .car. CHD-only libraries
-// are common, so losing it blocks setup outright. If a later sync narrows this
-// array again, that is the regression, not a cleanup.
 static const char* const kPsxDiscPatterns[] = {
     "*.cue",
-    "*.chd",
     "*.bin",
-    "*.iso",
-    "*.img",
     "*.car",
 };
 #define LNG_PSX_DISC_PATTERN_COUNT \
@@ -138,7 +125,7 @@ static const SystemProfile kSystemProfilePsx = {
     /* screen_kind_names */ NULL,   /* legacy Raw/CRT/Composite/Trinitron set */
     /* screen_kind_count */ 0,
     /* rom_filter        */ { kPsxDiscPatterns, LNG_PSX_DISC_PATTERN_COUNT,
-                              "PlayStation disc (.cue/.chd/.bin/.iso/.img/.car)" },
+                              "PlayStation disc (.cue/.bin/.car)" },
     /* renderer_labels   */ NULL,
     /* hide_audio_freq   */ 0,
     /* brand             */ "brand_psx.tga",

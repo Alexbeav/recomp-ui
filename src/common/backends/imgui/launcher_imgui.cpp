@@ -8065,7 +8065,7 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
             char title[96];
             if (plat == SETUP_PLAT_PSX)
                 std::snprintf(title, sizeof(title),
-                              "Select %s (.cue/.chd/.bin)", noun);
+                              "Select %s (.cue/.bin/.car)", noun);
             else
                 std::snprintf(title, sizeof(title), "Select %s", noun);
             if (prof && prof->rom_filter.pattern_count > 0)
@@ -8158,10 +8158,10 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                 const int npat = (plat == SETUP_PLAT_PSX) ? 3 : 7;
                 if (launcher_pick_file(
                         plat == SETUP_PLAT_PSX
-                            ? "Select disc (.cue/.chd/.bin)"
+                            ? "Select disc (.cue/.bin/.car)"
                             : "Select raw disc dump to convert",
                         pats, npat,
-                        plat == SETUP_PLAT_PSX ? "PlayStation disc (.cue/.chd/.bin/.iso/.img/.car)"
+                        plat == SETUP_PLAT_PSX ? "PlayStation disc (.cue/.bin/.car)"
                                                : "Disc dump",
                         buf, sizeof(buf)))
                     launcher_model_start_prepare_disc(m, buf);
