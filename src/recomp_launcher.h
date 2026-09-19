@@ -908,9 +908,11 @@ typedef struct RecompLauncherCModDiagnostic {
     char related_feature_id[RECOMP_LAUNCHER_MOD_ID_MAX];
 } RecompLauncherCModDiagnostic;
 
-/* Owner-supplied files required by a feature, such as a source ROM used by a
- * character port. Providers validate identity; the UI only chooses a path and
- * displays the provider's verdict. Paths are never copied into a package. */
+/* Owner-supplied files used by a feature, such as a source ROM or save file.
+ * Providers validate identity; the UI chooses a path and displays the verdict.
+ * Optional resources (required=0) can clear their selection via an empty path
+ * passed to feature_resource_set_path; the provider decides the default.
+ * Paths are never copied into a package. */
 typedef struct RecompLauncherCModResource {
     char id[RECOMP_LAUNCHER_MOD_ID_MAX];
     char label[128];
