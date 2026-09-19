@@ -66,14 +66,14 @@ static const GenPadBind kGenDefaultPad[GEN_NBTN] = {
     /* Mode  */ { RUI_GEN_BIND_BUTTON,  4, 0 },  /* BACK */
 };
 
-static int        s_key[2][GEN_NBTN];
-static GenPadBind s_pad[2][GEN_NBTN];
+static int        s_key[RUI_GEN_MAX_PLAYERS][GEN_NBTN];
+static GenPadBind s_pad[RUI_GEN_MAX_PLAYERS][GEN_NBTN];
 static int        s_init = 0;
 
 static void gen_seed_defaults(int player) {
     const int* def = player == 1 ? kGenDefaultKeyP2 : kGenDefaultKeyP1;
     for (int b = 0; b < GEN_NBTN; ++b) {
-        s_key[player][b] = def[b];
+        s_key[player][b] = player < 2 ? def[b] : 0;
         s_pad[player][b] = kGenDefaultPad[b];
     }
 }
@@ -136,6 +136,8 @@ static void gen_load_ini(const char* path) {
             player = -1;
             if      (!strcmp(name, "input.p1")) player = 0;
             else if (!strcmp(name, "input.p2")) player = 1;
+            else if (!strcmp(name, "input.p3")) player = 2;
+            else if (!strcmp(name, "input.p4")) player = 3;
             continue;
         }
         if (player < 0) continue;
@@ -264,8 +266,7 @@ static void gen_write_player(const char* path, int player) {
 // ---- public API ----------------------------------------------------------------
 
 void rui_genesis_binds_init(const char* path) {
-    gen_seed_defaults(0);
-    gen_seed_defaults(1);
+    for (int player = 0; player < RUI_GEN_MAX_PLAYERS; ++player) gen_seed_defaults(player);
     gen_load_ini(path);
     s_init = 1;
 }
@@ -276,7 +277,7 @@ static void gen_ensure_init(const char* path) {
 
 int rui_genesis_binds_get_key(const char* path, int player, int b) {
     gen_ensure_init(path);
-    if (player < 0 || player > 1 || b < 0 || b >= GEN_NBTN) return 0;
+    if (player < 0 || player >= RUI_GEN_MAX_PLAYERS || b < 0 || b >= GEN_NBTN) return 0;
     return s_key[player][b];
 }
 
@@ -284,7 +285,7 @@ void rui_genesis_binds_get_pad(const char* path, int player, int b,
                                int* kind, int* code, int* axis_dir) {
     gen_ensure_init(path);
     GenPadBind v = { RUI_GEN_BIND_NONE, 0, 0 };
-    if (player >= 0 && player <= 1 && b >= 0 && b < GEN_NBTN) v = s_pad[player][b];
+    if (player >= 0 && player < RUI_GEN_MAX_PLAYERS && b >= 0 && b < GEN_NBTN) v = s_pad[player][b];
     if (kind)     *kind     = v.kind;
     if (code)     *code     = v.code;
     if (axis_dir) *axis_dir = v.axis_dir;
@@ -292,7 +293,7 @@ void rui_genesis_binds_get_pad(const char* path, int player, int b,
 
 void rui_genesis_binds_set_key(const char* path, int player, int b, int scancode) {
     gen_ensure_init(path);
-    if (player < 0 || player > 1 || b < 0 || b >= GEN_NBTN) return;
+    if (player < 0 || player >= RUI_GEN_MAX_PLAYERS || b < 0 || b >= GEN_NBTN) return;
     s_key[player][b] = scancode;
     gen_write_player(path, player);
 }
@@ -300,7 +301,7 @@ void rui_genesis_binds_set_key(const char* path, int player, int b, int scancode
 void rui_genesis_binds_set_pad(const char* path, int player, int b,
                                int kind, int code, int axis_dir) {
     gen_ensure_init(path);
-    if (player < 0 || player > 1 || b < 0 || b >= GEN_NBTN) return;
+    if (player < 0 || player >= RUI_GEN_MAX_PLAYERS || b < 0 || b >= GEN_NBTN) return;
     s_pad[player][b].kind     = kind;
     s_pad[player][b].code     = code;
     s_pad[player][b].axis_dir = kind == RUI_GEN_BIND_AXIS ? (axis_dir < 0 ? -1 : +1) : 0;
@@ -309,7 +310,7 @@ void rui_genesis_binds_set_pad(const char* path, int player, int b,
 
 void rui_genesis_binds_reset(const char* path, int player) {
     gen_ensure_init(path);
-    if (player < 0 || player > 1) return;
+    if (player < 0 || player >= RUI_GEN_MAX_PLAYERS) return;
     gen_seed_defaults(player);
     gen_write_player(path, player);
 }
