@@ -11442,19 +11442,22 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
     // advance a step, racing 24 buttons past on one keypress.
     if (m->capturing && m->map_all_active && LNG_EVKEYREPEAT(ev)) return true;
     if (m->capturing) {
-        // N64's input.cfg keeps two alternate binds per input, so a keyboard
-        // capture there must honour capture_slot via the slot-aware field API.
-        // Single-bind stores (SNES/PSX/GBA) use the legacy scancode setter
-        // (capture_slot is always 0 for them).
+        // A store that keeps alternates per input must honour capture_slot.
+        // N64's input.cfg is the one such store addressed by field rather than
+        // by scancode, so it is named here; every other alternate-slot store
+        // (PSX, Game Boy) goes through the slot-aware scancode setter, which
+        // dispatches per profile. Single-bind stores (SNES/GBA/NES/Genesis) use
+        // the legacy setter — capture_slot is always 0 for them.
         const SystemProfile* prof = (const SystemProfile*)m->profile;
+        const bool alt_slots = prof && prof->controller.binds_per_input >= 2;
         if (m->capture_assist)
             launcher_model_set_captured_key(m, (int)LNG_EVSCAN(ev));
-        else if (prof && prof->controller.binds_per_input >= 2 && prof->id && !strcmp(prof->id, "psx"))
-            launcher_binds_set_button_slot(m, m->cfg_player + 1, m->capture_btn,
-                                           m->capture_slot, (int)LNG_EVSCAN(ev));
-        else if (prof && prof->controller.binds_per_input >= 2)
+        else if (alt_slots && prof->id && !strcmp(prof->id, "n64"))
             launcher_binds_set_field(m, m->cfg_player + 1, m->capture_btn, m->capture_slot,
                                      RUI_N64_FIELD_KEY, (int)LNG_EVSCAN(ev));
+        else if (alt_slots)
+            launcher_binds_set_button_slot(m, m->cfg_player + 1, m->capture_btn,
+                                           m->capture_slot, (int)LNG_EVSCAN(ev));
         else
             launcher_binds_set_button(m, m->cfg_player + 1, m->capture_btn, (int)LNG_EVSCAN(ev));
         if (m->map_all_active) launcher_model_map_all_advance(m);

@@ -304,9 +304,12 @@ static void reload_player_display(LauncherModel* m, int player) {
     if (is_gb_profile(m)) {
         if (player != 1) return;   // Game Boy is single-player
         const char* path = gb_binds_file_path();
-        for (int b = 0; b < LNG_GB_PAD_BUTTON_COUNT; ++b)
+        for (int b = 0; b < LNG_GB_PAD_BUTTON_COUNT; ++b) {
             copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
-                     scancode_label((SDL_Scancode)rui_gb_binds_get(path, b)));
+                     scancode_label((SDL_Scancode)rui_gb_binds_get_slot(path, b, 0)));
+            copy_str(m->binds_alt[player - 1][b], sizeof(m->binds_alt[player - 1][b]),
+                     scancode_label((SDL_Scancode)rui_gb_binds_get_slot(path, b, 1)));
+        }
         return;
     }
     if (is_n64_profile(m)) {
@@ -975,10 +978,20 @@ void launcher_binds_reset_camera(LauncherModel* m) {
 }
 
 /* Slot-aware setter for stores that keep an alternate bind per input.
- * PSX keeps two (primary + alt, either may be a mouse pseudo-scancode). */
+ * PSX keeps two (primary + alt, either may be a mouse pseudo-scancode); the
+ * Game Boy keeps two keyboard slots (Arrows/Z/X plus WASD/J/K). */
 void launcher_binds_set_button_slot(LauncherModel* m, int player, int b,
                                     int slot, int scancode) {
-    if (!m || !is_psx_profile(m)) return;
+    if (!m) return;
+    if (is_gb_profile(m)) {
+        if (player != 1 || b < 0 || b >= LNG_GB_PAD_BUTTON_COUNT) return;
+        rui_gb_binds_set_slot(gb_binds_file_path(), b, slot, scancode);
+        /* The store takes this key away from any other button/slot, so every
+         * label has to be re-read, not just the one that was clicked. */
+        reload_player_display(m, player);
+        return;
+    }
+    if (!is_psx_profile(m)) return;
     if (player < 1 || player > LNG_MAX_PLAYERS) return;
     if (b < 0 || b >= LNG_PSX_PAD_BUTTON_COUNT) return;
     rui_psx_binds_set_slot(keybinds_file_path(), player - 1, b, slot, scancode);
@@ -1021,10 +1034,7 @@ void launcher_binds_set_button(LauncherModel* m, int player, int b, int scancode
         return;
     }
     if (is_gb_profile(m)) {
-        if (player != 1 || b < 0 || b >= LNG_GB_PAD_BUTTON_COUNT) return;
-        rui_gb_binds_set(gb_binds_file_path(), b, scancode);
-        copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
-                 scancode_label((SDL_Scancode)scancode));
+        launcher_binds_set_button_slot(m, player, b, 0, scancode);
         return;
     }
     int n = 0;
