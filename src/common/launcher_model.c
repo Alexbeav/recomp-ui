@@ -227,6 +227,119 @@ static int lm_memcard_enabled_from_host(int v) {
 }
 static void lm_inspect_tpak(LauncherModel* m, int slot);    // fwd; host tpak_inspect callback
 static void lm_persist_setup_sidecars(LauncherModel* m);    // fwd; called from launcher_model_finish_setup
+static int lm_running_exe_dir(char* out, size_t cap);
+
+static int lm_path_readable(const char* path) {
+    if (!path || !path[0]) return 0;
+    FILE* f = fopen(path, "rb");
+    if (!f) return 0;
+    fclose(f);
+    return 1;
+}
+
+static int lm_same_cache_name(const char* a, const char* b) {
+    if (!a || !a[0] || !b || !b[0]) return 0;
+    const char* abase = a;
+    const char* bbase = b;
+    for (const char* p = a; *p; ++p)
+        if (*p == '/' || *p == '\\') abase = p + 1;
+    for (const char* p = b; *p; ++p)
+        if (*p == '/' || *p == '\\') bbase = p + 1;
+    while (*abase && *bbase) {
+        char ac = *abase++;
+        char bc = *bbase++;
+        if (ac >= 'A' && ac <= 'Z') ac = (char)(ac + ('a' - 'A'));
+        if (bc >= 'A' && bc <= 'Z') bc = (char)(bc + ('a' - 'A'));
+        if (ac != bc) return 0;
+    }
+    return *abase == '\0' && *bbase == '\0';
+}
+
+static int lm_read_first_line(const char* path, char* out, size_t cap) {
+    FILE* f;
+    size_t len;
+    if (!path || !path[0] || !out || cap == 0) return 0;
+    f = fopen(path, "r");
+    if (!f) return 0;
+    out[0] = '\0';
+    if (!fgets(out, (int)cap, f)) {
+        fclose(f);
+        return 0;
+    }
+    fclose(f);
+    len = strlen(out);
+    while (len && (out[len - 1] == '\n' || out[len - 1] == '\r'))
+        out[--len] = '\0';
+    return out[0] != '\0';
+}
+
+static int lm_cache_candidate_path(const char* dir,
+                                   const char* cache_name,
+                                   char* out,
+                                   size_t cap) {
+    int n;
+    if (!cache_name || !cache_name[0] || !out || cap == 0) return 0;
+    if (strchr(cache_name, '/') || strchr(cache_name, '\\')
+#if defined(_WIN32)
+        || (strlen(cache_name) > 2 && cache_name[1] == ':')
+#else
+        || cache_name[0] == '/'
+#endif
+    ) {
+        n = snprintf(out, cap, "%s", cache_name);
+        return n > 0 && (size_t)n < cap;
+    }
+    if (dir && dir[0]) {
+        n = snprintf(out, cap, "%s/%s", dir, cache_name);
+        return n > 0 && (size_t)n < cap;
+    }
+    n = snprintf(out, cap, "%s", cache_name);
+    return n > 0 && (size_t)n < cap;
+}
+
+static int lm_try_cached_rom_name(const char* cache_name,
+                                  char* out,
+                                  size_t out_cap) {
+    char cache_path[1024];
+    char candidate[1024];
+    char exe_dir[1024];
+    if (!out || out_cap == 0) return 0;
+    if (lm_cache_candidate_path(NULL, cache_name, cache_path,
+                                sizeof(cache_path)) &&
+        lm_read_first_line(cache_path, candidate, sizeof(candidate)) &&
+        lm_path_readable(candidate)) {
+        safe_copy(out, out_cap, candidate);
+        return 1;
+    }
+    if (lm_running_exe_dir(exe_dir, sizeof(exe_dir)) &&
+        lm_cache_candidate_path(exe_dir, cache_name, cache_path,
+                                sizeof(cache_path)) &&
+        lm_read_first_line(cache_path, candidate, sizeof(candidate)) &&
+        lm_path_readable(candidate)) {
+        safe_copy(out, out_cap, candidate);
+        return 1;
+    }
+    return 0;
+}
+
+static int lm_load_cached_rom_path(const RecompLauncherCGameInfo* game,
+                                   const char* initial_rom,
+                                   char* out,
+                                   size_t out_cap) {
+    const char* primary = (game && game->rom_cache_path &&
+                           game->rom_cache_path[0])
+                              ? game->rom_cache_path
+                              : "rom.cfg";
+    if (lm_path_readable(initial_rom)) return 0;
+    if (lm_try_cached_rom_name(primary, out, out_cap)) return 1;
+    if (!lm_same_cache_name(primary, "rom.cfg") &&
+        lm_try_cached_rom_name("rom.cfg", out, out_cap))
+        return 1;
+    if (!lm_same_cache_name(primary, "disc.cfg") &&
+        lm_try_cached_rom_name("disc.cfg", out, out_cap))
+        return 1;
+    return 0;
+}
 
 void launcher_model_init(LauncherModel* m,
                          const RecompLauncherCSettings* io,
@@ -737,7 +850,14 @@ void launcher_model_init(LauncherModel* m,
 
     // Real ROM read + CRC/SHA verification (computes rom_size, crc_match,
     // sha_match). No synthesized/faked facts.
-    launcher_model_set_rom(m, initial_rom);
+    {
+        char cached_rom[1024];
+        const char* seeded_rom = initial_rom;
+        if (lm_load_cached_rom_path(game, initial_rom, cached_rom,
+                                    sizeof(cached_rom)))
+            seeded_rom = cached_rom;
+        launcher_model_set_rom(m, seeded_rom);
+    }
 
     // Password/mantra save: read the current one-line password file so the
     // SAVES row can show it. (Zapper switch state is loaded later by
