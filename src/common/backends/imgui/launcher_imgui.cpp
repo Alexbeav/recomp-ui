@@ -75,6 +75,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -366,28 +367,60 @@ static bool s_pad_nav_armed = false;
 
 char        g_pick_buf[512] = {};    // ROM picker result
 
-enum class BuiltinPickerKind { Rom, Bios, SetupToolchainZip, DiscSlot };
+/* ---------------------------------------------------------------------------
+ * File pickers: ONE entry point, and a fallback nothing can bypass.
+ *
+ * ui_pick() is the only way this backend opens a picker. It tries the host's
+ * native dialog first and, when that reports itself unusable (-1), browses
+ * in-app instead. Callers never learn which happened.
+ *
+ * The completion CLOSURE is what makes that universal. The old model routed a
+ * fixed enum -- BuiltinPickerKind {Rom, Bios, SetupToolchainZip, DiscSlot} --
+ * into the browser so it could apply the result itself. A picker therefore got
+ * a fallback only by adding an enum case, so 14 of 17 sites just called the
+ * blocking launcher_pick_* API instead and silently did nothing on a host with
+ * no usable zenity/kdialog. The enum had already buckled once: a disc-slot
+ * index does not fit in it and rode a separate global. With on_pick carrying
+ * the follow-up, a new picker anywhere gets the fallback for free, and the
+ * browser never learns what the caller wanted.
+ *
+ * The blocking launcher_pick_* wrappers are deliberately not called from this
+ * file; tests/check_no_raw_pickers.py fails the build if they come back.
+ * ------------------------------------------------------------------------ */
 
-/* Which disc row a DiscSlot browse is filling. Deliberately NOT a field of
- * BuiltinRomPicker: open_builtin_file_picker default-constructs that struct,
- * so anything stored there before the call is erased on the built-in-browser
- * path while surviving on the native-dialog path -- a difference that would
- * show up only on machines without a portal. */
-static int g_disc_slot_target = -1;
+enum class PickMode { OpenFile, SaveFile, Folder };
 
-struct BuiltinRomPicker {
+struct PickRequest {
+    PickMode mode = PickMode::OpenFile;
+    std::string title;
+    std::vector<std::string> patterns;
+    std::string description;
+    /* File or folder the browser should open on. Empty = work it out. */
+    std::string start_path;
+    /* Render inline inside the setup wizard rather than as its own modal. */
+    bool from_setup = false;
+    /* The chosen path, or nullptr if the user cancelled. Called in the same
+     * frame as the click on the native path, and whenever the user confirms on
+     * the built-in path -- callers must not assume either. */
+    std::function<void(const char*)> on_pick;
+};
+
+struct BuiltinPickerState {
     bool active = false;
     bool from_setup = false;
     bool focus_path = false;
-    BuiltinPickerKind kind = BuiltinPickerKind::Rom;
-    char title[96] = "Select game file";
+    PickMode mode = PickMode::OpenFile;
+    char title[96] = "Select file";
     char directory[1024] = {};
     char selected[1024] = {};
     char error[256] = {};
+    /* Save mode only: set once the player has confirmed an overwrite. */
+    bool overwrite_armed = false;
     std::vector<std::string> patterns;
     std::string description;
+    std::function<void(const char*)> on_pick;
 };
-BuiltinRomPicker g_rom_picker;
+BuiltinPickerState g_picker;
 
 static std::string lower_ascii(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
@@ -396,9 +429,9 @@ static std::string lower_ascii(std::string s) {
 }
 
 static bool builtin_picker_matches(const std::filesystem::path& path) {
-    if (g_rom_picker.patterns.empty()) return true;
+    if (g_picker.patterns.empty()) return true;
     const std::string filename = lower_ascii(path.filename().string());
-    for (const std::string& raw : g_rom_picker.patterns) {
+    for (const std::string& raw : g_picker.patterns) {
         const std::string pattern = lower_ascii(raw);
         if (pattern.empty() || pattern == "*" || pattern == "*.*") return true;
         if (pattern.size() > 1 && pattern[0] == '*' &&
@@ -411,27 +444,21 @@ static bool builtin_picker_matches(const std::filesystem::path& path) {
     return false;
 }
 
-static std::filesystem::path builtin_picker_initial_path(LauncherModel* m,
-                                                         BuiltinPickerKind kind) {
+/* Where the browser opens. The caller's hint wins; the rest is the generic
+ * "somewhere the player recognises" chain. */
+static std::filesystem::path builtin_picker_initial_path(
+        LauncherModel* m, const std::string& hint) {
     std::error_code ec;
-    if (kind == BuiltinPickerKind::Bios && m && m->s.bios_path[0]) {
-        std::filesystem::path current(m->s.bios_path);
-        if (std::filesystem::is_regular_file(current, ec)) return current;
+    if (!hint.empty()) {
+        std::filesystem::path hinted(hint);
+        if (std::filesystem::is_regular_file(hinted, ec) ||
+            std::filesystem::is_directory(hinted, ec))
+            return hinted;
     }
-    if (kind == BuiltinPickerKind::SetupToolchainZip && m && m->setup_tc_zip[0]) {
-        std::filesystem::path current(m->setup_tc_zip);
-        if (std::filesystem::is_regular_file(current, ec)) return current;
-    }
-    if (kind == BuiltinPickerKind::Rom && m && m->rom_full[0]) {
+    if (m && m->rom_full[0]) {
+        ec.clear();
         std::filesystem::path current(m->rom_full);
         if (std::filesystem::is_regular_file(current, ec)) return current;
-    }
-    if (kind == BuiltinPickerKind::Rom) {
-        if (const char* hint = std::getenv("RECOMP_DISC_HINT")) {
-            std::filesystem::path hinted(hint);
-            ec.clear();
-            if (std::filesystem::is_regular_file(hinted, ec)) return hinted;
-        }
     }
     if (const char* image = std::getenv("RECOMP_APPIMAGE_PATH")) {
         std::filesystem::path appimage(image);
@@ -440,39 +467,8 @@ static std::filesystem::path builtin_picker_initial_path(LauncherModel* m,
             return appimage.parent_path();
     }
     if (const char* home = std::getenv("HOME")) return std::filesystem::path(home);
+    ec.clear();
     return std::filesystem::current_path(ec);
-}
-
-static void open_builtin_file_picker(LauncherModel* m, BuiltinPickerKind kind,
-                                     const char* title,
-                                     const char* const* patterns, int pattern_count,
-                                     const char* description, bool from_setup) {
-    g_rom_picker = BuiltinRomPicker{};
-    g_rom_picker.active = true;
-    g_rom_picker.from_setup = from_setup;
-    g_rom_picker.kind = kind;
-    const char* fallback_title =
-        kind == BuiltinPickerKind::Bios             ? "Select BIOS file"
-        : kind == BuiltinPickerKind::SetupToolchainZip ? "Select toolchain zip"
-                                                    : "Select game file";
-    std::snprintf(g_rom_picker.title, sizeof(g_rom_picker.title), "%s",
-                  title && title[0] ? title : fallback_title);
-    for (int i = 0; patterns && i < pattern_count; ++i)
-        if (patterns[i]) g_rom_picker.patterns.emplace_back(patterns[i]);
-    if (description) g_rom_picker.description = description;
-
-    std::filesystem::path initial = builtin_picker_initial_path(m, kind);
-    std::error_code ec;
-    if (std::filesystem::is_regular_file(initial, ec)) {
-        std::snprintf(g_rom_picker.selected, sizeof(g_rom_picker.selected), "%s",
-                      initial.string().c_str());
-        initial = initial.parent_path();
-    }
-    if (initial.empty() || !std::filesystem::is_directory(initial, ec))
-        initial = std::filesystem::current_path(ec);
-    std::snprintf(g_rom_picker.directory, sizeof(g_rom_picker.directory), "%s",
-                  initial.string().c_str());
-    g_rom_picker.focus_path = true;
 }
 
 /* Prefer native (zenity/kdialog on Linux, tinyfiledialogs elsewhere). Fall
@@ -488,79 +484,216 @@ static bool prefer_builtin_file_picker(void) {
     return false;
 }
 
-static void apply_builtin_picker_selection(LauncherModel* m, const char* path) {
-    if (!m || !path) return;
-    if (g_rom_picker.kind == BuiltinPickerKind::Bios) {
-        launcher_model_request_bios_path(m, path);
-    } else if (g_rom_picker.kind == BuiltinPickerKind::SetupToolchainZip) {
-        std::snprintf(m->setup_tc_zip, sizeof(m->setup_tc_zip), "%s", path);
-        m->setup_error[0] = '\0';
-    } else if (g_rom_picker.kind == BuiltinPickerKind::DiscSlot) {
-        if (g_disc_slot_target >= 0)
-            launcher_model_set_disc_path(m, g_disc_slot_target, path);
-        g_disc_slot_target = -1;
-    } else {
-        launcher_model_set_rom(m, path);
-    }
+/* Set once a native backend has reported itself unusable (-1). The ROM row
+ * then keeps an explicit "Use the built-in browser" control visible, so the
+ * player is never left with a button whose only native backend is broken. */
+static bool g_native_picker_failed = false;
+
+/* True when the ROM row should show that explicit control: either the host has
+ * no zenity/kdialog at all, or the one it has has already failed on us. */
+static bool builtin_file_picker_should_be_offered(void) {
+    if (prefer_builtin_file_picker()) return false;
+    return g_native_picker_failed || !launcher_native_file_picker_available();
 }
 
-static void request_file_picker(LauncherModel* m, BuiltinPickerKind kind,
-                                const char* title, const char* const* patterns,
-                                int pattern_count, const char* description,
-                                bool from_setup) {
+static void open_builtin_picker(LauncherModel* m, PickRequest&& req) {
+    g_picker = BuiltinPickerState{};
+    g_picker.active = true;
+    g_picker.mode = req.mode;
+    g_picker.from_setup = req.from_setup;
+    g_picker.patterns = std::move(req.patterns);
+    g_picker.description = std::move(req.description);
+    g_picker.on_pick = std::move(req.on_pick);
+
+    const char* fallback_title = req.mode == PickMode::Folder     ? "Select folder"
+                                 : req.mode == PickMode::SaveFile ? "Save file"
+                                                                  : "Select file";
+    std::snprintf(g_picker.title, sizeof(g_picker.title), "%s",
+                  !req.title.empty() ? req.title.c_str() : fallback_title);
+
+    std::filesystem::path initial = builtin_picker_initial_path(m, req.start_path);
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(initial, ec)) {
+        if (req.mode != PickMode::Folder)
+            std::snprintf(g_picker.selected, sizeof(g_picker.selected), "%s",
+                          initial.string().c_str());
+        initial = initial.parent_path();
+    }
+    if (initial.empty() || !std::filesystem::is_directory(initial, ec))
+        initial = std::filesystem::current_path(ec);
+    std::snprintf(g_picker.directory, sizeof(g_picker.directory), "%s",
+                  initial.string().c_str());
+    g_picker.focus_path = true;
+}
+
+/* Close the browser and hand the answer back. State is cleared BEFORE the
+ * callback runs, so an on_pick that opens another picker is not immediately
+ * stomped by this one's teardown. */
+static void builtin_picker_finish(const char* path) {
+    std::function<void(const char*)> cb = std::move(g_picker.on_pick);
+    g_picker = BuiltinPickerState{};
+    if (cb) cb(path);
+}
+
+/* THE picker entry point. Native first, built-in browser when native cannot
+ * run. Every Browse button in this file goes through here. */
+static void ui_pick(LauncherModel* m, PickRequest req) {
     if (!prefer_builtin_file_picker() &&
         launcher_native_file_picker_available()) {
-        const int r = launcher_try_pick_file(title, patterns, pattern_count,
-                                             description, g_pick_buf,
-                                             sizeof(g_pick_buf));
+        std::vector<const char*> pats;
+        pats.reserve(req.patterns.size());
+        for (const std::string& pat : req.patterns) pats.push_back(pat.c_str());
+        const char* const* pp = pats.empty() ? nullptr : pats.data();
+        const int npat = (int)pats.size();
+        const char* desc =
+            req.description.empty() ? nullptr : req.description.c_str();
+        const char* title = req.title.empty() ? nullptr : req.title.c_str();
+
+        int r = -1;
+        switch (req.mode) {
+        case PickMode::OpenFile:
+            r = launcher_try_pick_file(title, pp, npat, desc, g_pick_buf,
+                                       sizeof(g_pick_buf));
+            break;
+        case PickMode::SaveFile:
+            r = launcher_try_pick_save_file(title, pp, npat, desc, g_pick_buf,
+                                            sizeof(g_pick_buf));
+            break;
+        case PickMode::Folder:
+            r = launcher_try_pick_folder(title, g_pick_buf, sizeof(g_pick_buf));
+            break;
+        }
         if (r == 1) {
-            g_rom_picker.kind = kind; /* apply_ uses kind */
-            apply_builtin_picker_selection(m, g_pick_buf);
+            if (req.on_pick) req.on_pick(g_pick_buf);
             return;
         }
-        if (r == 0) return; /* user cancelled */
-        /* r == -1: fall through to built-in browser */
+        if (r == 0) {
+            if (req.on_pick) req.on_pick(nullptr);
+            return;
+        }
+        /* r == -1: the backend is unusable (it could not start, died, or
+         * exited with something other than 0/1 -- launcher_files.c has already
+         * logged which and why). Remember that, and browse in-app. */
+        g_native_picker_failed = true;
     }
-    open_builtin_file_picker(m, kind, title, patterns, pattern_count,
-                             description, from_setup);
+    open_builtin_picker(m, std::move(req));
+}
+
+/* Shorthands for the three shapes, so a call site stays one statement. */
+static void ui_pick_file(LauncherModel* m, const char* title,
+                         std::vector<std::string> patterns,
+                         const char* description,
+                         std::function<void(const char*)> on_pick) {
+    PickRequest req;
+    req.mode = PickMode::OpenFile;
+    if (title) req.title = title;
+    req.patterns = std::move(patterns);
+    if (description) req.description = description;
+    req.on_pick = std::move(on_pick);
+    ui_pick(m, std::move(req));
+}
+
+static void ui_pick_save_file(LauncherModel* m, const char* title,
+                              std::vector<std::string> patterns,
+                              const char* description,
+                              std::function<void(const char*)> on_pick) {
+    PickRequest req;
+    req.mode = PickMode::SaveFile;
+    if (title) req.title = title;
+    req.patterns = std::move(patterns);
+    if (description) req.description = description;
+    req.on_pick = std::move(on_pick);
+    ui_pick(m, std::move(req));
+}
+
+static void ui_pick_folder(LauncherModel* m, const char* title,
+                           std::function<void(const char*)> on_pick) {
+    PickRequest req;
+    req.mode = PickMode::Folder;
+    if (title) req.title = title;
+    req.on_pick = std::move(on_pick);
+    ui_pick(m, std::move(req));
+}
+
+/* The ROM row remembers the disc it already has, then any hint the host left. */
+static std::string rom_picker_start_path(LauncherModel* m) {
+    std::error_code ec;
+    if (m && m->rom_full[0] &&
+        std::filesystem::is_regular_file(std::filesystem::path(m->rom_full), ec))
+        return m->rom_full;
+    if (const char* hint = std::getenv("RECOMP_DISC_HINT")) {
+        ec.clear();
+        if (std::filesystem::is_regular_file(std::filesystem::path(hint), ec))
+            return hint;
+    }
+    return std::string();
+}
+
+static PickRequest rom_pick_request(LauncherModel* m, const char* title,
+                                    const char* const* patterns,
+                                    int pattern_count, const char* description,
+                                    bool from_setup) {
+    PickRequest req;
+    req.title = title && title[0] ? title : "Select game file";
+    for (int i = 0; patterns && i < pattern_count; ++i)
+        if (patterns[i]) req.patterns.emplace_back(patterns[i]);
+    if (description) req.description = description;
+    req.start_path = rom_picker_start_path(m);
+    req.from_setup = from_setup;
+    return req;
 }
 
 static void request_rom_picker(LauncherModel* m, const char* title,
                                const char* const* patterns, int pattern_count,
                                const char* description, bool from_setup) {
-    request_file_picker(m, BuiltinPickerKind::Rom, title, patterns,
-                        pattern_count, description, from_setup);
+    PickRequest req = rom_pick_request(m, title, patterns, pattern_count,
+                                       description, from_setup);
+    req.on_pick = [m](const char* path) {
+        if (path) launcher_model_set_rom(m, path);
+    };
+    ui_pick(m, std::move(req));
 }
 
 /* Browse for ONE disc of a set. Binding is by slot, so filling in disc 3 does
- * not change which disc is mounted (launcher_model_set_disc_path). */
+ * not change which disc is mounted (launcher_model_set_disc_path). The slot
+ * rides the closure; it used to need a global of its own. */
 static void request_disc_slot_picker(LauncherModel* m, int slot,
                                      const char* title,
                                      const char* const* patterns,
                                      int pattern_count, const char* description,
                                      bool from_setup) {
-    g_disc_slot_target = slot;
-    request_file_picker(m, BuiltinPickerKind::DiscSlot, title, patterns,
-                        pattern_count, description, from_setup);
+    PickRequest req = rom_pick_request(m, title, patterns, pattern_count,
+                                       description, from_setup);
+    req.on_pick = [m, slot](const char* path) {
+        if (path) launcher_model_set_disc_path(m, slot, path);
+    };
+    ui_pick(m, std::move(req));
 }
 
 static void request_bios_picker(LauncherModel* m, const char* title,
                                 bool from_setup) {
-    static const char* kBiosPatterns[] = {"*.bin", "*.rom"};
-    request_file_picker(m, BuiltinPickerKind::Bios, title, kBiosPatterns, 2,
-                        "BIOS image (.bin .rom)", from_setup);
+    PickRequest req;
+    req.title = title && title[0] ? title : "Select BIOS file";
+    req.patterns = {"*.bin", "*.rom"};
+    req.description = "BIOS image (.bin .rom)";
+    if (m && m->s.bios_path[0]) req.start_path = m->s.bios_path;
+    req.from_setup = from_setup;
+    req.on_pick = [m](const char* path) {
+        if (path) launcher_model_request_bios_path(m, path);
+    };
+    ui_pick(m, std::move(req));
 }
 
 static void draw_builtin_rom_picker_contents(LauncherModel* m,
                                              const LauncherTheme& th,
                                              bool standalone_popup) {
     namespace fs = std::filesystem;
-    ImGui::TextColored(col(th.accent), "%s", g_rom_picker.title);
+    ImGui::TextColored(col(th.accent), "%s", g_picker.title);
     ImGui::TextColored(col(th.text_muted),
                        "Built-in browser (no desktop file-picker service required)");
-    if (!g_rom_picker.description.empty())
+    if (!g_picker.description.empty())
         ImGui::TextColored(col(th.text_muted), "Showing: %s",
-                           g_rom_picker.description.c_str());
+                           g_picker.description.c_str());
     ImGui::Dummy(ImVec2(0, px(6)));
 
     ImGui::AlignTextToFramePadding();
@@ -568,34 +701,34 @@ static void draw_builtin_rom_picker_contents(LauncherModel* m,
     ImGui::SameLine();
     ImGui::SetNextItemWidth(px(500));
     bool enter_dir = ImGui::InputText("##builtin_picker_directory",
-                                      g_rom_picker.directory,
-                                      sizeof(g_rom_picker.directory),
+                                      g_picker.directory,
+                                      sizeof(g_picker.directory),
                                       ImGuiInputTextFlags_EnterReturnsTrue);
     if (enter_dir) {
         std::error_code ec;
-        if (!fs::is_directory(fs::path(g_rom_picker.directory), ec))
-            std::snprintf(g_rom_picker.error, sizeof(g_rom_picker.error),
+        if (!fs::is_directory(fs::path(g_picker.directory), ec))
+            std::snprintf(g_picker.error, sizeof(g_picker.error),
                           "That folder does not exist or cannot be opened.");
         else
-            g_rom_picker.error[0] = '\0';
+            g_picker.error[0] = '\0';
     }
 
     if (ImGui::Button("Up", ImVec2(px(82), px(30)))) {
-        fs::path parent = fs::path(g_rom_picker.directory).parent_path();
+        fs::path parent = fs::path(g_picker.directory).parent_path();
         if (!parent.empty()) {
-            std::snprintf(g_rom_picker.directory, sizeof(g_rom_picker.directory),
+            std::snprintf(g_picker.directory, sizeof(g_picker.directory),
                           "%s", parent.string().c_str());
-            g_rom_picker.selected[0] = '\0';
-            g_rom_picker.error[0] = '\0';
+            g_picker.selected[0] = '\0';
+            g_picker.error[0] = '\0';
         }
     }
     ImGui::SameLine();
     if (ImGui::Button("Home", ImVec2(px(82), px(30)))) {
         if (const char* home = std::getenv("HOME")) {
-            std::snprintf(g_rom_picker.directory, sizeof(g_rom_picker.directory),
+            std::snprintf(g_picker.directory, sizeof(g_picker.directory),
                           "%s", home);
-            g_rom_picker.selected[0] = '\0';
-            g_rom_picker.error[0] = '\0';
+            g_picker.selected[0] = '\0';
+            g_picker.error[0] = '\0';
         }
     }
 
@@ -605,15 +738,19 @@ static void draw_builtin_rom_picker_contents(LauncherModel* m,
     };
     std::vector<PickerEntry> entries;
     std::error_code ec;
-    const fs::path directory(g_rom_picker.directory);
+    const fs::path directory(g_picker.directory);
     fs::directory_iterator it(directory, fs::directory_options::skip_permission_denied, ec);
     if (!ec) {
         for (const fs::directory_entry& entry : it) {
             std::error_code type_ec;
             const bool is_dir = entry.is_directory(type_ec);
             if (type_ec) continue;
-            if (is_dir || builtin_picker_matches(entry.path()))
+            /* Folder mode lists folders only: a file is never the answer. */
+            if (g_picker.mode == PickMode::Folder) {
+                if (is_dir) entries.push_back({entry.path(), true});
+            } else if (is_dir || builtin_picker_matches(entry.path())) {
                 entries.push_back({entry.path(), is_dir});
+            }
         }
         std::sort(entries.begin(), entries.end(),
                   [](const PickerEntry& a, const PickerEntry& b) {
@@ -621,8 +758,8 @@ static void draw_builtin_rom_picker_contents(LauncherModel* m,
                       return lower_ascii(a.path.filename().string()) <
                              lower_ascii(b.path.filename().string());
                   });
-    } else if (!g_rom_picker.error[0]) {
-        std::snprintf(g_rom_picker.error, sizeof(g_rom_picker.error),
+    } else if (!g_picker.error[0]) {
+        std::snprintf(g_picker.error, sizeof(g_picker.error),
                       "Unable to open this folder.");
     }
 
@@ -633,79 +770,127 @@ static void draw_builtin_rom_picker_contents(LauncherModel* m,
         std::string label = entry.directory ? "[Folder] " + name : name;
         label += "##" + entry.path.string();
         const bool selected =
-            !entry.directory && entry.path.string() == g_rom_picker.selected;
+            !entry.directory && entry.path.string() == g_picker.selected;
         if (ImGui::Selectable(label.c_str(), selected,
                               ImGuiSelectableFlags_AllowDoubleClick)) {
             if (entry.directory) {
-                std::snprintf(g_rom_picker.directory,
-                              sizeof(g_rom_picker.directory), "%s",
+                std::snprintf(g_picker.directory,
+                              sizeof(g_picker.directory), "%s",
                               entry.path.string().c_str());
-                g_rom_picker.selected[0] = '\0';
-                g_rom_picker.error[0] = '\0';
+                g_picker.selected[0] = '\0';
+                g_picker.error[0] = '\0';
             } else {
-                std::snprintf(g_rom_picker.selected,
-                              sizeof(g_rom_picker.selected), "%s",
+                std::snprintf(g_picker.selected,
+                              sizeof(g_picker.selected), "%s",
                               entry.path.string().c_str());
-                g_rom_picker.error[0] = '\0';
+                g_picker.error[0] = '\0';
             }
         }
     }
     ImGui::EndChild();
 
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted("File");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(-1);
-    if (g_rom_picker.focus_path) {
-        ImGui::SetKeyboardFocusHere();
-        g_rom_picker.focus_path = false;
+    /* Folder mode has nothing to type a filename into: the folder field above
+     * is the answer. */
+    if (g_picker.mode != PickMode::Folder) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(g_picker.mode == PickMode::SaveFile ? "Save as"
+                                                                  : "File");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(-1);
+        if (g_picker.focus_path) {
+            ImGui::SetKeyboardFocusHere();
+            g_picker.focus_path = false;
+        }
+        if (ImGui::InputText("##builtin_picker_selected", g_picker.selected,
+                             sizeof(g_picker.selected)))
+            g_picker.overwrite_armed = false; /* retyping re-arms the guard */
     }
-    ImGui::InputText("##builtin_picker_selected", g_rom_picker.selected,
-                     sizeof(g_rom_picker.selected));
-    if (g_rom_picker.error[0])
-        ImGui::TextColored(col(th.warn), "%s", g_rom_picker.error);
+    if (g_picker.error[0])
+        ImGui::TextColored(col(th.warn), "%s", g_picker.error);
 
     ImGui::Dummy(ImVec2(0, px(6)));
-    if (ImGui::Button("Use selected file", ImVec2(px(180), px(34)))) {
+
+    const char* confirm_label = g_picker.mode == PickMode::Folder ? "Use this folder"
+                                : g_picker.mode == PickMode::SaveFile
+                                      ? (g_picker.overwrite_armed ? "Overwrite" : "Save here")
+                                      : "Use selected file";
+
+    if (ImGui::Button(confirm_label, ImVec2(px(180), px(34)))) {
         std::error_code file_ec;
-        fs::path selected(g_rom_picker.selected);
-        if (fs::is_regular_file(selected, file_ec) &&
-            builtin_picker_matches(selected)) {
-            apply_builtin_picker_selection(m, selected.string().c_str());
-            g_rom_picker.active = false;
-            if (standalone_popup) ImGui::CloseCurrentPopup();
+        if (g_picker.mode == PickMode::Folder) {
+            fs::path chosen(g_picker.directory);
+            if (fs::is_directory(chosen, file_ec)) {
+                const std::string out = chosen.string();
+                if (standalone_popup) ImGui::CloseCurrentPopup();
+                builtin_picker_finish(out.c_str());
+                return;
+            }
+            std::snprintf(g_picker.error, sizeof(g_picker.error), "%s",
+                          "Open an existing folder first.");
+        } else if (g_picker.mode == PickMode::SaveFile) {
+            /* A save destination need NOT exist yet -- that is the whole point
+             * of the mode. What must exist is the folder it lands in. */
+            fs::path target(g_picker.selected);
+            if (target.empty() || !target.has_filename()) {
+                std::snprintf(g_picker.error, sizeof(g_picker.error), "%s",
+                              "Type a file name to save as.");
+            } else {
+                if (target.is_relative())
+                    target = fs::path(g_picker.directory) / target;
+                fs::path parent = target.parent_path();
+                if (parent.empty()) parent = fs::path(g_picker.directory);
+                if (!fs::is_directory(parent, file_ec)) {
+                    std::snprintf(g_picker.error, sizeof(g_picker.error), "%s",
+                                  "That folder does not exist.");
+                } else if (fs::exists(target, file_ec) &&
+                           !g_picker.overwrite_armed) {
+                    g_picker.overwrite_armed = true;
+                    std::snprintf(g_picker.error, sizeof(g_picker.error), "%s",
+                                  "That file already exists. Press Overwrite "
+                                  "to replace it.");
+                } else {
+                    const std::string out = target.string();
+                    if (standalone_popup) ImGui::CloseCurrentPopup();
+                    builtin_picker_finish(out.c_str());
+                    return;
+                }
+            }
         } else {
-            const char* err =
-                g_rom_picker.kind == BuiltinPickerKind::Bios
-                    ? "Select an existing BIOS image (.bin / .rom)."
-                : g_rom_picker.kind == BuiltinPickerKind::SetupToolchainZip
-                    ? "Select an existing toolchain .zip archive."
-                    : "Select an existing file matching this game's file types.";
-            std::snprintf(g_rom_picker.error, sizeof(g_rom_picker.error), "%s",
-                          err);
+            fs::path selected(g_picker.selected);
+            if (fs::is_regular_file(selected, file_ec) &&
+                builtin_picker_matches(selected)) {
+                const std::string out = selected.string();
+                if (standalone_popup) ImGui::CloseCurrentPopup();
+                builtin_picker_finish(out.c_str());
+                return;
+            }
+            if (g_picker.description.empty())
+                std::snprintf(g_picker.error, sizeof(g_picker.error), "%s",
+                              "Select an existing file of the right type.");
+            else
+                std::snprintf(g_picker.error, sizeof(g_picker.error),
+                              "Select an existing file matching: %s",
+                              g_picker.description.c_str());
         }
     }
     ImGui::SameLine();
     if (ImGui::Button(ui_text("Cancel"), ImVec2(px(110), px(34)))) {
-        g_rom_picker.active = false;
         if (standalone_popup) ImGui::CloseCurrentPopup();
+        builtin_picker_finish(nullptr);
+        return;
     }
 }
 
 static void draw_standalone_builtin_rom_picker(LauncherModel* m,
                                                 const LauncherTheme& th) {
-    if (!g_rom_picker.active || g_rom_picker.from_setup) return;
-    const char* popup =
-        g_rom_picker.kind == BuiltinPickerKind::Bios
-            ? "Select BIOS file##builtin"
-        : g_rom_picker.kind == BuiltinPickerKind::SetupToolchainZip
-            ? "Select toolchain zip##builtin"
-            : "Select game file##builtin";
-    ImGui::OpenPopup(popup);
+    if (!g_picker.active || g_picker.from_setup) return;
+    /* One popup id for every picker: the title is data now, not a fixed set of
+     * cases, so a new picker needs no new id here. */
+    ImGui::OpenPopup("##builtin_picker_modal");
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(),
                             ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(px(720), 0), ImGuiCond_Always);
-    if (ImGui::BeginPopupModal(popup, nullptr,
+    if (ImGui::BeginPopupModal("##builtin_picker_modal", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize |
                                ImGuiWindowFlags_NoMove)) {
         draw_builtin_rom_picker_contents(m, th, true);
@@ -2049,6 +2234,37 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
             request_rom_picker(m, title, NULL, 0, NULL, false);
     }
 
+    // No desktop file-picker service, or the one this host has just failed:
+    // say so and give the in-app browser its own control, rather than leaving
+    // the player with a Browse button whose backend cannot run.
+    if (builtin_file_picker_should_be_offered()) {
+        ImGui::TextColored(col(th.text_muted), "%s",
+                           g_native_picker_failed
+                               ? "The desktop file picker could not run."
+                               : "No desktop file picker (zenity/kdialog) found.");
+        char builtin_label[64];
+        snprintf(builtin_label, sizeof(builtin_label), "%s %s",
+                 ui_text("Browse For"), ui_text(noun));
+        std::strncat(builtin_label, " (built-in)",
+                     sizeof(builtin_label) - std::strlen(builtin_label) - 1);
+        if (ImGui::Button(builtin_label, ImVec2(availw, px(28)))) {
+            const SystemProfile* prof = (const SystemProfile*)m->profile;
+            char title[64];
+            snprintf(title, sizeof(title), "Select %s", noun);
+            PickRequest req =
+                (prof && prof->rom_filter.patterns &&
+                 prof->rom_filter.pattern_count > 0)
+                    ? rom_pick_request(m, title, prof->rom_filter.patterns,
+                                       prof->rom_filter.pattern_count,
+                                       prof->rom_filter.desc, false)
+                    : rom_pick_request(m, title, NULL, 0, NULL, false);
+            req.on_pick = [m](const char* path) {
+                if (path) launcher_model_set_rom(m, path);
+            };
+            open_builtin_picker(m, std::move(req));
+        }
+    }
+
     if (m->setup_error[0]) {
         ImGui::PushTextWrapPos();
         ImGui::TextColored(col(th.warn), "%s", m->setup_error);
@@ -2201,10 +2417,11 @@ void draw_save_row(LauncherModel* m, const LauncherTheme& th) {
     ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw*2 - px(th.spacing_sm));
     static const char* kSramPatterns[] = { "*.srm", "*.sav" };
     if (ImGui::Button("Import", ImVec2(bw, px(30)))) {
-        char buf[512];
-        if (launcher_pick_file("Import SRAM save", kSramPatterns, 2,
-                               "Battery save (.srm .sav)", buf, sizeof(buf)))
-            launcher_model_import_sram(m, buf);   // backs up existing to .bak, then copies in
+        ui_pick_file(m, "Import SRAM save", {"*.srm", "*.sav"},
+                     "Battery save (.srm .sav)", [m](const char* path) {
+                         if (path)
+                             launcher_model_import_sram(m, path);   // backs up existing to .bak, then copies in
+                     });
     }
     ImGui::SameLine(0, px(th.spacing_sm));
     ImGui::BeginDisabled(!has_save);              // nothing to clear when no save exists
@@ -2349,20 +2566,22 @@ void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
         ImGui::Dummy(ImVec2(0, btn_gap));
     }
     if (ImGui::Button(ui_text("Browse"), ImVec2(bw, btn_h))) {
-        char buf[512];
-        if (launcher_pick_file("Select memory card image", kCardPatterns, 3,
-                               "PS1 memory card (.mcd .mcr .mc)", buf, sizeof(buf)))
-            launcher_model_set_memcard_path(m, slot, buf);
+        ui_pick_file(m, "Select memory card image", {"*.mcd", "*.mcr", "*.mc"},
+                     "PS1 memory card (.mcd .mcr .mc)",
+                     [m, slot](const char* path) {
+                         if (path) launcher_model_set_memcard_path(m, slot, path);
+                     });
     }
     ImGui::SameLine(0, px(th.spacing_sm));
     if (ImGui::Button(ui_text("New"), ImVec2(bw, btn_h))) {
-        char buf[512];
         // "New" picks a DESTINATION (the file need not exist yet — a save
         // dialog, not the open dialog Browse uses), then writes a real,
         // freshly formatted blank 128KB card there and adopts it.
-        if (launcher_pick_save_file("Create new memory card", kCardPatterns, 3,
-                                    "PS1 memory card (.mcd)", buf, sizeof(buf)))
-            launcher_model_new_memcard(m, slot, buf);
+        ui_pick_save_file(m, "Create new memory card",
+                          {"*.mcd", "*.mcr", "*.mc"}, "PS1 memory card (.mcd)",
+                          [m, slot](const char* path) {
+                              if (path) launcher_model_new_memcard(m, slot, path);
+                          });
     }
 
     ImGui::PopStyleVar();  // body_alpha
@@ -2575,11 +2794,11 @@ void draw_tpak_modal(LauncherModel* m, const LauncherTheme& th) {
     const float full = ImGui::GetContentRegionAvail().x;
     if (ImGui::Button(has_cart ? "Change cartridge..." : "Insert cartridge...",
                       ImVec2(full, px(32)))) {
-        static const char* kGbPatterns[] = { "*.gb", "*.gbc" };
-        char buf[512];
-        if (launcher_pick_file("Select Game Boy cartridge", kGbPatterns, 2,
-                               "Game Boy cartridge (.gb .gbc)", buf, sizeof(buf)))
-            launcher_model_set_tpak_rom(m, slot, buf);
+        ui_pick_file(m, "Select Game Boy cartridge", {"*.gb", "*.gbc"},
+                     "Game Boy cartridge (.gb .gbc)",
+                     [m, slot](const char* path) {
+                         if (path) launcher_model_set_tpak_rom(m, slot, path);
+                     });
     }
     if (has_cart) {
         if (ImGui::Button("Remove cartridge", ImVec2(full, px(28))))
@@ -2596,11 +2815,10 @@ void draw_tpak_modal(LauncherModel* m, const LauncherTheme& th) {
         ImGui::TextUnformatted(elided);
         const float bw = (ImGui::GetContentRegionAvail().x - px(th.spacing_sm)) * 0.5f;
         if (ImGui::Button(ui_text("Browse save..."), ImVec2(bw, px(26)))) {
-            static const char* kSavPatterns[] = { "*.sav", "*.srm" };
-            char buf[512];
-            if (launcher_pick_file("Select battery save", kSavPatterns, 2,
-                                   "Battery save (.sav)", buf, sizeof(buf)))
-                launcher_model_set_tpak_save(m, slot, buf);
+            ui_pick_file(m, "Select battery save", {"*.sav", "*.srm"},
+                         "Battery save (.sav)", [m, slot](const char* path) {
+                             if (path) launcher_model_set_tpak_save(m, slot, path);
+                         });
         }
         ImGui::SameLine(0, px(th.spacing_sm));
         if (ImGui::Button("Use default", ImVec2(bw, px(26))))
@@ -3282,10 +3500,10 @@ void draw_shader_row(LauncherModel* m, const LauncherTheme& th, float col_w = 0.
     ImGui::SameLine(0, gap);
     static const char* kShaderPatterns[] = { "*.glsl", "*.glslp" };
     if (ImGui::Button(ui_text("Browse"), ImVec2(browse_w, px(30)))) {
-        char buf[512];
-        if (launcher_pick_file("Select GLSL shader", kShaderPatterns, 2,
-                               "GLSL shader (.glsl .glslp)", buf, sizeof(buf)))
-            launcher_model_set_shader_path(m, buf);
+        ui_pick_file(m, "Select GLSL shader", {"*.glsl", "*.glslp"},
+                     "GLSL shader (.glsl .glslp)", [m](const char* path) {
+                         if (path) launcher_model_set_shader_path(m, path);
+                     });
     }
     ImGui::SameLine(0, gap);
     if (ImGui::Button(ui_text("Folder"), ImVec2(folder_w, px(30)))) {
@@ -3400,9 +3618,10 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
             ImGui::TextColored(col(th.text_muted), "%s", elided);
             ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw);
             if (ImGui::Button(ui_text("Browse"), ImVec2(bw, px(30)))) {
-                char buf[512];
-                if (launcher_pick_folder("Select HD pack folder (contains hires.txt)", buf, sizeof(buf)))
-                    launcher_model_set_hdpack_dir(m, buf);
+                ui_pick_folder(m, "Select HD pack folder (contains hires.txt)",
+                               [m](const char* path) {
+                                   if (path) launcher_model_set_hdpack_dir(m, path);
+                               });
             }
         }
         return;
@@ -3810,9 +4029,9 @@ void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
         ImGui::TextColored(col(th.text_muted), "%s", elided);
         ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw);
         if (ImGui::Button(ui_text("Browse"), ImVec2(bw, px(30)))) {  // px(30) matches the other settings buttons + the row's frame height (px(28) sat the label high)
-            char buf[512];
-            if (launcher_pick_folder("Select MSU-1 music folder", buf, sizeof(buf)))
-                launcher_model_set_msu1_dir(m, buf);
+            ui_pick_folder(m, "Select MSU-1 music folder", [m](const char* path) {
+                if (path) launcher_model_set_msu1_dir(m, path);
+            });
         }
     }
 
@@ -9972,17 +10191,15 @@ static void draw_mod_packages(LauncherModel* m, const LauncherTheme& th) {
     std::snprintf(archive_pattern, sizeof(archive_pattern),
                   "*%s", archive_extension);
     if (ImGui::Button(install_label)) {
-        const char* patterns[] = { archive_pattern };
-        char path[1024];
-        if (launcher_pick_file(ui_text("Install Mod Package"), patterns, 1,
-                               archive_description,
-                               path, sizeof(path))) {
+        ui_pick_file(m, ui_text("Install Mod Package"), {archive_pattern},
+                     archive_description, [m, mods](const char* path) {
+            if (!path) return;
             if (!mods->install_archive || !mods->install_archive(mods->ctx, path))
                 mod_note_error(m);
             else
                 std::snprintf(m->mod_status, sizeof(m->mod_status),
                               "Package installed. Changes apply when you press PLAY.");
-        }
+        });
     }
     ImGui::SameLine();
     ImGui::SetNextItemWidth(px(300));
@@ -10448,11 +10665,9 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
     std::snprintf(archive_pattern, sizeof(archive_pattern),
                   "*%s", archive_extension);
     if (ImGui::Button(install_label)) {
-        const char* patterns[] = { archive_pattern };
-        char path[1024];
-        if (launcher_pick_file("Install Mod Package", patterns, 1,
-                               archive_description,
-                               path, sizeof(path))) {
+        ui_pick_file(m, "Install Mod Package", {archive_pattern},
+                     archive_description, [m, mods](const char* path) {
+            if (!path) return;
             if (!mods->install_archive ||
                 !mods->install_archive(mods->ctx, path)) {
                 mod_note_error(m);
@@ -10460,7 +10675,7 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
                 std::snprintf(m->mod_status, sizeof(m->mod_status),
                               "%s", ui_text("Package installed. Changes apply when you press PLAY."));
             }
-        }
+        });
     }
     ImGui::SameLine();
     if (ImGui::Button(ui_text("Enable all")))
@@ -10712,29 +10927,40 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
                             }
                             for (const std::string& pattern : owned_patterns)
                                 patterns.push_back(pattern.c_str());
-                            char path[RECOMP_LAUNCHER_MOD_PATH_MAX] = {};
-                            const bool picked = directory_resource
-                                ? launcher_pick_folder(resource.label, path,
-                                                       sizeof(path))
-                                : launcher_pick_file(
-                                      resource.label,
-                                      patterns.empty() ? nullptr : patterns.data(),
-                                      (int)patterns.size(),
-                                      resource.file_description[0]
-                                          ? resource.file_description : nullptr,
-                                      path, sizeof(path));
-                            if (picked) {
+                            /* The ids and label are copied into the closure:
+                             * on the built-in-browser path this runs many
+                             * frames later, when the RecompLauncherCMod*
+                             * structs this loop walks are long gone. */
+                            const std::string pkg_id = feature.package_id;
+                            const std::string feat_id = feature.id;
+                            const std::string res_id = resource.id;
+                            const std::string res_label = resource.label;
+                            auto apply_resource = [m, mods, pkg_id, feat_id,
+                                                   res_id,
+                                                   res_label](const char* path) {
+                                if (!path) return;
                                 if (!mods->feature_resource_set_path(
-                                        mods->ctx, feature.package_id,
-                                        feature.id, resource.id, path)) {
+                                        mods->ctx, pkg_id.c_str(),
+                                        feat_id.c_str(), res_id.c_str(),
+                                        path)) {
                                     mod_note_error(m);
                                 } else {
                                     std::snprintf(
                                         m->mod_status,
                                         sizeof(m->mod_status),
                                         "%s verified. Changes apply on PLAY.",
-                                        resource.label);
+                                        res_label.c_str());
                                 }
+                            };
+                            if (directory_resource) {
+                                ui_pick_folder(m, resource.label,
+                                               apply_resource);
+                            } else {
+                                ui_pick_file(m, resource.label, owned_patterns,
+                                             resource.file_description[0]
+                                                 ? resource.file_description
+                                                 : nullptr,
+                                             apply_resource);
                             }
                         }
                         if (!resource.required && resource.path[0]) {
@@ -10802,12 +11028,10 @@ static void draw_rom_patch(LauncherModel* m, const LauncherTheme& th) {
         ImGui::SameLine(ImGui::GetContentRegionAvail().x - browse_w - clear_w -
                         px(8));
         if (ImGui::Button(ui_text("Browse..."), ImVec2(browse_w, px(28)))) {
-            static const char* patterns[] = { "*.ips", "*.ips32", "*.bps" };
-            if (launcher_pick_file("Select ROM patch", patterns, 3,
-                                   "ROM patches", g_pick_buf,
-                                   sizeof(g_pick_buf))) {
-                launcher_model_set_rom_patch(m, g_pick_buf);
-            }
+            ui_pick_file(m, "Select ROM patch", {"*.ips", "*.ips32", "*.bps"},
+                         "ROM patches", [m](const char* path) {
+                             if (path) launcher_model_set_rom_patch(m, path);
+                         });
         }
         ImGui::SameLine(0, px(8));
         ImGui::BeginDisabled(!m->s.rom_patch_path[0]);
@@ -11546,7 +11770,7 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
     /* Prefer content height (AlwaysAutoResize). Clamp to the work area. */
     const float max_h = vp->WorkSize.y * 0.92f;
     ImGui::SetNextWindowSize(
-        ImVec2(px(g_rom_picker.active && g_rom_picker.from_setup ? 720.0f : 640.0f), 0),
+        ImVec2(px(g_picker.active && g_picker.from_setup ? 720.0f : 640.0f), 0),
         ImGuiCond_Always);
     ImGui::SetNextWindowSizeConstraints(ImVec2(px(520), 0),
                                         ImVec2(FLT_MAX, max_h));
@@ -11558,7 +11782,7 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
     const float wrap_x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
     const char* noun = (m->rom_noun && m->rom_noun[0]) ? m->rom_noun : "ROM";
     const char* game = (m->game_name && m->game_name[0]) ? m->game_name : "this game";
-    if (g_rom_picker.active && g_rom_picker.from_setup) {
+    if (g_picker.active && g_picker.from_setup) {
         draw_builtin_rom_picker_contents(m, th, false);
         ImGui::EndPopup();
         return;
@@ -11647,11 +11871,19 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
             ImGui::SameLine();
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(px(12), px(6)));
             if (ImGui::Button("Browse zip…##tc", ImVec2(px(128), px(32)))) {
-                static const char* kZipPatterns[] = {"*.zip"};
-                request_file_picker(
-                    m, BuiltinPickerKind::SetupToolchainZip,
-                    "Select cmake-clang-v1 toolchain zip", kZipPatterns, 1,
-                    "Toolchain zip archives", true);
+                PickRequest req;
+                req.title = "Select cmake-clang-v1 toolchain zip";
+                req.patterns = {"*.zip"};
+                req.description = "Toolchain zip archives";
+                if (m->setup_tc_zip[0]) req.start_path = m->setup_tc_zip;
+                req.from_setup = true;
+                req.on_pick = [m](const char* path) {
+                    if (!path) return;
+                    std::snprintf(m->setup_tc_zip, sizeof(m->setup_tc_zip),
+                                  "%s", path);
+                    m->setup_error[0] = 0;
+                };
+                ui_pick(m, std::move(req));
             }
             ImGui::PopStyleVar();
         }
@@ -12015,23 +12247,26 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                 if (can_prep_selected)
                     launcher_model_start_prepare_disc(m, m->rom_full);
             } else {
-                char buf[512];
-                static const char* kPsxDiscPrep[] = {
-                    "*.cue", "*.bin", "*.car" };
-                static const char* kDumpPatterns[] = {
-                    "*.cue", "*.iso", "*.bin", "*.img", "*.car", "*.chd", "*.*" };
-                const char* const* pats =
-                    (plat == SETUP_PLAT_PSX) ? kPsxDiscPrep : kDumpPatterns;
-                const int npat = (plat == SETUP_PLAT_PSX) ? 3 : 7;
-                if (launcher_pick_file(
-                        plat == SETUP_PLAT_PSX
-                            ? "Select disc (.cue/.bin/.car)"
-                            : "Select raw disc dump to convert",
-                        pats, npat,
-                        plat == SETUP_PLAT_PSX ? "PlayStation disc (.cue/.bin/.car)"
-                                               : "Disc dump",
-                        buf, sizeof(buf)))
-                    launcher_model_start_prepare_disc(m, buf);
+                /* First-run setup on a host with no working zenity/kdialog
+                 * used to dead-end right here, before the player had a game. */
+                PickRequest req;
+                req.title = (plat == SETUP_PLAT_PSX)
+                                ? "Select disc (.cue/.bin/.car)"
+                                : "Select raw disc dump to convert";
+                req.patterns = (plat == SETUP_PLAT_PSX)
+                                   ? std::vector<std::string>{"*.cue", "*.bin",
+                                                              "*.car"}
+                                   : std::vector<std::string>{
+                                         "*.cue", "*.iso", "*.bin", "*.img",
+                                         "*.car", "*.chd", "*.*"};
+                req.description = (plat == SETUP_PLAT_PSX)
+                                      ? "PlayStation disc (.cue/.bin/.car)"
+                                      : "Disc dump";
+                req.from_setup = true;
+                req.on_pick = [m](const char* path) {
+                    if (path) launcher_model_start_prepare_disc(m, path);
+                };
+                ui_pick(m, std::move(req));
             }
         }
         if (use_selected && !can_prep_selected) {

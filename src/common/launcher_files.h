@@ -13,6 +13,27 @@
 // Deliberately SDL-version agnostic: it does not depend on SDL3's
 // SDL_ShowOpenFileDialog, so it works identically on SDL2 and SDL3.
 
+// ---------------------------------------------------------------------------
+// TWO LAYERS. Read this before adding a picker.
+//
+//   launcher_try_pick_*   tri-state native layer:  1 = picked, 0 = cancelled,
+//                        -1 = NO USABLE NATIVE BACKEND. Only -1 means "ask the
+//                        UI to browse in-app"; it is the whole reason the
+//                        fallback can exist.
+//   launcher_pick_*      blocking bool convenience wrappers. They collapse -1
+//                        into false, so a caller CANNOT tell "user cancelled"
+//                        from "this host has no file picker at all" and the
+//                        button silently does nothing.
+//
+// The ImGui launcher must therefore never call the bool wrappers. It routes
+// every picker through ui_pick() in launcher_imgui.cpp, which owns the
+// native -> built-in-browser fallback. tests/check_no_raw_pickers.py enforces
+// that; see the note above ui_pick for why the closure model matters.
+//
+// The bool wrappers stay for non-UI callers (tools, tests) that genuinely
+// cannot fall back to anything.
+// ---------------------------------------------------------------------------
+
 #ifndef LAUNCHER_NG_FILES_H
 #define LAUNCHER_NG_FILES_H
 
@@ -62,6 +83,14 @@ int launcher_try_pick_file(const char* title, const char* const* patterns,
                            int num_patterns, const char* desc,
                            char* out_path, size_t out_cap);
 
+// Tri-state folder pick. Same contract as launcher_try_pick_file.
+int launcher_try_pick_folder(const char* title, char* out_path, size_t out_cap);
+
+// Tri-state save-destination pick. Same contract as launcher_try_pick_file.
+int launcher_try_pick_save_file(const char* title, const char* const* patterns,
+                                int num_patterns, const char* desc,
+                                char* out_path, size_t out_cap);
+
 // Open the OS "save file" dialog — for choosing a DESTINATION path that need
 // not already exist (e.g. picking where to write a freshly formatted PS1
 // memory-card image). `patterns`/`num_patterns` may be NULL/0 for "all
@@ -69,6 +98,20 @@ int launcher_try_pick_file(const char* title, const char* const* patterns,
 // true and fills `out_path` on success.
 bool launcher_pick_save_file(const char* title, const char* const* patterns, int num_patterns,
                              const char* desc, char* out_path, size_t out_cap);
+
+// Test hook. When RECOMP_UI_PICKER_SELFTEST is set to something other than
+// "0"/"false", run ONE native file pick and print the outcome to stdout as
+//   [picker-selftest] native_available=<0|1>
+//   [picker-selftest] result=<1|0|-1> path=[...]
+//   [picker-selftest] builtin_fallback=<yes|no>
+// then return true. Returns false (and does nothing) otherwise.
+//
+// This exists so a packaged build can be checked end to end — real binary,
+// real AppRun environment, a stub zenity/kdialog on PATH — without a human
+// clicking Browse. A picker that cannot start is invisible by nature: the
+// button simply does nothing. Having the shipped binary able to exercise and
+// report its own picker is what makes that testable at all.
+bool launcher_file_picker_selftest(void);
 
 #ifdef __cplusplus
 }
