@@ -102,6 +102,24 @@ if(BUILD_TESTING)
         COMMAND $<TARGET_FILE:recomp-ui-launcher-files-spawn-test>
                 "${CMAKE_CURRENT_BINARY_DIR}")
 
+    # The blocking launcher_pick_* wrappers must not come back into a UI
+    # backend: they hide "no usable native picker" as "user cancelled", which
+    # is how 14 Browse buttons shipped dead on Linux. ui_pick() is the only
+    # sanctioned entry point; this keeps a regression loud instead of silent.
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_FOUND)
+        add_test(
+            NAME recomp-ui-no-raw-pickers
+            COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_no_raw_pickers.py"
+                "${CMAKE_CURRENT_SOURCE_DIR}")
+    else()
+        message(WARNING
+            "Python3 not found: recomp-ui-no-raw-pickers picker-API guard is "
+            "NOT registered. A UI backend could reintroduce a silent dead "
+            "Browse button without failing the suite.")
+    endif()
+
     add_executable(recomp-ui-rom-patch-tool
         tools/rom_patch_tool.c
         src/common/ips_patch.c

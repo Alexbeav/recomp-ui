@@ -13,6 +13,27 @@
 // Deliberately SDL-version agnostic: it does not depend on SDL3's
 // SDL_ShowOpenFileDialog, so it works identically on SDL2 and SDL3.
 
+// ---------------------------------------------------------------------------
+// TWO LAYERS. Read this before adding a picker.
+//
+//   launcher_try_pick_*   tri-state native layer:  1 = picked, 0 = cancelled,
+//                        -1 = NO USABLE NATIVE BACKEND. Only -1 means "ask the
+//                        UI to browse in-app"; it is the whole reason the
+//                        fallback can exist.
+//   launcher_pick_*      blocking bool convenience wrappers. They collapse -1
+//                        into false, so a caller CANNOT tell "user cancelled"
+//                        from "this host has no file picker at all" and the
+//                        button silently does nothing.
+//
+// The ImGui launcher must therefore never call the bool wrappers. It routes
+// every picker through ui_pick() in launcher_imgui.cpp, which owns the
+// native -> built-in-browser fallback. tests/check_no_raw_pickers.py enforces
+// that; see the note above ui_pick for why the closure model matters.
+//
+// The bool wrappers stay for non-UI callers (tools, tests) that genuinely
+// cannot fall back to anything.
+// ---------------------------------------------------------------------------
+
 #ifndef LAUNCHER_NG_FILES_H
 #define LAUNCHER_NG_FILES_H
 
@@ -61,6 +82,14 @@ bool launcher_pick_file(const char* title, const char* const* patterns, int num_
 int launcher_try_pick_file(const char* title, const char* const* patterns,
                            int num_patterns, const char* desc,
                            char* out_path, size_t out_cap);
+
+// Tri-state folder pick. Same contract as launcher_try_pick_file.
+int launcher_try_pick_folder(const char* title, char* out_path, size_t out_cap);
+
+// Tri-state save-destination pick. Same contract as launcher_try_pick_file.
+int launcher_try_pick_save_file(const char* title, const char* const* patterns,
+                                int num_patterns, const char* desc,
+                                char* out_path, size_t out_cap);
 
 // Open the OS "save file" dialog — for choosing a DESTINATION path that need
 // not already exist (e.g. picking where to write a freshly formatted PS1

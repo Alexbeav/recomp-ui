@@ -695,22 +695,25 @@ bool launcher_pick_rom(char* out_path, size_t out_cap) {
 #endif
 }
 
-bool launcher_pick_folder(const char* title, char* out_path, size_t out_cap) {
-    if (!out_path || out_cap == 0) return false;
+int launcher_try_pick_folder(const char* title, char* out_path, size_t out_cap) {
+    if (!out_path || out_cap == 0) return -1;
     out_path[0] = '\0';
 
 #if defined(__linux__)
+    return linux_pick_folder(title, out_path, out_cap);
+#else
     {
-        const int r = linux_pick_folder(title, out_path, out_cap);
-        if (r >= 0) return r == 1; /* ok or cancel — never fall through to tinyfd */
-        return false;
+        const char* sel =
+            tinyfd_selectFolderDialog(title ? title : "Select folder", "");
+        if (!sel || !sel[0]) return 0;
+        snprintf(out_path, out_cap, "%s", sel);
+        return 1;
     }
 #endif
+}
 
-    const char* sel = tinyfd_selectFolderDialog(title ? title : "Select folder", "");
-    if (!sel || !sel[0]) return false;
-    snprintf(out_path, out_cap, "%s", sel);
-    return true;
+bool launcher_pick_folder(const char* title, char* out_path, size_t out_cap) {
+    return launcher_try_pick_folder(title, out_path, out_cap) == 1;
 }
 
 int launcher_try_pick_file(const char* title, const char* const* patterns,
@@ -774,27 +777,32 @@ bool launcher_file_picker_selftest(void) {
     return true;
 }
 
-bool launcher_pick_save_file(const char* title, const char* const* patterns, int num_patterns,
-                             const char* desc, char* out_path, size_t out_cap) {
-    if (!out_path || out_cap == 0) return false;
+int launcher_try_pick_save_file(const char* title, const char* const* patterns,
+                                int num_patterns, const char* desc,
+                                char* out_path, size_t out_cap) {
+    if (!out_path || out_cap == 0) return -1;
     out_path[0] = '\0';
 
 #if defined(__linux__)
+    return linux_pick_save(title, patterns, num_patterns, desc, out_path,
+                           out_cap);
+#else
     {
-        const int r = linux_pick_save(title, patterns, num_patterns, desc,
-                                      out_path, out_cap);
-        if (r >= 0) return r == 1; /* ok or cancel — never fall through to tinyfd */
-        return false;
+        const char* sel = tinyfd_saveFileDialog(
+            title ? title : "Save file",
+            "",
+            num_patterns > 0 ? num_patterns : 0,
+            num_patterns > 0 ? patterns : NULL,
+            desc);
+        if (!sel || !sel[0]) return 0;
+        snprintf(out_path, out_cap, "%s", sel);
+        return 1;
     }
 #endif
+}
 
-    const char* sel = tinyfd_saveFileDialog(
-        title ? title : "Save file",
-        "",
-        num_patterns > 0 ? num_patterns : 0,
-        num_patterns > 0 ? patterns : NULL,
-        desc);
-    if (!sel || !sel[0]) return false;
-    snprintf(out_path, out_cap, "%s", sel);
-    return true;
+bool launcher_pick_save_file(const char* title, const char* const* patterns, int num_patterns,
+                             const char* desc, char* out_path, size_t out_cap) {
+    return launcher_try_pick_save_file(title, patterns, num_patterns, desc,
+                                       out_path, out_cap) == 1;
 }
