@@ -1301,6 +1301,23 @@ struct RecompLauncherCSettings {
      * it had. RECOMP_LAUNCHER_RUN_AHEAD_MAX bounds what the UI offers.
      * Appended for ABI stability. */
     int  run_ahead;
+
+    /* The committed renderer, by ID rather than by index (GameInfo
+     * .renderer_ids). Empty = unset: the launcher then picks a default from
+     * the host's list and writes the ID back here.
+     *
+     * WHY A NAME AND NOT `renderer` ABOVE. `renderer` is an INDEX into a list
+     * the host supplies at run time. Persist an index and the meaning of a
+     * saved settings file changes the day the host adds, removes or reorders
+     * a renderer -- a player who chose the last entry silently gets a
+     * different one. The ID is the host's own stable name for the backend
+     * (n64lle: "software" / "opengl"), which is also the string its engine
+     * understands, so the round trip is lossless and reorder-proof. This is
+     * the same contract `audio_device` already uses for device names.
+     *
+     * `renderer` is still maintained beside it for every existing host.
+     * Appended for ABI stability; a zero-initialized host reads as unset. */
+    char renderer_id[64];
 };
 
 /* Largest run-ahead depth the launcher will offer for
@@ -1528,6 +1545,30 @@ typedef struct RecompLauncherCGameInfo {
      * the committed index. NULL/0 => the legacy 2-value toggle. */
     const char* const* renderer_labels;
     int  num_renderers;
+
+    /* ---- renderer IDS, and the note under the dropdown -------------------
+     * `renderer_ids[i]` is the stable name the HOST's engine understands for
+     * `renderer_labels[i]` -- e.g. n64lle passes {"software","opengl"} beside
+     * {"Software (reference rasterizer)", "OpenGL (experimental ...)"}. The
+     * committed choice round-trips through Settings.renderer_id by NAME, so a
+     * saved settings file survives the host adding or reordering a backend.
+     *
+     * RECOMP-UI STAYS CONSOLE-AGNOSTIC (README, docs/RUNTIME_UI.md): it knows
+     * nothing about what any of these names mean, and it draws whatever list
+     * it is handed. A PSX or SNES port hands over a different list, or none.
+     *
+     * SUPPLYING IDS ALSO HANDS OVER THE COUNT, zero included: with
+     * renderer_ids non-NULL, num_renderers is authoritative and 0 means THIS
+     * BUILD HAS NO SELECTABLE RENDERER -- the row does not compose at all,
+     * rather than composing as an empty dropdown. NULL keeps every existing
+     * host's behaviour exactly (labels-or-profile-or-legacy-pair, count 2).
+     *
+     * renderer_note is one line of host prose drawn under the dropdown --
+     * when the choice takes effect, what "experimental" costs. It is the
+     * HOST's to write, so the wording can follow the backend's maturity
+     * without a recomp-ui change. NULL = no note. Appended additively. */
+    const char* const* renderer_ids;
+    const char* renderer_note;
 
     /* ---- N64 Transfer Pak (dashboard "tpak" panel) ------------------------
      * tpak_slots (0..4): how many controller ports offer a Transfer Pak GB

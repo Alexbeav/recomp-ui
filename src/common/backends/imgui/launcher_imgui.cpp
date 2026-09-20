@@ -3424,7 +3424,8 @@ static void draw_aspect_row(LauncherModel* m, const LauncherTheme& th) {
 // of this predicate: it is a universal row drawn on BOTH branches (the ABI's
 // has_fullscreen_toggle no longer gates anything — see recomp_launcher.h).
 bool any_deep_display(const LauncherModel* m) {
-    return m->has_window_size || m->has_renderer || m->has_supersampling ||
+    return m->has_window_size || launcher_model_renderer_offered(m) ||
+           m->has_supersampling ||
            m->has_antialiasing || m->has_texture_filter || m->has_screen_kind ||
            m->has_fmv_filter ||
            m->has_frame_interp || m->has_skip_fmv ||
@@ -3651,7 +3652,9 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         if (ImGui::Checkbox("##intscale", &is)) launcher_model_toggle_integer_scale(m);
     }
 
-    if (m->has_renderer) {
+    /* renderer_offered, not has_renderer: a host that declares its renderers
+     * may declare NONE, and an empty dropdown is worse than no row. */
+    if (launcher_model_renderer_offered(m)) {
         /* A list, not a cycle button. The vocabulary is up to five entries on
          * hosts that supply their own (Auto / D3D11 / D3D9 / OpenGL /
          * Software), and reaching the last one by clicking through the other
@@ -3669,6 +3672,22 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
             }
             ImGui::EndCombo();
         }
+        /* The control column is a FIXED width shared by every row in the card,
+         * and an honest renderer label does not fit in it -- "OpenGL
+         * (experimental ...)" closes to "OpenGL (exper". The popup sizes
+         * itself to the longest entry and reads fine, but the CLOSED combo is
+         * what a player looks at most of the time, so the full label is a
+         * hover away rather than lost. */
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+            ImGui::SetTooltip("%s", ui_text(launcher_model_renderer_label(m)));
+        /* The host's own words about what this choice costs and when it takes
+         * effect. recomp-ui does not know either -- it cannot: "OpenGL" means
+         * a different thing on every console here, and a backend's maturity
+         * changes without this file changing. So the sentence is the host's,
+         * drawn verbatim. */
+        const char* note = launcher_model_renderer_note(m);
+        if (note && *note)
+            ImGui::TextColored(col(th.text_muted), "%s", ui_text(note));
     }
 
     if (m->has_supersampling) {

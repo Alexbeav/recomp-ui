@@ -297,6 +297,13 @@ typedef struct {
     // built-in Software/OpenGL pair.
     const char* const* renderer_labels;
     int  num_renderers;
+    // Host-supplied engine names for those labels, and the one-line note the
+    // host wants drawn under the dropdown (GameInfo.renderer_ids /
+    // .renderer_note). Both borrowed, both NULL for every legacy host. When
+    // renderer_ids is set, num_renderers is authoritative -- 0 means the
+    // control does not compose.
+    const char* const* renderer_ids;
+    const char* renderer_note;
 
     // ---- rebind-page opt-out (GameInfo.hide_rebind) ------------------------
     bool hide_rebind;
@@ -793,6 +800,25 @@ const char* launcher_model_renderer_label(const LauncherModel* m);
 int         launcher_model_renderer_count(const LauncherModel* m);
 const char* launcher_model_renderer_label_at(const LauncherModel* m, int i);
 void        launcher_model_set_renderer(LauncherModel* m, int index);
+/* Whether the renderer row composes AT ALL. A host that declares renderer IDs
+ * owns the count outright, so zero renderers hides the row instead of drawing
+ * an empty dropdown; every host that declares no IDs is unaffected. Panels
+ * gate on THIS, not on has_renderer alone. */
+bool        launcher_model_renderer_offered(const LauncherModel* m);
+/* The committed renderer's host-supplied ID ("software", "opengl", ...), i.e.
+ * what the host's engine understands. "" when the host supplied no IDs.
+ * set_renderer/toggle_renderer keep Settings.renderer_id in step with the
+ * index, so a host reads back either one. set_renderer_id is the inverse: it
+ * selects by name and is a no-op on a name the host never declared. */
+const char* launcher_model_renderer_id(const LauncherModel* m);
+void        launcher_model_set_renderer_id(LauncherModel* m, const char* id);
+/* The host's one-line note for under the dropdown, or NULL. */
+const char* launcher_model_renderer_note(const LauncherModel* m);
+/* Normalize incoming renderer settings against the declared vocabulary.
+ * launcher_model_init calls it; exposed so the settings-file cases (a file
+ * predating renderer_id, an ID the host has since reordered, an empty
+ * vocabulary) are testable without a full init. */
+void launcher_model_apply_renderer_settings(LauncherModel* m);
 void launcher_model_cycle_supersampling(LauncherModel* m);     // 1x..4x wrap
 const char* launcher_model_supersampling_label(const LauncherModel* m);
 void launcher_model_cycle_aa(LauncherModel* m);            // Off/2x/4x/8x (MSAA sample count)

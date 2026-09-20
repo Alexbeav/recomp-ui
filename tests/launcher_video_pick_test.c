@@ -74,6 +74,65 @@ int main(void) {
     ok(m.s.vsync == RECOMP_LAUNCHER_VSYNC_OFF,
        "a value outside the vocabulary is refused, not stored");
 
+    /* ---- host-supplied IDS: what the ENGINE is told, not an index ------
+     * The n64lle case. The port declares {id,label} pairs; the committed
+     * choice round-trips by NAME so a settings file survives the host
+     * reordering or adding a backend. */
+    static const char* const kIds[]  = { "software", "opengl" };
+    static const char* const kIdLbls[] = { "Software (reference)",
+                                           "OpenGL (experimental)" };
+    memset(&m, 0, sizeof(m));
+    m.has_renderer = true;
+    m.renderer_ids = kIds; m.renderer_labels = kIdLbls; m.num_renderers = 2;
+    m.renderer_note = "Applies when the game starts.";
+
+    ok(launcher_model_renderer_offered(&m), "a declared vocabulary composes");
+    ok(launcher_model_renderer_count(&m) == 2, "and enumerates what was declared");
+    launcher_model_set_renderer(&m, 1);
+    ok(strcmp(launcher_model_renderer_id(&m), "opengl") == 0,
+       "picking by index commits the host's ID, which is what the engine reads");
+    ok(strcmp(launcher_model_renderer_label(&m), "OpenGL (experimental)") == 0,
+       "while the label stays the thing a human reads");
+    launcher_model_set_renderer_id(&m, "software");
+    ok(m.s.renderer == 0 && strcmp(launcher_model_renderer_id(&m), "software") == 0,
+       "and selecting by ID is the inverse");
+    launcher_model_set_renderer_id(&m, "vulkan");
+    ok(m.s.renderer == 0, "an ID this host never declared selects nothing");
+    ok(strcmp(launcher_model_renderer_note(&m), "Applies when the game starts.") == 0,
+       "the note is the host's, passed through verbatim");
+
+    /* An OLDER settings file has no renderer_id at all: it must load and
+     * default, not fail. That is a memset-clean s.renderer_id. */
+    memset(&m, 0, sizeof(m));
+    m.has_renderer = true;
+    m.renderer_ids = kIds; m.renderer_labels = kIdLbls; m.num_renderers = 2;
+    launcher_model_apply_renderer_settings(&m);
+    ok(m.s.renderer == 0 && strcmp(m.s.renderer_id, "software") == 0,
+       "a settings file predating the key defaults to entry 0 and gains the ID");
+
+    /* A saved ID the host has since REORDERED still lands on the same
+     * renderer, which is the whole reason the ID is persisted, not the
+     * index. Same file, list reversed. */
+    {
+        static const char* const kRev[] = { "opengl", "software" };
+        memset(&m, 0, sizeof(m));
+        m.has_renderer = true;
+        m.renderer_ids = kRev; m.num_renderers = 2;
+        strcpy(m.s.renderer_id, "software");
+        m.s.renderer = 0;                       /* the OLD index for software */
+        launcher_model_apply_renderer_settings(&m);
+        ok(m.s.renderer == 1, "a reordered list is followed by name, not by index");
+    }
+
+    /* ---- ZERO renderers: absent, never an empty dropdown ---------------- */
+    memset(&m, 0, sizeof(m));
+    m.has_renderer = true;
+    m.renderer_ids = kIds; m.num_renderers = 0;
+    ok(launcher_model_renderer_count(&m) == 0, "zero declared is zero, not the legacy pair");
+    ok(!launcher_model_renderer_offered(&m), "and the control does not compose at all");
+    launcher_model_set_renderer(&m, 0);
+    ok(m.s.renderer_id[0] == 0, "with nothing offered, nothing is committed");
+
     /* A host that does not offer the control must not be edited by it. */
     memset(&m, 0, sizeof(m));
     launcher_model_set_renderer(&m, 3);

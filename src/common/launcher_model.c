@@ -141,6 +141,10 @@ static void lm_write_zero_padding(FILE* f, long count) {
     }
 }
 
+/* Defined with the rest of the renderer control below; used by the settings
+   normalization in launcher_model_init, which runs first. */
+static void lm_renderer_sync_id(LauncherModel* m);
+
 static int clampi(int v, int lo, int hi) {
     return v < lo ? lo : (v > hi ? hi : v);
 }
@@ -510,6 +514,8 @@ void launcher_model_init(LauncherModel* m,
         m->num_audio_devices    = game->num_audio_devices;
         m->renderer_labels      = game->renderer_labels;
         m->num_renderers        = game->num_renderers;
+        m->renderer_ids         = game->renderer_ids;
+        m->renderer_note        = game->renderer_note;
         m->hide_rebind          = game->hide_rebind != 0;
         m->has_mouse_controls   = game->has_mouse_controls != 0;
         m->has_gyro_controls    = game->has_gyro_controls != 0;
@@ -777,23 +783,7 @@ void launcher_model_init(LauncherModel* m,
         if (m->s.fmv_filter < 1 || m->s.fmv_filter > RECOMP_LAUNCHER_FMV_FILTER_COUNT)
             m->s.fmv_filter = RECOMP_LAUNCHER_FMV_FILTER_BICUBIC;
     }
-    if (m->has_renderer) {
-        if (m->renderer_labels && m->num_renderers > 0) {
-            /* Multi-label cycle (Software / OpenGL / Vulkan). Prefer OpenGL
-             * when the seeded index is out of range — never snap to Software
-             * just because memset left renderer at 0 and the host forgot a seed. */
-            if (m->s.renderer < 0 || m->s.renderer >= m->num_renderers) {
-                int def = 0;
-                for (int i = 0; i < m->num_renderers; ++i) {
-                    const char* lab = m->renderer_labels[i];
-                    if (lab && strstr(lab, "OpenGL")) { def = i; break; }
-                }
-                m->s.renderer = def;
-            }
-        } else {
-            m->s.renderer = m->s.renderer ? 1 : 0;
-        }
-    }
+    launcher_model_apply_renderer_settings(m);
     if (m->has_frame_interp) {
         int ok = 0;
         for (int i = 0; i < kInterpFpsCount; ++i)
@@ -1691,9 +1681,79 @@ const char* launcher_model_window_size_label(const LauncherModel* m) {
     return buf;
 }
 
+/* Keep Settings.renderer_id in step with Settings.renderer, so a host may
+ * read back whichever of the two it speaks. A host that declared no IDs has
+ * no name to write and the field stays empty -- it never invents one. */
+static void lm_renderer_sync_id(LauncherModel* m) {
+    if (!m) return;
+    const char* id = NULL;
+    if (m->renderer_ids && m->s.renderer >= 0 && m->s.renderer < m->num_renderers)
+        id = m->renderer_ids[m->s.renderer];
+    safe_copy(m->s.renderer_id, sizeof(m->s.renderer_id), id ? id : "");
+}
+
+/*
+ * Normalize the incoming renderer settings against the vocabulary this
+ * host declared. Split out of launcher_model_init so it can be exercised
+ * on its own: the interesting cases are all ABOUT what a settings file
+ * carried in -- a key that predates the ID, an ID the host has since
+ * reordered, a vocabulary that is now empty -- and none of them are
+ * reachable through a full init.
+ */
+void launcher_model_apply_renderer_settings(LauncherModel* m) {
+    if (!m) return;
+    if (m->has_renderer) {
+        if (m->renderer_ids) {
+            /* HOST-DECLARED VOCABULARY, resolved by NAME. The incoming
+             * settings file carries an ID, not an index, so a list the host
+             * has since reordered still lands on the renderer the player
+             * chose (and a list the host has since SHORTENED falls back
+             * loudly to entry 0 rather than silently to whatever now sits at
+             * the old index). An ID that is not in the list -- a hand-edited
+             * settings.toml, or a backend this build was not compiled with --
+             * is not honoured: entry 0 is the host's own first choice.
+             *
+             * num_renderers == 0 is a real answer, not a missing one: this
+             * build offers no renderer, the row will not compose, and there
+             * is nothing to normalize. */
+            int found = -1;
+            for (int i = 0; i < m->num_renderers; ++i) {
+                const char* id = m->renderer_ids[i];
+                if (id && m->s.renderer_id[0] && strcmp(id, m->s.renderer_id) == 0) {
+                    found = i; break;
+                }
+            }
+            if (found < 0) found = 0;
+            m->s.renderer = m->num_renderers > 0 ? found : 0;
+            lm_renderer_sync_id(m);
+        } else if (m->renderer_labels && m->num_renderers > 0) {
+            /* Multi-label cycle (Software / OpenGL / Vulkan). Prefer OpenGL
+             * when the seeded index is out of range — never snap to Software
+             * just because memset left renderer at 0 and the host forgot a seed. */
+            if (m->s.renderer < 0 || m->s.renderer >= m->num_renderers) {
+                int def = 0;
+                for (int i = 0; i < m->num_renderers; ++i) {
+                    const char* lab = m->renderer_labels[i];
+                    if (lab && strstr(lab, "OpenGL")) { def = i; break; }
+                }
+                m->s.renderer = def;
+            }
+        } else {
+            m->s.renderer = m->s.renderer ? 1 : 0;
+        }
+}
+}
+
 void launcher_model_toggle_renderer(LauncherModel* m) {
     // Game-supplied renderer vocabulary (RT64 hosts: Auto/Vulkan/D3D12)
     // cycles its full list; the legacy pair stays a 2-value toggle.
+    int n = launcher_model_renderer_count(m);
+    if (m->renderer_ids) {
+        if (n <= 0) return;            /* nothing offered, nothing to cycle */
+        m->s.renderer = (m->s.renderer + 1) % n;
+        lm_renderer_sync_id(m);
+        return;
+    }
     if (m->renderer_labels && m->num_renderers > 0) {
         m->s.renderer = (m->s.renderer + 1) % m->num_renderers;
         return;
@@ -1709,12 +1769,49 @@ void launcher_model_toggle_renderer(LauncherModel* m) {
  */
 int launcher_model_renderer_count(const LauncherModel* m) {
     if (!m) return 0;
+    /* A host that declared IDs declared the COUNT with them, zero included:
+     * "this build has no selectable renderer" has to be sayable, or a port
+     * with one backend gets a one-entry dropdown and a port with none gets an
+     * empty one. Only this branch can return 0. */
+    if (m->renderer_ids) return m->num_renderers > 0 ? m->num_renderers : 0;
     if (m->renderer_labels && m->num_renderers > 0) return m->num_renderers;
     return 2;
 }
 
+bool launcher_model_renderer_offered(const LauncherModel* m) {
+    return m && m->has_renderer && launcher_model_renderer_count(m) > 0;
+}
+
+const char* launcher_model_renderer_id(const LauncherModel* m) {
+    return m ? m->s.renderer_id : "";
+}
+
+void launcher_model_set_renderer_id(LauncherModel* m, const char* id) {
+    if (!m || !m->has_renderer || !m->renderer_ids || !id || !*id) return;
+    for (int i = 0; i < m->num_renderers; ++i)
+        if (m->renderer_ids[i] && strcmp(m->renderer_ids[i], id) == 0) {
+            launcher_model_set_renderer(m, i);
+            return;
+        }
+    /* An undeclared name selects nothing. Guessing would commit a renderer
+       the host cannot honour. */
+}
+
+const char* launcher_model_renderer_note(const LauncherModel* m) {
+    return m ? m->renderer_note : NULL;
+}
+
 const char* launcher_model_renderer_label_at(const LauncherModel* m, int i) {
     if (!m) return "";
+    if (m->renderer_ids) {
+        if (i < 0 || i >= m->num_renderers) return "";
+        /* A label is what a HUMAN reads and an ID is what the engine reads.
+           A host that supplies an ID and forgets the label gets the ID shown
+           rather than a blank row. */
+        const char* lab = m->renderer_labels ? m->renderer_labels[i] : NULL;
+        if (lab && *lab) return lab;
+        return m->renderer_ids[i] ? m->renderer_ids[i] : "";
+    }
     if (m->renderer_labels && m->num_renderers > 0) {
         if (i < 0 || i >= m->num_renderers) return "";
         return m->renderer_labels[i];
@@ -1729,7 +1826,10 @@ const char* launcher_model_renderer_label_at(const LauncherModel* m, int i) {
 
 void launcher_model_set_renderer(LauncherModel* m, int index) {
     if (!m || !m->has_renderer) return;
-    m->s.renderer = clampi(index, 0, launcher_model_renderer_count(m) - 1);
+    int n = launcher_model_renderer_count(m);
+    if (n <= 0) return;               /* nothing offered: commit nothing */
+    m->s.renderer = clampi(index, 0, n - 1);
+    lm_renderer_sync_id(m);
 }
 
 /* Set rather than cycle. The values are the RECOMP_LAUNCHER_VSYNC_* constants,
@@ -1745,6 +1845,8 @@ void launcher_model_set_vsync(LauncherModel* m, int value) {
 }
 
 const char* launcher_model_renderer_label(const LauncherModel* m) {
+    if (m->renderer_ids)
+        return launcher_model_renderer_label_at(m, m->s.renderer);
     if (m->renderer_labels && m->num_renderers > 0) {
         int i = clampi(m->s.renderer, 0, m->num_renderers - 1);
         return m->renderer_labels[i];
@@ -1827,6 +1929,7 @@ void launcher_model_set_shader_path(LauncherModel* m, const char* path) {
     if (m->s.shader_path[0]) {
         m->s.output_method = 2;
         m->s.renderer = 1;
+        lm_renderer_sync_id(m);   /* no-op unless the host declared IDs */
     }
 }
 
