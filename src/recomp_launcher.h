@@ -1922,8 +1922,14 @@ typedef struct RecompLauncherCGameInfo {
 #define RECOMP_LAUNCHER_RESULT_UNAVAILABLE  2
 #define RECOMP_LAUNCHER_RESULT_RELAUNCH     3
 
+// *io always comes back carrying the player's edits, whichever way the
+// launcher closed -- a setting changed and then dismissed is still a setting
+// changed, and a host that persists *io on quit keeps it. Only netplay_launch
+// is exempt: it is a transient output and is cleared on anything but a real
+// lobby launch.
+//
 // Returns: 0 = LAUNCH (boot out_rom_path with the edited *io),
-//          1 = QUIT (caller should exit),
+//          1 = QUIT (caller should exit; *io still holds the edits),
 //          2 = UNAVAILABLE (assets/GL failed — caller boots as if skipped),
 //          3 = RELAUNCH (host should exec recomp_launcher_relaunch_exe()).
 int recomp_launcher_run_window(const char* window_title,
