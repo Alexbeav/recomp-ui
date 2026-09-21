@@ -381,6 +381,10 @@ if(BUILD_TESTING)
         src/consoles/psx/memcard_format.c)
     target_include_directories(recomp-ui-launcher-model-cache-test PRIVATE
         src src/common src/consoles/psx)
+    # Readers also probe beside their executable. Keep them out of the setup
+    # tests' executable directory, where those tests intentionally write caches.
+    set_target_properties(recomp-ui-launcher-model-cache-test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/launcher-model-cache-test")
     add_test(
         NAME recomp-ui-launcher-model-cache
         COMMAND $<TARGET_FILE:recomp-ui-launcher-model-cache-test>
@@ -396,9 +400,13 @@ if(BUILD_TESTING)
         src/consoles/psx/memcard_format.c)
     target_include_directories(recomp-ui-launcher-rom-persistence-test PRIVATE
         src src/common src/consoles/psx)
+    set_target_properties(recomp-ui-launcher-rom-persistence-test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/launcher-rom-persistence-test")
     add_test(NAME recomp-ui-launcher-rom-persistence
              COMMAND $<TARGET_FILE:recomp-ui-launcher-rom-persistence-test>
-                     "${CMAKE_CURRENT_BINARY_DIR}")
+                     "${CMAKE_CURRENT_BINARY_DIR}/launcher-rom-persistence-test")
+    set_tests_properties(recomp-ui-launcher-rom-persistence PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/launcher-rom-persistence-test")
 
     add_executable(recomp-runtime-ui-imgui-test
         tests/runtime_ui_imgui_test.cpp

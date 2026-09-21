@@ -32,9 +32,11 @@ void recompui_keybinds_reset_player(int player) { (void)player; }
 void recompui_keybinds_save(void) { }
 void recompui_keybinds_set_button(int player, int button, SDL_Scancode sc) { (void)player; (void)button; (void)sc; }
 int rui_gb_binds_get(const char* path, int b) { (void)path; (void)b; return 0; }
+int rui_gb_binds_get_slot(const char* path, int b, int slot) { (void)path; (void)b; (void)slot; return 0; }
 void rui_gb_binds_init(const char* path) { (void)path; }
 void rui_gb_binds_reset(const char* path) { (void)path; }
 void rui_gb_binds_set(const char* path, int b, int scancode) { (void)path; (void)b; (void)scancode; }
+void rui_gb_binds_set_slot(const char* path, int b, int slot, int scancode) { (void)path; (void)b; (void)slot; (void)scancode; }
 int rui_genesis_binds_get_key(const char* path, int player, int b) { (void)path; (void)player; (void)b; return 0; }
 void rui_genesis_binds_get_pad(const char* path, int player, int b, int* kind, int* code, int* axis_dir) { (void)path; (void)player; (void)b; (void)kind; (void)code; (void)axis_dir; }
 void rui_genesis_binds_init(const char* path) { (void)path; }
@@ -49,6 +51,10 @@ void rui_n64_binds_set(const char* path, int device, int b, int slot, int type, 
 void rui_n64_pad_binds_init(const char* path) { (void)path; }
 void rui_n64_pad_binds_path(const char* bind_cfg_path, char* out, int cap) { (void)bind_cfg_path; (void)out; (void)cap; }
 void rui_n64_pad_binds_remember(const char* path, const char* guid, const char* name, int deadzone_pct) { (void)path; (void)guid; (void)name; (void)deadzone_pct; }
+void rui_n64_pad_binds_save_profile(const char* path, const char* guid, const char* name, int name_custom, int deadzone_pct) { (void)path; (void)guid; (void)name; (void)name_custom; (void)deadzone_pct; }
+void rui_n64_pad_binds_rename(const char* path, const char* guid, const char* name) { (void)path; (void)guid; (void)name; }
+void rui_n64_pad_binds_delete(const char* path, const char* guid) { (void)path; (void)guid; }
+int rui_n64_pad_binds_name_is_custom(const char* path, const char* guid) { (void)path; (void)guid; return 0; }
 void rui_n64_pad_binds_reset(const char* path, const char* guid) { (void)path; (void)guid; }
 void rui_n64_pad_binds_set(const char* path, const char* guid, int b, int kind, int code, int axis_dir) { (void)path; (void)guid; (void)b; (void)kind; (void)code; (void)axis_dir; }
 void rui_n64_pad_binds_source(const char* path, const char* guid, int b, char* out, int cap) { (void)path; (void)guid; (void)b; (void)out; (void)cap; }

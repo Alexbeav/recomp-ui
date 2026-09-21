@@ -25,6 +25,16 @@ void launcher_binds_set_zapper(int a, int b) { (void)a; (void)b; }
 
 static int fails;
 
+static int same_path(const char* got, const char* expected) {
+#if defined(_WIN32)
+    char absolute[1024];
+    DWORD n = GetFullPathNameA(expected, sizeof(absolute), absolute, NULL);
+    return n && n < sizeof(absolute) && !strcmp(got, absolute);
+#else
+    return !strcmp(got, expected);
+#endif
+}
+
 static void expect(int cond, const char* what) {
     if (cond) { printf("ok: %s\n", what); return; }
     fprintf(stderr, "FAIL: %s\n", what);
@@ -93,7 +103,7 @@ static void test_staged_in_wizard(const char* dir) {
            "no nested Switch BIOS? modal while the wizard is open");
     expect(m->setup_wizard_open && !m->setup_wizard_suspended_for_bios,
            "the wizard stays up, so the disc rows stay reachable");
-    expect(m->bios_switch_uncommitted && !strcmp(m->s.bios_path, bios),
+    expect(m->bios_switch_uncommitted && same_path(m->s.bios_path, bios),
            "the pick is staged on the model, not discarded");
     expect(launcher_model_setup_needs_bios_regen(m),
            "the wizard's primary button becomes Generate & rebuild");
@@ -128,7 +138,7 @@ static void test_second_pick_keeps_revert_target(const char* dir) {
 
     launcher_model_request_bios_path(m, a);
     launcher_model_request_bios_path(m, b);
-    expect(!strcmp(m->s.bios_path, b), "second pick replaces the first");
+    expect(same_path(m->s.bios_path, b), "second pick replaces the first");
     expect(m->bios_revert_path[0] == '\0',
            "revert target is still OpenBIOS, not the first unlinked pick");
 
