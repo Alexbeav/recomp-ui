@@ -158,6 +158,7 @@ typedef struct {
     const char* game_name;          // e.g. "Mega Man X"
     const char* region;             // e.g. "USA"
     const char* platform;           // console subtitle, e.g. "PLAYSTATION" (NULL => none)
+    const char* rom_cache_path;     // borrowed; NULL => rom.cfg beside cwd/exe
     bool        widescreen_supported;
     bool        msu1_supported;      // sram-like: show the MSU-1 module when true
     const char* msu1_note;           // borrowed; which patch, shown in the card
@@ -651,7 +652,8 @@ void launcher_model_init(LauncherModel* m,
                          const RecompLauncherCGameInfo* game,
                          const char* initial_rom);
 
-// Copy the working settings back into the caller's struct (on LAUNCH).
+// Copy settings back and remember a valid dashboard cartridge on every exit,
+// including QUIT. Setup/disc hosts retain their explicit confirmation flow.
 void launcher_model_commit(const LauncherModel* m, RecompLauncherCSettings* io);
 
 // Adopt a newly-picked ROM path (from the native file dialog): updates the

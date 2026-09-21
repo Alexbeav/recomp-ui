@@ -386,6 +386,20 @@ if(BUILD_TESTING)
         COMMAND $<TARGET_FILE:recomp-ui-launcher-model-cache-test>
                 "${CMAKE_CURRENT_BINARY_DIR}/launcher-model-cache-test")
 
+    add_executable(recomp-ui-launcher-rom-persistence-test
+        tests/launcher_rom_persistence_test.c
+        src/common/launcher_model.c
+        src/common/crc32.c
+        src/common/sha1.c
+        src/common/sha256.c
+        src/common/ips_patch.c
+        src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-launcher-rom-persistence-test PRIVATE
+        src src/common src/consoles/psx)
+    add_test(NAME recomp-ui-launcher-rom-persistence
+             COMMAND $<TARGET_FILE:recomp-ui-launcher-rom-persistence-test>
+                     "${CMAKE_CURRENT_BINARY_DIR}")
+
     add_executable(recomp-runtime-ui-imgui-test
         tests/runtime_ui_imgui_test.cpp
         src/common/recomp_runtime_ui.c

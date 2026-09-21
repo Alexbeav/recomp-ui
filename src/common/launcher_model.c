@@ -231,6 +231,7 @@ static int lm_memcard_enabled_from_host(int v) {
 }
 static void lm_inspect_tpak(LauncherModel* m, int slot);    // fwd; host tpak_inspect callback
 static void lm_persist_setup_sidecars(LauncherModel* m);    // fwd; called from launcher_model_finish_setup
+static void lm_persist_cart_rom(const LauncherModel* m);
 static int lm_running_exe_dir(char* out, size_t cap);
 
 static int lm_path_readable(const char* path) {
@@ -373,6 +374,7 @@ void launcher_model_init(LauncherModel* m,
         m->zapper               = game->zapper != 0;
         /* 0 = unset (caller predates the field) -> assume 2 players. */
         m->player_count         = game->num_players ? clampi(game->num_players, 1, LNG_MAX_PLAYERS) : 2;
+        m->rom_cache_path       = game->rom_cache_path;
         m->expected_crc         = game->expected_crc;
         m->has_expected_crc     = game->has_expected_crc;
         m->known_sha256         = game->known_sha256;
@@ -1024,6 +1026,7 @@ void launcher_model_init(LauncherModel* m,
 
 void launcher_model_commit(const LauncherModel* m, RecompLauncherCSettings* io) {
     if (io) *io = m->s;
+    lm_persist_cart_rom(m);
 }
 
 int launcher_model_disc_count(const LauncherModel* m) {
@@ -2207,6 +2210,36 @@ static void lm_write_sidecar_in_dir(const char* dir, const char* name,
     if (!f) return;
     fprintf(f, "%s\n", value);
     fclose(f);
+}
+
+/* Dashboard-only cartridge hosts do not run finish_setup(), the wizard's
+ * cache writer. Persist on both Play and Quit, which both commit the model.
+ * Keep the source ROM (not a generated/patched image), and leave a good cache
+ * alone when the player cancels or picks an invalid/missing file. */
+static void lm_persist_cart_rom(const LauncherModel* m) {
+    char absolute[1024], path[1100], exe_dir[1024];
+    const char* cache;
+    if (m->setup_wizard_supported || m->num_discs > 1 ||
+        (m->profile && m->profile->verify.mode == 1) ||
+        !lm_path_readable(m->rom_full)) return;
+    if ((m->has_expected_crc || m->num_known_sha256 || m->num_known_sha1) &&
+        !launcher_model_rom_verified(m)) return;
+#if defined(_WIN32)
+    DWORD n = GetFullPathNameA(m->rom_full, (DWORD)sizeof(absolute), absolute, NULL);
+    if (!n || n >= sizeof(absolute)) return;
+#else
+    char* resolved = realpath(m->rom_full, NULL);
+    if (!resolved) return;
+    int n = snprintf(absolute, sizeof(absolute), "%s", resolved);
+    free(resolved);
+    if (n < 0 || (size_t)n >= sizeof(absolute)) return;
+#endif
+    cache = m->rom_cache_path && m->rom_cache_path[0] ? m->rom_cache_path : "rom.cfg";
+    if (lm_cache_candidate_path(NULL, cache, path, sizeof(path)))
+        lm_write_sidecar_in_dir(NULL, path, absolute);
+    if (lm_running_exe_dir(exe_dir, sizeof(exe_dir)) &&
+        lm_cache_candidate_path(exe_dir, cache, path, sizeof(path)))
+        lm_write_sidecar_in_dir(NULL, path, absolute);
 }
 
 static int lm_running_exe_dir(char* out, size_t cap) {

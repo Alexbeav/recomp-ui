@@ -83,9 +83,11 @@ int recomp_launcher_run_window(const char* window_title,
      * window threw the whole edit away -- the host still held the values it
      * seeded, wrote those back to its config, and the next run reopened on the
      * old settings. The launcher's own direct-write stores (keybinds.ini,
-     * [KeyMap], [GamepadMap], rom.cfg) already persist on quit; the settings
+     * [KeyMap], [GamepadMap]) already persist on quit; the settings
      * struct was the one surface that did not. A setting changed and then
-     * dismissed is still a setting changed. */
+     * dismissed is still a setting changed. Commit also persists verified
+     * dashboard cartridge picks; those hosts never enter the setup wizard's
+     * sidecar-writing path. */
     launcher_model_commit(&model, io);   // edited settings back to the caller
     if (act != LNG_ACTION_LAUNCH && act != LNG_ACTION_RELAUNCH && io) {
         /* netplay_launch is a transient OUTPUT, not a setting: only a real
