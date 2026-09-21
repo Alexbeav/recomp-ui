@@ -76,8 +76,25 @@ int recomp_launcher_run_window(const char* window_title,
 
     launcher_platform_close(&plat);
 
+    /* Edited settings go back to the caller on EVERY exit, quit included.
+     *
+     * Commit used to run only on LAUNCH/RELAUNCH, so a player who opened the
+     * launcher, changed Fullscreen or a controller source, and then closed the
+     * window threw the whole edit away -- the host still held the values it
+     * seeded, wrote those back to its config, and the next run reopened on the
+     * old settings. The launcher's own direct-write stores (keybinds.ini,
+     * [KeyMap], [GamepadMap], rom.cfg) already persist on quit; the settings
+     * struct was the one surface that did not. A setting changed and then
+     * dismissed is still a setting changed. */
+    launcher_model_commit(&model, io);   // edited settings back to the caller
+    if (act != LNG_ACTION_LAUNCH && act != LNG_ACTION_RELAUNCH && io) {
+        /* netplay_launch is a transient OUTPUT, not a setting: only a real
+         * lobby launch may arm it. Quitting must never hand the host a
+         * pending session. */
+        memset(&io->netplay_launch, 0, sizeof(io->netplay_launch));
+    }
+
     if (act == LNG_ACTION_LAUNCH || act == LNG_ACTION_RELAUNCH) {
-        launcher_model_commit(&model, io);   // edited settings back to the caller
         const char* rom = launcher_model_effective_rom_path(&model);
         if (out_rom_path && out_rom_path_len) {
             if (rom && rom[0])
