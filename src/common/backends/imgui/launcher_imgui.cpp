@@ -98,6 +98,14 @@ struct ShaderPresetEntry {
 
 static std::vector<ShaderPresetEntry> g_shader_presets;
 
+namespace { std::string asset(const char* rel); }
+
+static bool shader_path_matches(const std::string& preset, const char* selected) {
+    if (!selected || !*selected) return false;
+    std::error_code ec;
+    return std::filesystem::equivalent(preset, selected, ec);
+}
+
 static bool shader_path_has_supported_ext(const std::filesystem::path& p) {
     std::string ext = p.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(),
@@ -133,7 +141,7 @@ static bool shader_relative_path_is_private(const std::filesystem::path& rel) {
 
 static void refresh_shader_presets() {
     g_shader_presets.clear();
-    const std::filesystem::path root = std::filesystem::path("assets") / "shaders";
+    static const std::filesystem::path root = asset("assets/shaders");
     std::error_code ec;
     if (!std::filesystem::exists(root, ec))
         return;
@@ -3473,7 +3481,7 @@ void draw_shader_row(LauncherModel* m, const LauncherTheme& th, float col_w = 0.
     refresh_shader_presets();
     std::string current_label = m->s.shader_path[0] ? ui_text("Custom") : ui_text("None");
     for (const ShaderPresetEntry& preset : g_shader_presets) {
-        if (preset.path == m->s.shader_path) {
+        if (shader_path_matches(preset.path, m->s.shader_path)) {
             current_label = preset.label;
             break;
         }
@@ -3485,9 +3493,15 @@ void draw_shader_row(LauncherModel* m, const LauncherTheme& th, float col_w = 0.
         if (ImGui::Selectable(ui_text("None"), !m->s.shader_path[0]))
             launcher_model_clear_shader_path(m);
         for (const ShaderPresetEntry& preset : g_shader_presets) {
-            bool selected = preset.path == m->s.shader_path;
-            if (ImGui::Selectable(preset.label.c_str(), selected))
-                launcher_model_set_shader_path(m, preset.path.c_str());
+            bool selected = shader_path_matches(preset.path, m->s.shader_path);
+            if (ImGui::Selectable(preset.label.c_str(), selected)) {
+                // Keep release-relative paths portable when the host anchors
+                // cwd to its executable; alternate working directories need
+                // the resolved path so the runtime opens the same preset.
+                std::error_code ec;
+                auto relative = std::filesystem::relative(preset.path, std::filesystem::current_path(ec), ec);
+                launcher_model_set_shader_path(m, ec ? preset.path.c_str() : relative.generic_string().c_str());
+            }
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
                 ImGui::SetTooltip("%s", preset.path.c_str());
         }
@@ -3508,7 +3522,7 @@ void draw_shader_row(LauncherModel* m, const LauncherTheme& th, float col_w = 0.
     }
     ImGui::SameLine(0, gap);
     if (ImGui::Button(ui_text("Folder"), ImVec2(folder_w, px(30)))) {
-        std::filesystem::path shader_dir = std::filesystem::path("assets") / "shaders";
+        std::filesystem::path shader_dir = asset("assets/shaders");
         std::error_code ec;
         std::filesystem::create_directories(shader_dir, ec);
         if (ImGui::GetPlatformIO().Platform_OpenInShellFn)

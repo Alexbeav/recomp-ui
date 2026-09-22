@@ -49,6 +49,7 @@ LngAction launcher_backend_run(LauncherPlatform* p, LauncherModel* m,
         m->s.rewind_depth = 100;
         m->s.rewind_interval = 8;
         m->s.skip_launcher = 1;
+        m->s.aspect_index = edit;
         m->s.msu1_enabled = 1;
         snprintf(m->s.msu1_dir, sizeof(m->s.msu1_dir), "audio/owned PCM pack");
         m->s.player_src[0] = 0;
@@ -97,6 +98,9 @@ int main(int argc, char** argv) {
     game.config_path = "custom settings.ini";
     game.rom_cache_path = "unused-rom-cache.cfg";
     game.has_shader = game.has_vsync = game.has_rewind_depth = 1;
+    game.has_snes_display_aspect = 1;
+    static const char* const aspects[] = {"4:3", "8:7", "1:1"};
+    game.aspect_labels = aspects; game.num_aspect_labels = 3;
     game.msu1_supported = 1;
     write_text("config.ini", "DO NOT TOUCH THE DEFAULT PATH\n");
     write_text(game.config_path,
@@ -121,6 +125,7 @@ int main(int argc, char** argv) {
             observed.rewind_interval == 8, "optional fields and enum conversion");
     require(strcmp(observed.shader_path, "shaders/path with spaces.glsl") == 0,
             "string round trip");
+    require(observed.aspect_index == 1, "SNES square pixels persist after Quit");
     require(observed.msu1_enabled == 1 &&
             strcmp(observed.msu1_dir, "audio/owned PCM pack") == 0, "MSU-1 settings round trip");
     require(!observed.netplay_launch.enabled, "no transient session on restart");
@@ -141,6 +146,7 @@ int main(int argc, char** argv) {
     edit = 0; action = LNG_ACTION_QUIT; s = defaults();
     run(&game, &s);
     require(observed.fullscreen == 2, "Play persists exclusive fullscreen");
+    require(observed.aspect_index == 2, "SNES square frame persists after Play");
     read_text(game.config_path, untouched, sizeof(untouched));
     window_available = 0; edit = 1;
     require(run(&game, &s) == RECOMP_LAUNCHER_RESULT_UNAVAILABLE, "unavailable result");
@@ -188,6 +194,22 @@ int main(int argc, char** argv) {
             "unsupported fields not written");
     s = defaults(); launcher_settings_load(&s, &game);
     require(s.fullscreen == 1, "Relaunch persists edits");
+
+    /* Game-defined aspect indices must not read/write the SNES pixel aspect. */
+    game.has_snes_display_aspect = 0;
+    write_text(game.config_path, "[Graphics]\nDisplayAspect = 8:7\n");
+    s = defaults(); s.aspect_index = 2; edit = 1; run(&game, &s);
+    require(observed.aspect_index == 2, "custom aspect index not replaced by SNES config");
+    read_text(game.config_path, result, sizeof(result));
+    require(strstr(result, "DisplayAspect = 8:7") != NULL, "custom aspect does not overwrite SNES config");
+    game.has_snes_display_aspect = 1;
+    const char* const names[] = {"4:3", "8:7", "1:1", "CRT", "SquarePixels", "SquareFrame", "0", "1", "2"};
+    for (int i = 0; i < 9; ++i) {
+        snprintf(result, sizeof(result), "[Graphics]\nDisplayAspect = %s\n", names[i]);
+        write_text(game.config_path, result);
+        s = defaults(); launcher_settings_load(&s, &game);
+        require(s.aspect_index == i % 3, "SNES aspect aliases match runtime config");
+    }
 
     /* Fresh install, default path, and no-op open/close. */
     require(remove("config.ini") == 0, "remove default-path sentinel");

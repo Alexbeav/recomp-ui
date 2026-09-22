@@ -1958,7 +1958,13 @@ typedef struct RecompLauncherCGameInfo {
      * console whose runtime cannot snapshot-and-restore a frame keeps
      * exactly today's settings surface. Appended for ABI stability. */
     int has_run_ahead;
+
+    /* Opt in to SNES DisplayAspect INI persistence for aspect_index:
+     * 0 = 4:3 CRT, 1 = 8:7 square pixels, 2 = 1:1 square frame.
+     * Leave zero for game-defined aspect_labels (e.g. camera/view modes). */
+    int has_snes_display_aspect;
 } RecompLauncherCGameInfo;
+#define RECOMP_LAUNCHER_HAS_SNES_DISPLAY_ASPECT 1
 
 /* recomp_launcher_run_window return codes */
 #define RECOMP_LAUNCHER_RESULT_LAUNCH       0
