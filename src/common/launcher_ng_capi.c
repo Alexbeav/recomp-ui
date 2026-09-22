@@ -15,10 +15,13 @@
 #include "launcher_files.h"
 #include "launcher_model.h"
 #include "launcher_platform.h"
+#include "launcher_settings.h"
 #include "launcher_theme.h"
 
 #include <stdio.h>
 #include <string.h>
+
+#include "launcher_settings.inc"
 
 static char g_last_relaunch_exe[512];
 
@@ -64,10 +67,13 @@ int recomp_launcher_run_window(const char* window_title,
      * under the placeholder icon. */
     launcher_platform_set_icon(&plat, game ? game->window_icon_path : NULL);
 
+    launcher_settings_load(io, game);
     LauncherModel model;
     launcher_model_init(&model, io, game, initial_rom);
+    model.settings_saved_on_exit = launcher_settings_supported(game) != 0;
     launcher_binds_load(&model, game ? game->config_path : NULL,
                                 game ? game->keybinds_path : NULL);
+    const RecompLauncherCSettings before = model.s;
     launcher_boot_timing_mark("rui:model+binds_ready");
 
     LauncherTheme theme = launcher_theme_by_name(game ? game->theme : NULL);
@@ -89,6 +95,7 @@ int recomp_launcher_run_window(const char* window_title,
      * dashboard cartridge picks; those hosts never enter the setup wizard's
      * sidecar-writing path. */
     launcher_model_commit(&model, io);   // edited settings back to the caller
+    launcher_settings_save(&model.s, &before, game);
     if (act != LNG_ACTION_LAUNCH && act != LNG_ACTION_RELAUNCH && io) {
         /* netplay_launch is a transient OUTPUT, not a setting: only a real
          * lobby launch may arm it. Quitting must never hand the host a

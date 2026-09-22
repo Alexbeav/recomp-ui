@@ -408,6 +408,24 @@ if(BUILD_TESTING)
     set_tests_properties(recomp-ui-launcher-rom-persistence PROPERTIES
         WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/launcher-rom-persistence-test")
 
+    add_executable(recomp-ui-launcher-settings-test
+        tests/launcher_settings_test.c
+        src/common/launcher_ng_capi.c
+        src/common/launcher_model.c
+        src/common/crc32.c
+        src/common/sha1.c
+        src/common/sha256.c
+        src/common/ips_patch.c
+        src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-launcher-settings-test PRIVATE
+        src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-launcher-settings-test PRIVATE ${RUI_SDL_TARGET})
+    target_compile_definitions(recomp-ui-launcher-settings-test PRIVATE ${RUI_SDL_DEFS})
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/settings-fixtures")
+    add_test(NAME recomp-ui-launcher-settings
+        COMMAND $<TARGET_FILE:recomp-ui-launcher-settings-test>
+                "${CMAKE_CURRENT_BINARY_DIR}/settings-fixtures")
+
     add_executable(recomp-runtime-ui-imgui-test
         tests/runtime_ui_imgui_test.cpp
         src/common/recomp_runtime_ui.c

@@ -4450,6 +4450,10 @@ void panel_hotkeys_draw(LauncherModel* m, const LauncherTheme* th) {
 // still stack full-width below that — driven by the composition array + the
 // registry's available() gate.
 void draw_settings(LauncherModel* m, const LauncherTheme& th) {
+    if (m->settings_saved_on_exit) {
+        ImGui::TextDisabled("Changes are saved when you press Play or close the launcher.");
+        ImGui::Spacing();
+    }
     // Row 1: DISPLAY | AUDIO share the top band. For the legacy minimal
     // surface (no deep caps set — e.g. SNES) both cards are pinned to the
     // SAME fixed height, exactly as before, so that screenshot is unchanged.
