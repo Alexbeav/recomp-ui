@@ -361,6 +361,12 @@ LauncherTexture g_wordmark;
 // (gray GB shell), [1] red, [2] blue, [3] yellow, [4] green. Loaded only for a
 // tpak game; real GB cart PNGs from the legacy launchers (assets/consoles/n64).
 LauncherTexture g_cart[5];
+// The Transfer Pak ACCESSORY itself, empty cart slot (see draw_pak_card).
+// recomp-ui does not ship this art yet: assets/consoles/n64/img/tpak_empty.tga
+// is absent, so this texture stays id==0 and image_fit reserves the box
+// without drawing. That is deliberate — the pak card names the accessory, and
+// substituting the bare GB cartridge shell would picture the wrong object.
+LauncherTexture g_tpak;
 // Disc-verdict icons (verify.mode==1 systems, e.g. PSX) — keyed by
 // VerifyResult.verdict (0 none,1 ok,2 warn,3 bad); see draw_verdict_block().
 LauncherTexture g_verdict_ok, g_verdict_warn, g_verdict_bad, g_verdict_none;
@@ -2670,9 +2676,19 @@ void panel_save_draw(LauncherModel* m, const LauncherTheme* th) {
     end_panel();
 }
 
-// ---- N64 Transfer Pak: one card per controller port -----------------------
+// ---- N64 controller paks: one card per port, stacked under CONTROLLER -----
 // Composes only for games whose GameInfo passes tpak_slots > 0 (the Stadium
 // titles) — the availability gate below keeps it off every other console/game.
+//
+// Shape (owner decision, 2026-09): a SIDE-column panel that sits directly
+// under the controller cards, one card per port, each fronted by a pak-KIND
+// dropdown — the same relationship the PSX memory-card panel has to the
+// controller row above it. This REPLACES the earlier full-width row of tiles
+// whose only action was to open a configuration modal: a pak is a property of
+// a port, so it reads next to that port's controller card rather than behind a
+// popup, and the pickers are inline instead of one click away. The Controller
+// page draws the same card for the port being configured (see
+// panel_controller_config_draw), so there is exactly one pak surface.
 static const char* elide_left(const char* s, float max_w, char* out, size_t cap);  // fwd (defined below)
 
 int avail_tpak(const LauncherModel* m) { return m->tpak_slots > 0; }
@@ -2693,169 +2709,237 @@ static const char* rui_basename(const char* path) {
     return base;
 }
 
-// Transfer Pak config modal state. A tile click stages a request (open_req);
-// the modal itself is drawn once per frame at root scope (draw_tpak_modal) so
-// OpenPopup and BeginPopupModal share the same ID stack from wherever a tile
-// was clicked (dashboard row OR the Controller page).
-static int g_tpak_open_req  = -1;
-static int g_tpak_modal_slot = -1;
+// ---- pak kind -------------------------------------------------------------
+// The dropdown has deliberately NO backing field of its own. Settings already
+// carries tpak_enabled[] as a tri-state (0 = unset, 1 = on, -1 = off) meaning
+// "this port has a Transfer Pak in it"; a second flag would be free to
+// disagree with it, and then neither would be the answer. So the kind IS that
+// field, read through the model's resolver:
+//
+//   PAK_TRANSFER  <=>  launcher_model_tpak_enabled(m, port)
+//   PAK_NONE      <=>  !launcher_model_tpak_enabled(m, port)
+//
+// Picking a kind writes through launcher_model_toggle_tpak, which stores an
+// explicit 1 or -1 and never 0 — so a settings file written by an older build
+// keeps its original meaning on load (0 = unset = "on iff a cart is inserted",
+// launcher_model_tpak_enabled), and the first pick in this panel is what turns
+// that inherited default into a stated one.
+//
+// The enum is left open for the Controller Pak (and a Rumble Pak). Note for
+// whoever adds the third value: a tri-state boolean cannot express three
+// kinds, so that change needs a real pak_kind[] array in the C ABI
+// (recomp_launcher.h) with tpak_enabled[] kept as the compatibility INPUT for
+// a config that predates it — pak_kind unset + tpak_enabled resolving true
+// means Transfer Pak. Do not try to pack a third kind into tpak_enabled.
+enum PakKind { PAK_NONE = 0, PAK_TRANSFER = 1 };
 
-// One compact port tile: the cartridge (gray shell when empty, colored R/B/Y
-// once a cart is set), the cart name, and a Configure button — clicking either
-// the cart or Configure opens the config modal. This is ALL that shows inline
-// now; picking cart + save happens in the modal, so the dashboard row stays a
-// short strip of carts instead of tall cards that push the layout into a
-// scroll.
-void draw_tpak_tile(LauncherModel* m, const LauncherTheme& th, int slot) {
-    char eb[24]; snprintf(eb, sizeof(eb), "TRANSFER PAK %d", slot + 1);
-    eyebrow(eb);
-
-    const bool has_cart  = m->s.tpak_rom_path[slot][0] != '\0';
-    const bool inspected = m->tpak_inspected[slot];
-    const RecompLauncherCTpak* info = &m->tpak_info[slot];
-    const float inner = ImGui::GetContentRegionAvail().x;
-
-    // Centered cartridge art, itself a click target that opens the modal.
-    ImGui::PushID(slot);
-    const float art = px(66);
-    ImVec2 art_cursor = ImGui::GetCursorScreenPos();
-    image_fit_centered(g_cart[(has_cart && inspected && info->cart_kind >= 1 &&
-                               info->cart_kind <= 4) ? info->cart_kind : 0], 60, 66, inner);
-    // invisible hit-box over the art
-    ImGui::SetCursorScreenPos(art_cursor);
-    if (ImGui::InvisibleButton("cart_hit", ImVec2(inner, art))) g_tpak_open_req = slot;
-
-    // name line (centered), muted "Empty" when nothing inserted
-    const char* label = !has_cart ? "Empty"
-                        : (inspected && info->cart_label[0])
-                            ? info->cart_label : rui_basename(m->s.tpak_rom_path[slot]);
-    float lw = ImGui::CalcTextSize(label).x;
-    if (lw < inner) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (inner - lw) * 0.5f);
-    ImGui::TextColored(has_cart ? col(th.text) : col(th.text_muted), "%s", label);
-    ImGui::Dummy(ImVec2(0, px(4)));
-
-    if (ImGui::Button(has_cart ? ui_text("Configure") : ui_text("Insert..."),
-                      ImVec2(ImGui::GetContentRegionAvail().x, px(28))))
-        g_tpak_open_req = slot;
-    ImGui::PopID();
+static const char* pak_kind_label(int kind) {
+    switch (kind) {
+        case PAK_TRANSFER: return "Transfer Pak";
+        default:           return "Empty";
+    }
 }
 
-// The per-port config surface, drawn as a modal. Everything cartridge-related
-// lives here: a large live cart preview, the cartridge/trainer facts, and the
-// Change / Remove / save-file actions. Reached from any tile (dashboard or
-// Controller page). Draw ONCE per frame at root scope.
-void draw_tpak_modal(LauncherModel* m, const LauncherTheme& th) {
-    if (g_tpak_open_req >= 0) {
-        g_tpak_modal_slot = g_tpak_open_req;
-        g_tpak_open_req = -1;
-        ImGui::OpenPopup("Transfer Pak");
+static int pak_kind_of(const LauncherModel* m, int port) {
+    return launcher_model_tpak_enabled(m, port) ? PAK_TRANSFER : PAK_NONE;
+}
+
+// Writes the pick back through the one field. A no-op when the kind already
+// matches, because toggle_tpak is a toggle — calling it on an already-correct
+// state would invert it.
+static void pak_set_kind(LauncherModel* m, int port, int kind) {
+    if (pak_kind_of(m, port) == kind) return;
+    launcher_model_toggle_tpak(m, port);   // stores an explicit 1 / -1
+}
+
+// How many ports offer a pak. The host reports tpak_slots; the profile caps it
+// at the number of ports the game actually has. Never a hardcoded 4 — a
+// 2-player tpak title must not draw four cards.
+static int pak_port_count(const LauncherModel* m) {
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    int n = m->tpak_slots;
+    if (n > RECOMP_LAUNCHER_MAX_TPAKS) n = RECOMP_LAUNCHER_MAX_TPAKS;
+    if (prof && prof->controller.max_players > 0 &&
+        n > prof->controller.max_players)
+        n = prof->controller.max_players;
+    return n > 0 ? n : 0;
+}
+
+// One port's pak card: the kind dropdown, then whatever that kind needs. The
+// card chrome (begin_panel / begin_container) belongs to the caller, so this
+// same body serves the dashboard panel and the Controller page.
+//
+// Transfer Pak body, left to right / top to bottom:
+//   [ Transfer Pak art ]  [cart chip] cartridge name
+//        (accessory)      trainer line
+//                         [ Insert / Change cartridge... ]
+//                         [ Remove ]
+//   Battery save
+//   …/red.srm
+//   [ Browse save... ] [ Use default ]
+//
+// The accessory art (g_tpak) is the Transfer Pak ITSELF with an empty cart
+// slot; the small chip beside the name is the GB cartridge, tinted by the
+// host's cart_kind. They are two separate pictures on purpose: recomp-ui has
+// no composited "Transfer Pak with cart X inserted" art, and drawing the bare
+// GB cart in place of the accessory would be showing the player a different
+// object than the one the dropdown names.
+void draw_pak_card(LauncherModel* m, const LauncherTheme& th, int port) {
+    ImGui::PushID(port);
+    char eb[40];
+    snprintf(eb, sizeof(eb), "CONTROLLER %d PAK", port + 1);
+    eyebrow(eb);
+
+    const int   kind = pak_kind_of(m, port);
+    const float cw   = ImGui::GetContentRegionAvail().x;
+
+    ImGui::SetNextItemWidth(cw);
+    if (ImGui::BeginCombo("##pakkind", ui_text(pak_kind_label(kind)))) {
+        // Only kinds that exist are listed. A greyed-out "Controller Pak"
+        // entry would be a control promising something no runtime here can
+        // do — the list grows when the thing behind it does.
+        if (ImGui::Selectable(ui_text(pak_kind_label(PAK_NONE)), kind == PAK_NONE))
+            pak_set_kind(m, port, PAK_NONE);
+        if (ImGui::Selectable(ui_text(pak_kind_label(PAK_TRANSFER)), kind == PAK_TRANSFER))
+            pak_set_kind(m, port, PAK_TRANSFER);
+        ImGui::EndCombo();
     }
-    ImGui::SetNextWindowSize(ImVec2(px(440), 0), ImGuiCond_Appearing);
-    // No OS-style title bar (it renders in ImGui's un-themed blue) — the card's
-    // own "TRANSFER PAK · PORT n" eyebrow is the heading.
-    if (!ImGui::BeginPopupModal("Transfer Pak", nullptr,
-                                ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                                ImGuiWindowFlags_NoTitleBar))
+
+    if (kind != PAK_TRANSFER) {
+        // Empty port: the dropdown is the whole card. The ROM/save paths the
+        // port may still be carrying are left alone, so switching back to
+        // Transfer Pak restores the cartridge the player had inserted.
+        ImGui::PopID();
         return;
-    const int slot = g_tpak_modal_slot;
-    if (slot < 0 || slot >= m->tpak_slots) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
-
-    const bool has_cart  = m->s.tpak_rom_path[slot][0] != '\0';
-    const bool inspected = m->tpak_inspected[slot];
-    const RecompLauncherCTpak* info = &m->tpak_info[slot];
-
-    ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
-    ImGui::Text("TRANSFER PAK  \xC2\xB7  PORT %d", slot + 1);
-    ImGui::PopStyleColor();
-    ImGui::Separator();
-    ImGui::Dummy(ImVec2(0, px(6)));
-
-    // Large live cart preview, centered — turns from the gray shell into the
-    // colored cart the moment a recognized ROM is picked.
-    const float avail = ImGui::GetContentRegionAvail().x;
-    image_fit_centered(g_cart[(has_cart && inspected && info->cart_kind >= 1 &&
-                               info->cart_kind <= 4) ? info->cart_kind : 0], 132, 138, avail);
-    ImGui::Dummy(ImVec2(0, px(6)));
-
-    // name + trainer, centered
-    auto centered = [&](ImU32 c, const char* s) {
-        float w = ImGui::CalcTextSize(s).x;
-        if (w < avail) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - w) * 0.5f);
-        ImGui::PushStyleColor(ImGuiCol_Text, c); ImGui::TextUnformatted(s); ImGui::PopStyleColor();
-    };
-    if (!has_cart) {
-        centered(ImGui::GetColorU32(col(th.text_muted)), "No cartridge inserted");
-    } else {
-        const char* label = (inspected && info->cart_label[0])
-                              ? info->cart_label : rui_basename(m->s.tpak_rom_path[slot]);
-        centered(ImGui::GetColorU32(col(th.text)), label);
-        char line[80];
-        if (inspected && info->trainer_name[0]) {
-            if (info->trainer_id[0])
-                snprintf(line, sizeof(line), "Trainer %s  \xC2\xB7  ID %s",
-                         info->trainer_name, info->trainer_id);
-            else snprintf(line, sizeof(line), "Trainer %s", info->trainer_name);
-        } else snprintf(line, sizeof(line), "No save data");
-        centered(ImGui::GetColorU32(col(th.text_muted)), line);
     }
 
-    ImGui::Dummy(ImVec2(0, px(10)));
-    // Change / Remove cartridge
-    const float full = ImGui::GetContentRegionAvail().x;
-    if (ImGui::Button(has_cart ? "Change cartridge..." : "Insert cartridge...",
-                      ImVec2(full, px(32)))) {
+    ImGui::Dummy(ImVec2(0, px(8)));
+
+    const bool has_cart  = m->s.tpak_rom_path[port][0] != '\0';
+    const bool inspected = m->tpak_inspected[port];
+    const RecompLauncherCTpak* info = &m->tpak_info[port];
+
+    const float start_x = ImGui::GetCursorPosX();
+    const float top_y   = ImGui::GetCursorPosY();
+    const float art_w   = px(88.0f), art_h = px(112.0f);
+    const float rc_x    = start_x + art_w + px(12.0f);
+    float       rc_w    = cw - (art_w + px(12.0f));
+    if (rc_w < px(80.0f)) rc_w = px(80.0f);
+    const float line_h  = ImGui::GetTextLineHeight();
+
+    // The accessory. image_fit reserves the full box and Dummies it out when
+    // the texture is absent, which is what happens today: recomp-ui ships no
+    // Transfer Pak picture (see the g_tpak load site). The card then draws
+    // with an empty space where the art goes rather than borrowing another
+    // object's picture — honestly missing beats plausibly wrong.
+    image_fit(g_tpak, 88.0f, 112.0f);
+
+    // Cartridge chip + name on the right column's first line.
+    ImGui::SetCursorPos(ImVec2(rc_x, top_y));
+    draw_tpak_cart(info->cart_kind, has_cart && inspected, 28.0f);
+    {
+        const float name_x = rc_x + px(32.0f);
+        const float name_w = rc_w - px(32.0f);
+        const char* label = !has_cart ? "Empty"
+                            : (inspected && info->cart_label[0])
+                                ? info->cart_label
+                                : rui_basename(m->s.tpak_rom_path[port]);
+        char elided[128];
+        elide_left(label, name_w, elided, sizeof(elided));
+        ImGui::SetCursorPos(ImVec2(name_x, top_y + px(2.0f)));
+        ImGui::PushStyleColor(ImGuiCol_Text, col(has_cart ? th.text : th.text_muted));
+        ImGui::TextUnformatted(elided);
+        ImGui::PopStyleColor();
+
+        // Trainer facts come from the HOST's tpak_inspect callback. Without a
+        // callback (or before a cart is picked) there is nothing to state, so
+        // the line says so instead of inventing a trainer.
+        char sub[96];
+        if (!has_cart)                                   snprintf(sub, sizeof(sub), "No cartridge");
+        else if (inspected && info->trainer_name[0] && info->trainer_id[0])
+            snprintf(sub, sizeof(sub), "%s  \xC2\xB7  ID %s", info->trainer_name, info->trainer_id);
+        else if (inspected && info->trainer_name[0])     snprintf(sub, sizeof(sub), "%s", info->trainer_name);
+        else                                             snprintf(sub, sizeof(sub), "No save data");
+        char sub_elided[128];
+        elide_left(sub, name_w, sub_elided, sizeof(sub_elided));
+        ImGui::SetCursorPos(ImVec2(name_x, top_y + px(2.0f) + line_h + px(4.0f)));
+        ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
+        ImGui::TextUnformatted(sub_elided);
+        ImGui::PopStyleColor();
+    }
+
+    // Cartridge actions, still in the right column beside the accessory art.
+    ImGui::SetCursorPos(ImVec2(rc_x, top_y + px(48.0f)));
+    if (ImGui::Button(ui_text(has_cart ? "Change cartridge..." : "Insert cartridge..."),
+                      ImVec2(rc_w, px(28.0f)))) {
         ui_pick_file(m, "Select Game Boy cartridge", {"*.gb", "*.gbc"},
                      "Game Boy cartridge (.gb .gbc)",
-                     [m, slot](const char* path) {
-                         if (path) launcher_model_set_tpak_rom(m, slot, path);
+                     [m, port](const char* path) {
+                         if (path) launcher_model_set_tpak_rom(m, port, path);
                      });
     }
     if (has_cart) {
-        if (ImGui::Button("Remove cartridge", ImVec2(full, px(28))))
-            launcher_model_clear_tpak(m, slot);
+        ImGui::SetCursorPos(ImVec2(rc_x, top_y + px(80.0f)));
+        if (ImGui::Button(ui_text("Remove"), ImVec2(rc_w, px(26.0f)))) {
+            launcher_model_clear_tpak(m, port);
+            // clear_tpak resets tpak_enabled to 0 (unset), which the resolver
+            // reads as off once the ROM path is gone — i.e. the dropdown would
+            // silently fall back to Empty. Removing the CARTRIDGE does not
+            // remove the PAK, so restate the kind the player picked.
+            pak_set_kind(m, port, PAK_TRANSFER);
+        }
+    }
 
-        // Battery-save row: label + value + Browse / Reset.
-        ImGui::Dummy(ImVec2(0, px(8)));
-        ImGui::TextColored(col(th.text_muted), "Battery save");
-        const char* sv = m->s.tpak_save_path[slot][0]
-                           ? rui_basename(m->s.tpak_save_path[slot])
+    // Resume below the art, full card width.
+    ImGui::SetCursorPos(ImVec2(start_x, top_y + art_h + px(10.0f)));
+
+    if (has_cart) {
+        // Battery save. The picker filters *.srm (owner's ask). Note that .sav
+        // is the more common Game Boy battery-save extension — see the panel's
+        // notes in the change report; widening this list is a one-word edit.
+        ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
+        ImGui::TextUnformatted(ui_text("Battery save"));
+        ImGui::PopStyleColor();
+        const char* sv = m->s.tpak_save_path[port][0]
+                           ? rui_basename(m->s.tpak_save_path[port])
                            : "Default (runtime chooses)";
-        char elided[128];
+        char elided[160];
         elide_left(sv, ImGui::GetContentRegionAvail().x, elided, sizeof(elided));
         ImGui::TextUnformatted(elided);
         const float bw = (ImGui::GetContentRegionAvail().x - px(th.spacing_sm)) * 0.5f;
-        if (ImGui::Button(ui_text("Browse save..."), ImVec2(bw, px(26)))) {
-            ui_pick_file(m, "Select battery save", {"*.sav", "*.srm"},
-                         "Battery save (.sav)", [m, slot](const char* path) {
-                             if (path) launcher_model_set_tpak_save(m, slot, path);
+        if (ImGui::Button(ui_text("Browse save..."), ImVec2(bw, px(26.0f)))) {
+            ui_pick_file(m, "Select battery save", {"*.srm"},
+                         "Game Boy battery save (.srm)",
+                         [m, port](const char* path) {
+                             if (path) launcher_model_set_tpak_save(m, port, path);
                          });
         }
         ImGui::SameLine(0, px(th.spacing_sm));
-        if (ImGui::Button("Use default", ImVec2(bw, px(26))))
-            launcher_model_set_tpak_save(m, slot, "");
+        if (ImGui::Button(ui_text("Use default"), ImVec2(bw, px(26.0f))))
+            launcher_model_set_tpak_save(m, port, "");
     }
 
-    ImGui::Dummy(ImVec2(0, px(10)));
-    ImGui::Separator();
-    ImGui::Dummy(ImVec2(0, px(4)));
-    if (ImGui::Button("Done", ImVec2(ImGui::GetContentRegionAvail().x, px(30))))
-        ImGui::CloseCurrentPopup();
-    ImGui::EndPopup();
+    ImGui::PopID();
 }
 
 void panel_tpak_draw(LauncherModel* m, const LauncherTheme* th) {
-    // Compact per-port tiles in one full-width row (click a cart to configure).
-    const int slots = m->tpak_slots;
-    const float gap = px(th->spacing_sm);
+    // One card per port, laid out exactly like the player cards above it
+    // (fixed preferred width, extra width adds COLUMNS instead of stretching),
+    // so port 1's pak lands under port 1's controller at every window size.
+    const int ports = pak_port_count(m);
+    if (ports <= 0) return;
+    const float gap   = px(th->spacing_sm);
     const float avail = ImGui::GetContentRegionAvail().x;
-    const float cw = (avail - gap * (slots - 1)) / (float)slots;
-    static const char* kCid[RECOMP_LAUNCHER_MAX_TPAKS] = { "tpc0", "tpc1", "tpc2", "tpc3" };
-    static const char* kPid[RECOMP_LAUNCHER_MAX_TPAKS] = { "tpp0", "tpp1", "tpp2", "tpp3" };
-    for (int slot = 0; slot < slots; ++slot) {
-        if (slot) ImGui::SameLine(0, gap);
-        begin_container(kCid[slot], ImVec2(cw, 0), ImGuiChildFlags_AutoResizeY);
-            if (begin_panel(kPid[slot], cw, false))
-                draw_tpak_tile(m, *th, slot);
+    const float cw    = dash_card_width(avail, gap, ports);
+    const int   cols  = dash_card_columns(avail, gap, cw, ports);
+    for (int port = 0; port < ports; ++port) {
+        if (port % cols) ImGui::SameLine(0, gap);
+        else if (port)   ImGui::Dummy(ImVec2(0, gap));
+        char cid[16]; snprintf(cid, sizeof(cid), "pakc%d", port);
+        char pid[16]; snprintf(pid, sizeof(pid), "pakp%d", port);
+        begin_container(cid, ImVec2(cw, 0), ImGuiChildFlags_AutoResizeY);
+            if (begin_panel(pid, cw, false))
+                draw_pak_card(m, *th, port);
             end_panel();
         end_container();
     }
@@ -5134,12 +5218,13 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         }
     } end_panel();
 
-    // Transfer Pak for THIS controller port (N64 tpak games), so it's reachable
-    // from the Controller page without scrolling the dashboard. Same compact
-    // tile + config modal; the port is the player being configured.
-    if (m->tpak_slots > p) {
+    // Pak for THIS controller port (N64 tpak games), so it's reachable from
+    // the Controller page without scrolling the dashboard. Literally the same
+    // card the dashboard panel draws — one pak surface, one set of controls —
+    // with the port fixed to the player being configured.
+    if (p < pak_port_count(m)) {
         if (begin_panel("cfg_tpak", 0)) {
-            draw_tpak_tile(m, th, p);
+            draw_pak_card(m, th, p);
         } end_panel();
     }
 
@@ -12845,9 +12930,6 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
     draw_netplay_moderation_modal(m, th);
     draw_netplay_report_modal(m, th);
     draw_restore_defaults_modal(m);
-    // Transfer Pak config modal (N64): opened by any tile, dashboard or
-    // Controller page. Drawn at root so it isn't clipped by a card child.
-    if (m->tpak_slots > 0) draw_tpak_modal(m, th);
     ImGui::End();
     (void)logical_h;
 }
@@ -13340,6 +13422,13 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
         for (int i = 0; i < 5; ++i)
             g_cart[i] = launcher_texture_load(
                 asset((std::string("assets/img/") + kCartFiles[i]).c_str()).c_str());
+        // The Transfer Pak accessory itself (empty cart slot). NOT shipped:
+        // recomp-ui has no such picture, so this load fails and g_tpak stays
+        // id==0 — image_fit then reserves the box and draws nothing, which is
+        // how the pak card degrades honestly until real art is supplied. It is
+        // staged by name (an OPTIONAL entry in cmake/recomp_ui_assets.cmake)
+        // the moment the file exists, with no code change.
+        g_tpak = launcher_texture_load(asset("assets/img/tpak_empty.tga").c_str());
     }
     g_verdict_ok    = launcher_texture_load(asset("assets/img/verdict_ok.tga").c_str());
     g_verdict_warn  = launcher_texture_load(asset("assets/img/verdict_warn.tga").c_str());
@@ -13551,6 +13640,7 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     launcher_texture_free(&g_memcard);
     launcher_texture_free(&g_wordmark);
     for (int i = 0; i < 5; ++i) launcher_texture_free(&g_cart[i]);
+    launcher_texture_free(&g_tpak);
     ImGui_ImplOpenGL3_Shutdown();
     LNG_ImplSDL_Shutdown();
     ImGui::DestroyContext();
