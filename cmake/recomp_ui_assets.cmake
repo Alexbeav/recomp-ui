@@ -38,6 +38,15 @@ set(_RUI_CONSOLE_ASSETS_n64
     "${RUI_ASSETS}/consoles/n64/img/cart_yellow.tga"
     "${RUI_ASSETS}/consoles/n64/img/cart_green.tga")
 
+# OPTIONAL assets: named here so they are staged the moment the file exists,
+# but absent from the required manifest above because recomp-ui does not ship
+# them. tpak_empty.tga is the N64 Transfer Pak ACCESSORY (empty cart slot) that
+# the launcher's pak card draws; with the file missing the card reserves the
+# space and draws nothing (launcher_imgui.cpp, g_tpak), which is the honest
+# degradation. Drop real art in assets/consoles/n64/img/ and it stages itself.
+set(_RUI_CONSOLE_OPTIONAL_ASSETS_n64
+    "${RUI_ASSETS}/consoles/n64/img/tpak_empty.tga")
+
 set(_RUI_CONSOLE_ASSETS_nes
     "${RUI_ASSETS}/consoles/nes/img/pad_nes.tga"
     "${RUI_ASSETS}/consoles/nes/img/brand_nes.tga")
@@ -84,6 +93,32 @@ function(_recomp_ui_resolve_console_assets OUT_VAR CONSOLE)
     set(${OUT_VAR} "${_rui_assets}" PARENT_SCOPE)
 endfunction()
 
+# Optional assets for a console, filtered to the ones actually present on disk.
+# Deliberately separate from _recomp_ui_resolve_console_assets: the manifest
+# that function returns is REQUIRED (tests/asset_manifest_test.cmake fails on a
+# missing file), and an asset we know is absent must not be able to pass that
+# gate.
+function(_recomp_ui_resolve_console_optional_assets OUT_VAR CONSOLE)
+    string(TOLOWER "${CONSOLE}" _rui_console)
+    set(_rui_ids ${_rui_console})
+    if(_rui_console STREQUAL "all")
+        set(_rui_ids ${_RUI_CONSOLE_IDS})
+    endif()
+    set(_rui_present)
+    foreach(_rui_id IN LISTS _rui_ids)
+        foreach(_rui_asset IN LISTS _RUI_CONSOLE_OPTIONAL_ASSETS_${_rui_id})
+            if(EXISTS "${_rui_asset}")
+                list(APPEND _rui_present "${_rui_asset}")
+            else()
+                message(STATUS
+                    "recomp-ui: optional ${_rui_id} asset not present, the UI "
+                    "degrades without it: ${_rui_asset}")
+            endif()
+        endforeach()
+    endforeach()
+    set(${OUT_VAR} "${_rui_present}" PARENT_SCOPE)
+endfunction()
+
 function(_recomp_ui_stage_assets TGT CONSOLE)
     if("${CONSOLE}" STREQUAL "")
         list(JOIN _RUI_ACCEPTED_CONSOLE_IDS ", " _rui_expected)
@@ -95,11 +130,17 @@ function(_recomp_ui_stage_assets TGT CONSOLE)
 
     _recomp_ui_resolve_console_assets(_rui_console_assets "${CONSOLE}")
     _recomp_ui_resolve_console_assets(_rui_all_console_assets all)
+    _recomp_ui_resolve_console_optional_assets(_rui_optional_assets "${CONSOLE}")
+    list(APPEND _rui_console_assets ${_rui_optional_assets})
 
     # A reused output directory may contain assets copied by an older build.
     # Remove only files owned by recomp-ui's console manifests before staging
     # the selected family; per-game box art and other host assets are untouched.
     set(_rui_stale_console_assets)
+    foreach(_rui_id IN LISTS _RUI_CONSOLE_IDS)
+        list(APPEND _rui_all_console_assets
+             ${_RUI_CONSOLE_OPTIONAL_ASSETS_${_rui_id}})
+    endforeach()
     foreach(_rui_asset IN LISTS _rui_all_console_assets)
         get_filename_component(_rui_name "${_rui_asset}" NAME)
         list(APPEND _rui_stale_console_assets

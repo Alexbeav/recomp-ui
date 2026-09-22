@@ -55,9 +55,10 @@ static const int kN64GamepadBindOrder[LNG_N64_PAD_BUTTON_COUNT] = {
 #define LNG_N64_GAMEPAD_BIND_ROWS 6
 
 // ---- panel composition --------------------------------------------------------
-// Dashboard: the common game + controller cards, plus the Transfer Pak card
-// row (WIDE; composes only for games with GameInfo.tpak_slots > 0 — its
-// availability gate — so Snap simply never shows it).
+// Dashboard: the common game + controller cards, plus the per-port PAK cards
+// (SIDE; they stack directly under the controller cards, one per port, each
+// fronted by a pak-kind dropdown). Composes only for games with
+// GameInfo.tpak_slots > 0 — its availability gate — so Snap never shows it.
 static const char* const kPanelsDashboardN64[] = { "game", "controller", "tpak", NULL };
 // Settings: video + audio only — NO hotkeys page. The N64 runtimes read no
 // config.ini [KeyMap] (in-game hotkeys are fixed in the runtime), and the SS

@@ -1076,6 +1076,13 @@ struct RecompLauncherCSettings {
     // pN_rom/pN_save/pN_enabled). Empty rom path = no cartridge inserted.
     // tpak_enabled: 0 = unset (host predates the field / fresh config) -> the
     // model defaults a slot WITH a rom to enabled; use -1 for explicit off.
+    //
+    // This field is ALSO what the launcher's per-port pak-kind dropdown reads
+    // and writes (launcher_imgui.cpp, draw_pak_card): enabled == Transfer Pak
+    // in the port, disabled == empty port. There is deliberately no separate
+    // kind field, because two fields for one fact can disagree. Adding a
+    // second pak kind (Controller Pak) is what forces a real pak_kind[] array
+    // here — see the note above draw_pak_card before adding one.
     char tpak_rom_path[RECOMP_LAUNCHER_MAX_TPAKS][512];
     char tpak_save_path[RECOMP_LAUNCHER_MAX_TPAKS][512];
     int  tpak_enabled[RECOMP_LAUNCHER_MAX_TPAKS];

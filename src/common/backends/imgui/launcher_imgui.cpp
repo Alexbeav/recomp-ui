@@ -2923,15 +2923,22 @@ void draw_pak_card(LauncherModel* m, const LauncherTheme& th, int port) {
 }
 
 void panel_tpak_draw(LauncherModel* m, const LauncherTheme* th) {
-    // One card per port, laid out exactly like the player cards above it
-    // (fixed preferred width, extra width adds COLUMNS instead of stretching),
-    // so port 1's pak lands under port 1's controller at every window size.
+    // One card per port, laid out by the SAME rule as the player cards above
+    // (draw_controllers_row): spacing_md gap, a 300px preferred width that
+    // decides the column COUNT, then stretch to fill. Deliberately not
+    // dash_card_width (the memory-card rule, which keeps a fixed 300 and
+    // leaves slack) — a pak card must land under the controller card for the
+    // same port, and that only holds if both grids compute the same width.
     const int ports = pak_port_count(m);
     if (ports <= 0) return;
-    const float gap   = px(th->spacing_sm);
+    const float gap   = px(th->spacing_md);
     const float avail = ImGui::GetContentRegionAvail().x;
-    const float cw    = dash_card_width(avail, gap, ports);
-    const int   cols  = dash_card_columns(avail, gap, cw, ports);
+    const float pref  = px(300.0f);
+    int cols = (int)((avail + gap) / (pref + gap));
+    if (cols < 1) cols = 1;
+    if (cols > ports) cols = ports;
+    float cw = (avail - gap * (float)(cols - 1)) / (float)cols;
+    if (cw < 1.0f) cw = avail;
     for (int port = 0; port < ports; ++port) {
         if (port % cols) ImGui::SameLine(0, gap);
         else if (port)   ImGui::Dummy(ImVec2(0, gap));
@@ -3338,14 +3345,19 @@ void draw_dashboard(LauncherModel* m, const LauncherTheme& th, int logical_w) {
 
     if (logical_w >= 820) {
         const float gap = px(th.spacing_md);
-        // When a WIDE panel (save/tpak) follows this row, the columns must hug
+        // When a WIDE panel (save) follows this row, the columns must hug
         // their own content (AutoResizeY) instead of stretching to fill the
         // whole scrollable "body" — otherwise there's never any room left
         // below them and the WIDE panel silently draws off the bottom edge.
         // SNES's composition never lists "save" here (save_p == nullptr), so
         // it keeps the original fill-to-height columns byte-identical.
+        //
+        // The N64 pak panel used to need a branch of its own here for exactly
+        // that reason (it was a full-width row under both columns). It is a
+        // SIDE panel now — it stacks inside the right column with the
+        // controller cards — so N64 takes the ordinary else-branch below and
+        // the fill-to-height columns are back for it too.
         const bool has_save = (save_p != nullptr);
-        const bool has_tpak = (tpak_p != nullptr);
         if (has_save) {
             // Capture body height before the row so multitap can grow the right
             // column to the footer.
@@ -3377,6 +3389,10 @@ void draw_dashboard(LauncherModel* m, const LauncherTheme& th, int logical_w) {
                     begin_container("dash_ctrl", ImVec2(0, ctrl_h));
                         ctrl_p->draw(m, &th);
                     end_container();
+                    if (tpak_p) {
+                        ImGui::Dummy(ImVec2(0, gap));
+                        tpak_p->draw(m, &th);
+                    }
                     if (ident_p) {
                         ImGui::Dummy(ImVec2(0, gap));
                         ident_p->draw(m, &th);
@@ -3391,6 +3407,10 @@ void draw_dashboard(LauncherModel* m, const LauncherTheme& th, int logical_w) {
                 } else {
                     begin_container("dash_r", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY);
                     ctrl_p->draw(m, &th);
+                    if (tpak_p) {
+                        ImGui::Dummy(ImVec2(0, gap));
+                        tpak_p->draw(m, &th);
+                    }
                     if (ident_p) {
                         ImGui::Dummy(ImVec2(0, gap));
                         ident_p->draw(m, &th);
@@ -3402,30 +3422,10 @@ void draw_dashboard(LauncherModel* m, const LauncherTheme& th, int logical_w) {
                     end_container();
                 }
             }
-        } else if (has_tpak) {
-            // N64: no SRAM save panel, but a FULL-WIDTH Transfer Pak row follows
-            // below. Both columns must hug their own content (AutoResizeY) so
-            // there's room left underneath for that row — otherwise the tpak row
-            // draws off the bottom edge.
-            if (game_p) {
-                g_game_fill_h = false;
-                begin_container("dash_l", ImVec2(px(400), 0), ImGuiChildFlags_AutoResizeY);
-                game_p->draw(m, &th);
-                end_container();
-            }
-            if (game_p && ctrl_p) ImGui::SameLine(0, gap);
-            if (ctrl_p) {
-                begin_container("dash_r", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY);
-                    ctrl_p->draw(m, &th);
-                    if (ident_p) {
-                        ImGui::Dummy(ImVec2(0, gap));
-                        ident_p->draw(m, &th);
-                    }
-                end_container();
-            }
         } else {
-            // No WIDE save panel (SNES): original fill-to-height columns,
-            // byte-identical.
+            // No WIDE save panel (SNES, and now N64): original fill-to-height
+            // columns, byte-identical for a console that composes neither a
+            // save nor a pak panel.
             if (game_p) {
                 g_game_fill_h = true;
                 begin_container("dash_l", ImVec2(px(400), 0), ImGuiChildFlags_None);
@@ -3436,6 +3436,14 @@ void draw_dashboard(LauncherModel* m, const LauncherTheme& th, int logical_w) {
             if (ctrl_p) {
                 begin_container("dash_r", ImVec2(0, 0), ImGuiChildFlags_None);
                     ctrl_p->draw(m, &th);
+                    // Paks stack directly under the controller cards they
+                    // belong to (owner's ask). The column fills the body
+                    // height and scrolls, the same way a multitap controller
+                    // stack does, so four pak cards never push anything off.
+                    if (tpak_p) {
+                        ImGui::Dummy(ImVec2(0, gap));
+                        tpak_p->draw(m, &th);
+                    }
                     if (ident_p) {
                         ImGui::Dummy(ImVec2(0, gap));
                         ident_p->draw(m, &th);
@@ -3443,21 +3451,15 @@ void draw_dashboard(LauncherModel* m, const LauncherTheme& th, int logical_w) {
                 end_container();
             }
         }
-        // Transfer Pak: a genuinely FULL-WIDTH row under both columns — four
-        // per-port cards need the whole window, not the side column.
-        if (tpak_p) {
-            ImGui::Dummy(ImVec2(0, gap));
-            tpak_p->draw(m, &th);
-        }
     } else {
         if (game_p) { g_game_fill_h = false; game_p->draw(m, &th); }
         if (game_p && ctrl_p) ImGui::Spacing();
         if (ctrl_p) ctrl_p->draw(m, &th);
-        // Narrow single-column layout: identity and memcards stack under
-        // the controller.
+        // Narrow single-column layout: paks, identity and memcards stack under
+        // the controller, in the same order as the wide side column.
+        if (tpak_p) { ImGui::Spacing(); tpak_p->draw(m, &th); }
         if (ident_p) { ImGui::Spacing(); ident_p->draw(m, &th); }
         if (save_p) { ImGui::Spacing(); save_p->draw(m, &th); }
-        if (tpak_p) { ImGui::Spacing(); tpak_p->draw(m, &th); }
     }
 }
 
@@ -11254,7 +11256,7 @@ const LauncherPanel kPanelRegistry[] = {
     { "controller",        LNG_VIEW_DASHBOARD,  LNG_SLOT_SIDE, nullptr,      panel_controller_draw },
     { "identity",          LNG_VIEW_DASHBOARD,  LNG_SLOT_SIDE, avail_identity, panel_identity_draw },
     { "save",              LNG_VIEW_DASHBOARD,  LNG_SLOT_WIDE, avail_save,   panel_save_draw },
-    { "tpak",              LNG_VIEW_DASHBOARD,  LNG_SLOT_WIDE, avail_tpak,   panel_tpak_draw },
+    { "tpak",              LNG_VIEW_DASHBOARD,  LNG_SLOT_SIDE, avail_tpak,   panel_tpak_draw },
     { "video",             LNG_VIEW_SETTINGS,   LNG_SLOT_MAIN, nullptr,      panel_video_draw },
     { "audio",             LNG_VIEW_SETTINGS,   LNG_SLOT_SIDE, nullptr,      panel_audio_draw },
     { "input",             LNG_VIEW_SETTINGS,   LNG_SLOT_SIDE, avail_input,  panel_input_draw },
