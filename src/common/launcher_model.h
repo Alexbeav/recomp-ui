@@ -473,6 +473,7 @@ typedef struct {
     RecompLauncherCSettings s;
     RecompLauncherCSettings default_settings;
     bool      has_default_settings;
+    bool      settings_saved_on_exit; // C entry point owns persistence for this profile
 
     // ---- transient UI state ----
     LngView   view;

@@ -121,6 +121,23 @@ int rc = recomp_launcher_run_window("My Game — Launcher", &io, &gi,
 #endif
 ```
 
+For the SNES profile, this entry point loads launcher preferences from
+`gi.config_path` (default `config.ini`) and saves edited settings on **Play,
+Quit, and Relaunch**. A host that ignores `io` on Quit therefore no longer
+loses the player's fullscreen or other launcher edits. The Settings page
+explains when changes are saved; no separate Save button is needed.
+
+The store uses the established SNES INI keys, preserves unrelated sections
+and comments, and writes only fields changed by the player. Optional settings
+are gated by the host's capability flags. Widescreen mod state, keybindings,
+ROM selection, and transient netplay launch data retain their existing owners.
+Other console profiles keep their host-owned configuration formats.
+
+Hosts must still apply returned preferences to the running game. A UI pin
+cannot implement a renderer/audio feature the host does not consume, or load
+preferences on a boot path that never calls the launcher. Hosts that already
+read the SNES INI keys also see saved settings on direct-ROM/skip-launch boots.
+
 The whole contract is [`src/recomp_launcher.h`](src/recomp_launcher.h): a plain-C
 settings struct in/out, a game-facts struct, and (optionally) **host callbacks**
 for console-specific verification the launcher re-runs on change — e.g. PSX disc
