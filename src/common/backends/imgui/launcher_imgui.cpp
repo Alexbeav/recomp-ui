@@ -103,7 +103,9 @@ namespace { std::string asset(const char* rel); }
 static bool shader_path_matches(const std::string& preset, const char* selected) {
     if (!selected || !*selected) return false;
     std::error_code ec;
-    return std::filesystem::equivalent(preset, selected, ec);
+    if (std::filesystem::equivalent(preset, selected, ec)) return true;
+    ec.clear();
+    return std::filesystem::equivalent(preset, asset(selected), ec);
 }
 
 static bool shader_path_has_supported_ext(const std::filesystem::path& p) {
@@ -3495,12 +3497,15 @@ void draw_shader_row(LauncherModel* m, const LauncherTheme& th, float col_w = 0.
         for (const ShaderPresetEntry& preset : g_shader_presets) {
             bool selected = shader_path_matches(preset.path, m->s.shader_path);
             if (ImGui::Selectable(preset.label.c_str(), selected)) {
-                // Keep release-relative paths portable when the host anchors
-                // cwd to its executable; alternate working directories need
-                // the resolved path so the runtime opens the same preset.
+                // Bundled presets need a stable resource path. In particular,
+                // an AppImage mount path changes on each launch. The SNES
+                // loader resolves assets/shaders relative to its executable.
                 std::error_code ec;
-                auto relative = std::filesystem::relative(preset.path, std::filesystem::current_path(ec), ec);
-                launcher_model_set_shader_path(m, ec ? preset.path.c_str() : relative.generic_string().c_str());
+                const bool snes = m->platform && strcmp(m->platform, "SUPER NINTENDO") == 0;
+                auto base = snes ? std::filesystem::path(asset("assets/shaders")) : std::filesystem::current_path(ec);
+                auto relative = std::filesystem::relative(preset.path, base, ec);
+                auto resource = snes ? std::filesystem::path("assets/shaders") / relative : relative;
+                launcher_model_set_shader_path(m, ec ? preset.path.c_str() : resource.generic_string().c_str());
             }
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
                 ImGui::SetTooltip("%s", preset.path.c_str());
