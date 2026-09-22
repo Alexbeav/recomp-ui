@@ -68,6 +68,18 @@ typedef struct {
     // this changed no existing console until it opted in.
     const int* pad_bind_order;
     int  pad_bind_cols, pad_bind_rows;             // order length == cols*rows
+    // ---- controller accessory (pak) port ----------------------------------
+    // 1 when EVERY controller port on this console physically carries an
+    // accessory slot (N64: Transfer Pak / Controller Pak / Rumble Pak). It is
+    // a property of the HARDWARE, not of a title: an N64 pad takes a pak
+    // whether or not the game declares it uses one, so the pak picker must
+    // exist on any N64 build without a config file asking for it.
+    //
+    // The ABI's GameInfo.tpak_slots stays what it always was — the count a
+    // HOST declares — and remains the whole answer for a console that leaves
+    // this 0 (the zero-fill of every older positional initializer, so adding
+    // this changed no existing console). See launcher_model_pak_ports().
+    int  has_pak;
 } ControllerSpec;
 
 // ---- Save module --------------------------------------------------------------

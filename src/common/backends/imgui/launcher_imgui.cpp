@@ -2676,22 +2676,29 @@ void panel_save_draw(LauncherModel* m, const LauncherTheme* th) {
     end_panel();
 }
 
-// ---- N64 controller paks: one card per port, stacked under CONTROLLER -----
-// Composes only for games whose GameInfo passes tpak_slots > 0 (the Stadium
-// titles) — the availability gate below keeps it off every other console/game.
+// ---- controller paks (N64) ------------------------------------------------
+// Two surfaces, and the split IS the design (owner decision, 2026-09):
 //
-// Shape (owner decision, 2026-09): a SIDE-column panel that sits directly
-// under the controller cards, one card per port, each fronted by a pak-KIND
-// dropdown — the same relationship the PSX memory-card panel has to the
-// controller row above it. This REPLACES the earlier full-width row of tiles
-// whose only action was to open a configuration modal: a pak is a property of
-// a port, so it reads next to that port's controller card rather than behind a
-// popup, and the pickers are inline instead of one click away. The Controller
-// page draws the same card for the port being configured (see
-// panel_controller_config_draw), so there is exactly one pak surface.
+//   1. The pak-KIND picker sits on the player card itself, directly under that
+//      card's Configure button — one dropdown per controller the dashboard
+//      draws. A pak is a thing you put INTO a controller, so the choice belongs
+//      on that controller's card rather than in a panel of its own.
+//
+//   2. The CONTROLS for whatever was picked live in ONE panel below the
+//      controller cards, as a list of per-player sections. It is a MIXED list:
+//      each section is headed with its player and carries that player's kind,
+//      so a future Controller Pak on P2 sits beside P1's Transfer Pak in the
+//      same panel instead of each kind growing a panel. With every player on
+//      None the panel does not compose at all (avail_tpak).
+//
+// The picker exists because the console's pads HAVE an accessory slot
+// (ControllerSpec.has_pak, resolved by launcher_model_pak_ports) — not because
+// a title declared tpak_slots. A host that reports 0 slots still shows four N64
+// players four pak pickers, because that is what the hardware is.
+//
+// This replaces the earlier full-width row of tiles behind a modal, and the
+// one-card-per-port stack that briefly followed it.
 static const char* elide_left(const char* s, float max_w, char* out, size_t cap);  // fwd (defined below)
-
-int avail_tpak(const LauncherModel* m) { return m->tpak_slots > 0; }
 
 // Real GB-cartridge art for a Transfer Pak slot, picked by the host-reported
 // cart kind (1 red / 2 blue / 3 yellow / 4 green); the gray empty shell for an
@@ -2725,19 +2732,46 @@ static const char* rui_basename(const char* path) {
 // launcher_model_tpak_enabled), and the first pick in this panel is what turns
 // that inherited default into a stated one.
 //
-// The enum is left open for the Controller Pak (and a Rumble Pak). Note for
-// whoever adds the third value: a tri-state boolean cannot express three
-// kinds, so that change needs a real pak_kind[] array in the C ABI
-// (recomp_launcher.h) with tpak_enabled[] kept as the compatibility INPUT for
-// a config that predates it — pak_kind unset + tpak_enabled resolving true
-// means Transfer Pak. Do not try to pack a third kind into tpak_enabled.
+// WHOEVER ADDS THE THIRD KIND (Controller Pak / Rumble Pak) READ THIS: a
+// tri-state boolean cannot express three kinds. That change needs a real
+// pak_kind[] array in the C ABI (recomp_launcher.h), with tpak_enabled[] kept
+// as the compatibility INPUT for a config that predates it — pak_kind unset +
+// tpak_enabled resolving true means Transfer Pak. Only pak_kind_of() and
+// pak_set_kind() below read or write the storage, so that is a two-function
+// change; do not try to pack a third kind into tpak_enabled.
 enum PakKind { PAK_NONE = 0, PAK_TRANSFER = 1 };
 
-static const char* pak_kind_label(int kind) {
-    switch (kind) {
-        case PAK_TRANSFER: return "Transfer Pak";
-        default:           return "Empty";
-    }
+static void pak_body_transfer(LauncherModel* m, const LauncherTheme& th, int port);
+
+// One row per pak kind the launcher can actually drive. Everything that varies
+// per kind is here: the dropdown entry, the heading of that player's section in
+// the panel below, and the body that draws the kind's controls.
+//
+// ADDING A KIND IS ADDING A ROW plus its body function. Neither the dropdown
+// nor the mixed panel branches on a kind — they iterate this table — so neither
+// has to be rewritten to gain one. A row with a null body is a kind that needs
+// no controls (None), and it contributes no section to the panel.
+//
+// Not listed = not offered. Memory Card / Controller Pak is deliberately absent
+// rather than present-and-greyed: a control that promises something no runtime
+// here can do is a lie the player cannot tell from a bug.
+struct PakKindDef {
+    int         kind;
+    const char* label;   // dropdown entry AND section heading (uppercased there)
+    void      (*body)(LauncherModel*, const LauncherTheme&, int port);
+};
+static const PakKindDef kPakKinds[] = {
+    { PAK_NONE,     "None",         nullptr },
+    { PAK_TRANSFER, "Transfer Pak", pak_body_transfer },
+};
+static const int kPakKindCount = (int)(sizeof(kPakKinds) / sizeof(kPakKinds[0]));
+
+// Never returns null: an unrecognized value reads as None, which is the safe
+// answer (no controls, no claim about a pak that isn't there).
+static const PakKindDef* pak_kind_def(int kind) {
+    for (int i = 0; i < kPakKindCount; ++i)
+        if (kPakKinds[i].kind == kind) return &kPakKinds[i];
+    return &kPakKinds[0];
 }
 
 static int pak_kind_of(const LauncherModel* m, int port) {
@@ -2752,24 +2786,35 @@ static void pak_set_kind(LauncherModel* m, int port, int kind) {
     launcher_model_toggle_tpak(m, port);   // stores an explicit 1 / -1
 }
 
-// How many ports offer a pak. The host reports tpak_slots; the profile caps it
-// at the number of ports the game actually has. Never a hardcoded 4 — a
-// 2-player tpak title must not draw four cards.
-static int pak_port_count(const LauncherModel* m) {
-    const SystemProfile* prof = (const SystemProfile*)m->profile;
-    int n = m->tpak_slots;
-    if (n > RECOMP_LAUNCHER_MAX_TPAKS) n = RECOMP_LAUNCHER_MAX_TPAKS;
-    if (prof && prof->controller.max_players > 0 &&
-        n > prof->controller.max_players)
-        n = prof->controller.max_players;
-    return n > 0 ? n : 0;
+// The pak panel composes only while at least one player has picked a kind that
+// HAS controls. "Every player on None" therefore isn't an empty panel with a
+// heading and nothing under it — the panel is simply not in the layout, and
+// draw_dashboard's gap before it goes with it.
+int avail_tpak(const LauncherModel* m) {
+    const int ports = launcher_model_pak_ports(m);
+    for (int port = 0; port < ports; ++port)
+        if (pak_kind_def(pak_kind_of(m, port))->body) return 1;
+    return 0;
 }
 
-// One port's pak card: the kind dropdown, then whatever that kind needs. The
-// card chrome (begin_panel / begin_container) belongs to the caller, so this
-// same body serves the dashboard panel and the Controller page.
-//
-// Transfer Pak body, left to right / top to bottom:
+// The kind picker itself, drawn on a player card (draw_player_panel) under
+// Configure and on the Controller page for the port being configured. `w` is
+// the caller's content width so it lines up with the controls above it.
+void pak_kind_picker(LauncherModel* m, int port, float w) {
+    const int kind = pak_kind_of(m, port);
+    ImGui::PushID("pak");
+    ImGui::SetNextItemWidth(w);
+    if (ImGui::BeginCombo("##pakkind", ui_text(pak_kind_def(kind)->label))) {
+        for (int i = 0; i < kPakKindCount; ++i)
+            if (ImGui::Selectable(ui_text(kPakKinds[i].label),
+                                  kind == kPakKinds[i].kind))
+                pak_set_kind(m, port, kPakKinds[i].kind);
+        ImGui::EndCombo();
+    }
+    ImGui::PopID();
+}
+
+// PAK_TRANSFER's body. Left to right / top to bottom:
 //   [ Transfer Pak art ]  [cart chip] cartridge name
 //        (accessory)      trainer line
 //                         [ Insert / Change cartridge... ]
@@ -2784,36 +2829,18 @@ static int pak_port_count(const LauncherModel* m) {
 // no composited "Transfer Pak with cart X inserted" art, and drawing the bare
 // GB cart in place of the accessory would be showing the player a different
 // object than the one the dropdown names.
-void draw_pak_card(LauncherModel* m, const LauncherTheme& th, int port) {
-    ImGui::PushID(port);
-    char eb[40];
-    snprintf(eb, sizeof(eb), "CONTROLLER %d PAK", port + 1);
-    eyebrow(eb);
-
-    const int   kind = pak_kind_of(m, port);
-    const float cw   = ImGui::GetContentRegionAvail().x;
-
-    ImGui::SetNextItemWidth(cw);
-    if (ImGui::BeginCombo("##pakkind", ui_text(pak_kind_label(kind)))) {
-        // Only kinds that exist are listed. A greyed-out "Controller Pak"
-        // entry would be a control promising something no runtime here can
-        // do — the list grows when the thing behind it does.
-        if (ImGui::Selectable(ui_text(pak_kind_label(PAK_NONE)), kind == PAK_NONE))
-            pak_set_kind(m, port, PAK_NONE);
-        if (ImGui::Selectable(ui_text(pak_kind_label(PAK_TRANSFER)), kind == PAK_TRANSFER))
-            pak_set_kind(m, port, PAK_TRANSFER);
-        ImGui::EndCombo();
-    }
-
-    if (kind != PAK_TRANSFER) {
-        // Empty port: the dropdown is the whole card. The ROM/save paths the
-        // port may still be carrying are left alone, so switching back to
-        // Transfer Pak restores the cartridge the player had inserted.
-        ImGui::PopID();
-        return;
-    }
-
-    ImGui::Dummy(ImVec2(0, px(8)));
+//
+// The caller owns the panel chrome and the ImGui id scope (the panel pushes the
+// port), so this body is pure content and serves both the dashboard panel and
+// the Controller page.
+static void pak_body_transfer(LauncherModel* m, const LauncherTheme& th, int port) {
+    // Cap the body's working width. The panel this sits in is as wide as the
+    // whole controller row, and a "Change cartridge..." button stretched across
+    // 1300px reads as a banner, not a button. Everything below measures from
+    // `cw`, never from GetContentRegionAvail(), so the section keeps card-like
+    // proportions in a full-width panel and still shrinks on a narrow window.
+    float cw = ImGui::GetContentRegionAvail().x;
+    if (cw > px(420.0f)) cw = px(420.0f);
 
     const bool has_cart  = m->s.tpak_rom_path[port][0] != '\0';
     const bool inspected = m->tpak_inspected[port];
@@ -2829,7 +2856,7 @@ void draw_pak_card(LauncherModel* m, const LauncherTheme& th, int port) {
 
     // The accessory. image_fit reserves the full box and Dummies it out when
     // the texture is absent, which is what happens today: recomp-ui ships no
-    // Transfer Pak picture (see the g_tpak load site). The card then draws
+    // Transfer Pak picture (see the g_tpak load site). The body then draws
     // with an empty space where the art goes rather than borrowing another
     // object's picture — honestly missing beats plausibly wrong.
     image_fit(g_tpak, 88.0f, 112.0f);
@@ -2884,13 +2911,14 @@ void draw_pak_card(LauncherModel* m, const LauncherTheme& th, int port) {
             launcher_model_clear_tpak(m, port);
             // clear_tpak resets tpak_enabled to 0 (unset), which the resolver
             // reads as off once the ROM path is gone — i.e. the dropdown would
-            // silently fall back to Empty. Removing the CARTRIDGE does not
-            // remove the PAK, so restate the kind the player picked.
+            // silently fall back to None and this section would vanish under
+            // the player's hand. Removing the CARTRIDGE does not remove the
+            // PAK, so restate the kind the player picked.
             pak_set_kind(m, port, PAK_TRANSFER);
         }
     }
 
-    // Resume below the art, full card width.
+    // Resume below the art, full width.
     ImGui::SetCursorPos(ImVec2(start_x, top_y + art_h + px(10.0f)));
 
     if (has_cart) {
@@ -2904,9 +2932,9 @@ void draw_pak_card(LauncherModel* m, const LauncherTheme& th, int port) {
                            ? rui_basename(m->s.tpak_save_path[port])
                            : "Default (runtime chooses)";
         char elided[160];
-        elide_left(sv, ImGui::GetContentRegionAvail().x, elided, sizeof(elided));
+        elide_left(sv, cw, elided, sizeof(elided));
         ImGui::TextUnformatted(elided);
-        const float bw = (ImGui::GetContentRegionAvail().x - px(th.spacing_sm)) * 0.5f;
+        const float bw = (cw - px(th.spacing_sm)) * 0.5f;
         if (ImGui::Button(ui_text("Browse save..."), ImVec2(bw, px(26.0f)))) {
             ui_pick_file(m, "Select battery save", {"*.srm"},
                          "Game Boy battery save (.srm)",
@@ -2918,36 +2946,70 @@ void draw_pak_card(LauncherModel* m, const LauncherTheme& th, int port) {
         if (ImGui::Button(ui_text("Use default"), ImVec2(bw, px(26.0f))))
             launcher_model_set_tpak_save(m, port, "");
     }
-
-    ImGui::PopID();
 }
 
+// "PLAYER 3 - TRANSFER PAK" for a section heading. eyebrow_tracked letter-spaces
+// BYTE by byte, so the separator and the label have to stay ASCII — an em dash
+// would come out as two mojibake glyphs.
+static void pak_section_heading(int port, const char* kind_label) {
+    char head[64];
+    snprintf(head, sizeof(head), "%s %d - %s", ui_text("PLAYER"), port + 1,
+             ui_text(kind_label));
+    for (char* q = head; *q; ++q)
+        if (*q >= 'a' && *q <= 'z') *q = (char)(*q - ('a' - 'A'));
+    eyebrow_tracked(head);
+}
+
+// The MIXED pak panel: one CARD per player who has picked a kind, in player
+// order, each framed the same way a controller card is (begin_container +
+// begin_panel — bordered, content-hugging, its own eyebrow) rather than one
+// shared panel with sections separated by a line. A player on None
+// contributes no card at all — switching one player back to None removes
+// just that card and the row reflows — and when nobody has a pak the panel
+// never composes (avail_tpak), so the dashboard shows no empty card.
+//
+// Laid out with the SAME wrap rule as draw_controllers_row (gap, a preferred
+// card width that decides the column count, then stretch, capped at however
+// many cards there actually are) so a pak card reads as the same kind of
+// object as the controller card above it, not a flat list bolted on below.
+// Independent per-card framing is also what makes the differing heights (a
+// Transfer Pak with a cart is much taller than an empty one, and a future
+// memory-card section will differ again) a non-issue: each card hugs its own
+// content instead of a shared panel forcing every section to the tallest.
 void panel_tpak_draw(LauncherModel* m, const LauncherTheme* th) {
-    // One card per port, laid out by the SAME rule as the player cards above
-    // (draw_controllers_row): spacing_md gap, a 300px preferred width that
-    // decides the column COUNT, then stretch to fill. Deliberately not
-    // dash_card_width (the memory-card rule, which keeps a fixed 300 and
-    // leaves slack) — a pak card must land under the controller card for the
-    // same port, and that only holds if both grids compute the same width.
-    const int ports = pak_port_count(m);
-    if (ports <= 0) return;
-    const float gap   = px(th->spacing_md);
-    const float avail = ImGui::GetContentRegionAvail().x;
-    const float pref  = px(300.0f);
-    int cols = (int)((avail + gap) / (pref + gap));
+    const int ports = launcher_model_pak_ports(m);
+    int active[RECOMP_LAUNCHER_MAX_TPAKS];
+    int n = 0;
+    for (int port = 0; port < ports && n < RECOMP_LAUNCHER_MAX_TPAKS; ++port)
+        if (pak_kind_def(pak_kind_of(m, port))->body) active[n++] = port;
+    if (n < 1) return;   // avail_tpak already gates this; belt & suspenders.
+
+    const float gap = px(th->spacing_md);
+    const float availw = ImGui::GetContentRegionAvail().x;
+    const float pref = px(300.0f);   // same preferred width as a player card
+    int cols = (int)((availw + gap) / (pref + gap));
     if (cols < 1) cols = 1;
-    if (cols > ports) cols = ports;
-    float cw = (avail - gap * (float)(cols - 1)) / (float)cols;
-    if (cw < 1.0f) cw = avail;
-    for (int port = 0; port < ports; ++port) {
-        if (port % cols) ImGui::SameLine(0, gap);
-        else if (port)   ImGui::Dummy(ImVec2(0, gap));
-        char cid[16]; snprintf(cid, sizeof(cid), "pakc%d", port);
-        char pid[16]; snprintf(pid, sizeof(pid), "pakp%d", port);
-        begin_container(cid, ImVec2(cw, 0), ImGuiChildFlags_AutoResizeY);
-            if (begin_panel(pid, cw, false))
-                draw_pak_card(m, *th, port);
-            end_panel();
+    if (cols > n) cols = n;
+    float cardw = (availw - gap * (float)(cols - 1)) / (float)cols;
+    if (cardw < 1.0f) cardw = availw;
+
+    for (int i = 0; i < n; ++i) {
+        const int port = active[i];
+        if (i % cols) ImGui::SameLine(0, gap);
+        else if (i) ImGui::Dummy(ImVec2(0, gap));   // new row of cards
+        char cid[16];
+        std::snprintf(cid, sizeof(cid), "pk%d", port);
+        begin_container(cid, ImVec2(cardw, 0), ImGuiChildFlags_AutoResizeY);
+        char pid[16];
+        std::snprintf(pid, sizeof(pid), "pak%d", port);
+        if (begin_panel(pid, cardw, false)) {
+            ImGui::PushID(port);
+            const PakKindDef* def = pak_kind_def(pak_kind_of(m, port));
+            pak_section_heading(port, def->label);
+            def->body(m, *th, port);
+            ImGui::PopID();
+        }
+        end_panel();
         end_container();
     }
 }
@@ -3290,6 +3352,23 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (btnh - ImGui::GetTextLineHeight()) * 0.5f);
         draw_dot(on, th.good, th.text_muted);
         ImGui::TextColored(on ? col(th.good) : col(th.text_muted), "%s", st);
+    }
+
+    // Controller pak, directly under Configure (owner decision, 2026-09): the
+    // accessory goes INTO this controller, so the pick belongs on this card.
+    // Present for every port whose pads have an accessory slot — on N64 that
+    // is the hardware, not a title's declaration, so this does NOT depend on
+    // the host declaring tpak_slots (launcher_model_pak_ports). Consoles whose
+    // pads take no accessory report 0 ports and draw nothing here, so their
+    // cards are byte-identical.
+    //
+    // The dropdown is the whole control on this card; the picked kind's
+    // controls appear in the pak panel below the controller row (panel
+    // "tpak"), so the card stays short and the memory cards / saves under it
+    // are not pushed off the bottom.
+    if (p < launcher_model_pak_ports(m)) {
+        ImGui::Dummy(ImVec2(0, px(6)));
+        pak_kind_picker(m, p, cw);
     }
     ImGui::PopID();
     end_panel();
@@ -5220,13 +5299,23 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         }
     } end_panel();
 
-    // Pak for THIS controller port (N64 tpak games), so it's reachable from
-    // the Controller page without scrolling the dashboard. Literally the same
-    // card the dashboard panel draws — one pak surface, one set of controls —
-    // with the port fixed to the player being configured.
-    if (p < pak_port_count(m)) {
-        if (begin_panel("cfg_tpak", 0)) {
-            draw_pak_card(m, th, p);
+    // Pak for THIS controller port, so it's reachable from the Controller page
+    // without going back to the dashboard. Literally the same picker and the
+    // same kind body the dashboard draws — one pak surface, one set of
+    // controls — with the port fixed to the player being configured. The body
+    // is absent here for the same reason the dashboard panel skips the player:
+    // None has no controls.
+    if (p < launcher_model_pak_ports(m)) {
+        if (begin_panel("cfg_pak", 0)) {
+            eyebrow("CONTROLLER PAK");
+            ImGui::PushID(p);
+            pak_kind_picker(m, p, ImGui::GetContentRegionAvail().x);
+            const PakKindDef* def = pak_kind_def(pak_kind_of(m, p));
+            if (def->body) {
+                ImGui::Dummy(ImVec2(0, px(8)));
+                def->body(m, th, p);
+            }
+            ImGui::PopID();
         } end_panel();
     }
 
@@ -13414,9 +13503,10 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
             g_wordmark = launcher_texture_load(
                 asset((std::string("assets/img/") + bprof->wordmark_image).c_str()).c_str());
     }
-    // Transfer Pak cartridge art (only a tpak game needs it): real GB cart PNGs
-    // keyed by cart_kind, empty shell at index 0 (see g_cart / draw_tpak_cart).
-    if (m->tpak_slots > 0) {
+    // Transfer Pak cartridge art (only a console with accessory ports needs
+    // it): real GB cart PNGs keyed by cart_kind, empty shell at index 0 (see
+    // g_cart / draw_tpak_cart).
+    if (launcher_model_pak_ports(m) > 0) {
         static const char* const kCartFiles[5] = {
             "cart_empty.tga", "cart_red.tga", "cart_blue.tga",
             "cart_yellow.tga", "cart_green.tga",

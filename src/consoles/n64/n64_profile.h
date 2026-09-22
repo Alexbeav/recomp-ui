@@ -93,6 +93,11 @@ static const SystemProfile kSystemProfileN64 = {
         /* pad_bind_order */ kN64GamepadBindOrder,
         /* pad_bind_cols  */ LNG_N64_GAMEPAD_BIND_COLS,
         /* pad_bind_rows  */ LNG_N64_GAMEPAD_BIND_ROWS,
+        // Every N64 controller port has an accessory slot in the pad itself.
+        // That is hardware, not a title's declaration — so the pak picker on
+        // each player card exists for ANY N64 build, and GameInfo.tpak_slots
+        // stops being the gate for whether a player can pick one.
+        /* has_pak        */ 1,
     },
     // Cartridge battery saves, one file per game (per-game via sram_path —
     // the compact save row folded into the GAME card, like SNES/GBA).

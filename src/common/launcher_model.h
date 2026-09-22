@@ -277,7 +277,7 @@ typedef struct {
     // NULL => the default "assets/img/boxart.tga".
     const char* boxart_path;
 
-    // ---- N64 Transfer Pak (GameInfo.tpak_slots > 0 games) ------------------
+    // ---- N64 Transfer Pak --------------------------------------------------
     // Per-slot facts refreshed via tpak_inspect_cb (the HOST's cartridge
     // brain — see recomp_launcher.h) on init and on every ROM/save change.
     // A NULL callback leaves tpak_inspected false and the card shows the
@@ -924,7 +924,16 @@ int  launcher_model_virtual_stylus_available(const LauncherModel* m);
 int  launcher_model_virtual_stylus_enabled(const LauncherModel* m);
 void launcher_model_toggle_virtual_stylus(LauncherModel* m);
 
-// ---- N64 Transfer Pak slots (tpak_slots only; no-op guarded by slot range) ----
+// ---- Controller accessory (pak) ports --------------------------------------
+// How many controller ports offer a pak slot: the number of controllers the
+// launcher draws, gated by whether this console's pads have an accessory slot
+// at all (ControllerSpec.has_pak — N64) or only by what the host declared
+// (GameInfo.tpak_slots — every other console, which declares none). 0 means
+// no port takes a pak, and every setter below is a no-op. This is the ONE
+// range those setters accept; panels ask it rather than recomputing it.
+int  launcher_model_pak_ports(const LauncherModel* m);
+
+// ---- N64 Transfer Pak slots (pak ports only; no-op guarded by slot range) ----
 // Adopt a GB cartridge ROM for one port's Transfer Pak. Re-runs the host's
 // tpak_inspect_cb (when set) to refresh the card's label/trainer/tint facts,
 // and enables the slot (inserting a cart = wanting it on, the SS Anne rule).

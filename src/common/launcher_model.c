@@ -742,7 +742,8 @@ void launcher_model_init(LauncherModel* m,
 
     // ---- Transfer Pak slots: inspect whatever the host's config seeded ----
     // (re-run per slot on every ROM/save change; see launcher_model_set_tpak_*).
-    for (int t = 0; t < m->tpak_slots; ++t) lm_inspect_tpak(m, t);
+    for (int t = 0, tn = launcher_model_pak_ports(m); t < tn; ++t)
+        lm_inspect_tpak(m, t);
 
     // ---- validate/clamp aspect_index against the offered set ----
     if (m->aspect_labels && m->num_aspect_labels > 0) {
@@ -3415,15 +3416,42 @@ static void lm_inspect_tpak(LauncherModel* m, int slot) {
     }
 }
 
+// How many controller ports on this system carry an accessory (pak) slot.
+// ONE answer, shared by the guards below and by every panel that draws a pak
+// control — a second, independently-computed count would be free to disagree
+// with the range these setters accept, and then a picker could write a slot
+// the model refuses.
+//
+// A pak sits IN a controller, so the count is the number of controllers the
+// launcher actually draws (launcher_model_visible_player_count — the same
+// source draw_controllers_row uses), never a hardcoded 4.
+//
+// Which of those ports HAS a slot depends on the console, not on the title:
+//   - ControllerSpec.has_pak (N64): the pad itself has the slot, so every
+//     drawn port has one. GameInfo.tpak_slots is not consulted — a host that
+//     declares 0 because its title never asked for a Transfer Pak still has
+//     four N64 pads with four accessory slots in them.
+//   - every other console (has_pak 0): the host's declared tpak_slots is the
+//     whole answer, so a console that declares none has none. Unchanged.
+int launcher_model_pak_ports(const LauncherModel* m) {
+    if (!m) return 0;
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    int n = launcher_model_visible_player_count(m);
+    if (!(prof && prof->controller.has_pak) && n > m->tpak_slots)
+        n = m->tpak_slots;
+    if (n > RECOMP_LAUNCHER_MAX_TPAKS) n = RECOMP_LAUNCHER_MAX_TPAKS;
+    return n > 0 ? n : 0;
+}
+
 void launcher_model_set_tpak_rom(LauncherModel* m, int slot, const char* path) {
-    if (slot < 0 || slot >= m->tpak_slots) return;
+    if (slot < 0 || slot >= launcher_model_pak_ports(m)) return;
     safe_copy(m->s.tpak_rom_path[slot], sizeof(m->s.tpak_rom_path[slot]), path ? path : "");
     if (m->s.tpak_rom_path[slot][0]) m->s.tpak_enabled[slot] = 1;  // inserting = wanting it on
     lm_inspect_tpak(m, slot);
 }
 
 void launcher_model_clear_tpak(LauncherModel* m, int slot) {
-    if (slot < 0 || slot >= m->tpak_slots) return;
+    if (slot < 0 || slot >= launcher_model_pak_ports(m)) return;
     m->s.tpak_rom_path[slot][0]  = '\0';
     m->s.tpak_save_path[slot][0] = '\0';
     m->s.tpak_enabled[slot] = 0;
@@ -3431,13 +3459,13 @@ void launcher_model_clear_tpak(LauncherModel* m, int slot) {
 }
 
 void launcher_model_set_tpak_save(LauncherModel* m, int slot, const char* path) {
-    if (slot < 0 || slot >= m->tpak_slots) return;
+    if (slot < 0 || slot >= launcher_model_pak_ports(m)) return;
     safe_copy(m->s.tpak_save_path[slot], sizeof(m->s.tpak_save_path[slot]), path ? path : "");
     lm_inspect_tpak(m, slot);
 }
 
 bool launcher_model_tpak_enabled(const LauncherModel* m, int slot) {
-    if (slot < 0 || slot >= m->tpak_slots) return false;
+    if (slot < 0 || slot >= launcher_model_pak_ports(m)) return false;
     int e = m->s.tpak_enabled[slot];
     if (e > 0) return true;
     if (e < 0) return false;
@@ -3445,7 +3473,7 @@ bool launcher_model_tpak_enabled(const LauncherModel* m, int slot) {
 }
 
 void launcher_model_toggle_tpak(LauncherModel* m, int slot) {
-    if (slot < 0 || slot >= m->tpak_slots) return;
+    if (slot < 0 || slot >= launcher_model_pak_ports(m)) return;
     m->s.tpak_enabled[slot] = launcher_model_tpak_enabled(m, slot) ? -1 : 1;
 }
 
