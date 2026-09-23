@@ -5585,7 +5585,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
             if (!has_pad_src) {
                 ImGui::SameLine();
                 ImGui::TextColored(col(th.text_muted),
-                    "  (click to rebind, right-click to clear)");
+                    "  (click to rebind, right-click to clear; yellow = bound more than once)");
             }
             ImGui::Spacing();
 
@@ -5614,6 +5614,19 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                 }
                 const float chip_w = px(112.0f);
                 const float chip_gap = px(6.0f);
+                // Duplicate-bind detection across this player's table, both
+                // slots. Duplicates stay ALLOWED (one key on two inputs is a
+                // legitimate choice); the warn colour just makes an accidental
+                // one visible at a glance.
+                auto bind_dup_count = [&](const char* txt) -> int {
+                    if (!txt || !txt[0] || !strcmp(txt, "(unbound)")) return 0;
+                    int n = 0;
+                    for (int i = 0; i < LNG_PSX_PAD_BUTTON_COUNT; ++i) {
+                        if (!strcmp(m->binds[p][i], txt)) ++n;
+                        if (!strcmp(m->binds_alt[p][i], txt)) ++n;
+                    }
+                    return n;
+                };
                 const float cell_w = label_col_w + 2.0f * chip_w + chip_gap + px(16.0f);
                 if (ImGui::BeginTable("psx_key_binds", LNG_PSX_GAMEPAD_BIND_COLS,
                                       ImGuiTableFlags_SizingFixedFit)) {
@@ -5639,17 +5652,20 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                                                        : m->binds[p][b];
                                 if (!lbl || !lbl[0]) lbl = "(unbound)";
                                 const bool unbound = strcmp(lbl, "(unbound)") == 0;
+                                const bool dup = !cap && bind_dup_count(lbl) > 1;
                                 const char* chip = cap ? "[ press... ]"
                                                  : (slot && unbound) ? "-"
                                                                      : lbl;
                                 if (cap) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
+                                else if (dup)
+                                    ImGui::PushStyleColor(ImGuiCol_Text, col(th.warn));
                                 else if (slot && unbound)
                                     ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
                                 if (ImGui::Button(chip, ImVec2(chip_w, 0))) {
                                     m->map_all_active = false;
                                     launcher_model_begin_capture_slot(m, b, slot);
                                 }
-                                if (cap || (slot && unbound)) ImGui::PopStyleColor();
+                                if (cap || dup || (slot && unbound)) ImGui::PopStyleColor();
                                 // Clear on RELEASE, not IsItemClicked (press): a
                                 // capture in progress swallows mouse events, and
                                 // a press-triggered action would leave ImGui
@@ -5660,11 +5676,34 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                                     launcher_binds_set_button_slot(
                                         m, m->cfg_player + 1, b, slot, 0);
                                 }
-                                if (ImGui::IsItemHovered() && !cap)
-                                    ImGui::SetTooltip("%s bind: %s\n"
-                                        "Click to rebind (key%s), right-click to clear",
-                                        slot ? "Alternate" : "Primary", lbl,
-                                        " or mouse button");
+                                if (ImGui::IsItemHovered() && !cap) {
+                                    // Name the other inputs sharing this key.
+                                    char also[160] = "";
+                                    if (dup) {
+                                        size_t used = 0;
+                                        for (int i = 0; i < LNG_PSX_PAD_BUTTON_COUNT; ++i) {
+                                            const bool hit =
+                                                (i != b || slot != 0) && !strcmp(m->binds[p][i], lbl);
+                                            const bool hit_alt =
+                                                (i != b || slot != 1) && !strcmp(m->binds_alt[p][i], lbl);
+                                            if (!hit && !hit_alt) continue;
+                                            const int w = snprintf(also + used, sizeof also - used,
+                                                                   "%s%s", used ? ", " : "",
+                                                                   spec.buttons[i].label);
+                                            if (w < 0 || (size_t)w >= sizeof also - used) break;
+                                            used += (size_t)w;
+                                        }
+                                    }
+                                    if (dup && also[0])
+                                        ImGui::SetTooltip("%s bind: %s\n"
+                                            "Also bound to: %s\n"
+                                            "Click to rebind (key or mouse button), right-click to clear",
+                                            slot ? "Alternate" : "Primary", lbl, also);
+                                    else
+                                        ImGui::SetTooltip("%s bind: %s\n"
+                                            "Click to rebind (key or mouse button), right-click to clear",
+                                            slot ? "Alternate" : "Primary", lbl);
+                                }
                                 ImGui::PopID();
                             }
                             ImGui::PopID();
