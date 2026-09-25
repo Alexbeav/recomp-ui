@@ -27,6 +27,12 @@ static void expect_int(int got, int want, const char* what) {
     ++fails;
 }
 
+/* The lobby seat ceiling the model starts with (Host panel "Max Players",
+ * the create op's max_slots). It must follow the same profile clamp as the
+ * controller seats: a lobby with more seats than the console can route
+ * admits players who have no pad. */
+static int g_last_host_max;
+
 static int genesis_player_count(int num_players) {
     static RecompLauncherCGameInfo game;
     static RecompLauncherCSettings io;
@@ -42,6 +48,7 @@ static int genesis_player_count(int num_players) {
 
     launcher_model_init(m, &io, &game, NULL);
     n = m->player_count;
+    g_last_host_max = m->netplay_host_max_players;
     free(m);
     return n;
 }
@@ -53,5 +60,12 @@ int main(void) {
     expect_int(genesis_player_count(4), 4, "four-player title gets four seats");
     expect_int(genesis_player_count(2), 2, "two-port title keeps two seats");
     expect_int(genesis_player_count(8), 4, "request above the ceiling clamps to four");
+    expect_int(g_last_host_max, 4, "lobby seat ceiling follows the profile clamp (8 -> 4)");
+    genesis_player_count(4);
+    expect_int(g_last_host_max, 4, "four-player title hosts four lobby seats");
+    genesis_player_count(2);
+    expect_int(g_last_host_max, 2, "two-port title hosts two lobby seats");
+    genesis_player_count(1);
+    expect_int(g_last_host_max, 2, "a one-player title still hosts the two-seat minimum");
     return fails ? 1 : 0;
 }
