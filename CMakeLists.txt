@@ -469,7 +469,9 @@ if(BUILD_TESTING)
                          "${CMAKE_BINARY_DIR}/recomp-net-build" EXCLUDE_FROM_ALL)
         add_executable(recomp-ui-netplay-host-test tests/netplay_host_test.c)
         target_include_directories(recomp-ui-netplay-host-test PRIVATE src)
-        target_link_libraries(recomp-ui-netplay-host-test PRIVATE recomp_net)
+        find_package(Threads REQUIRED)
+        target_link_libraries(recomp-ui-netplay-host-test PRIVATE recomp_net
+                              Threads::Threads)
         target_compile_definitions(recomp-ui-netplay-host-test PRIVATE
             _POSIX_C_SOURCE=200809L _DEFAULT_SOURCE)
         add_test(NAME recomp-ui-netplay-host

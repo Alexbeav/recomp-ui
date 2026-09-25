@@ -64,28 +64,57 @@ Not implemented, and said rather than faked:
 - **A LAN room settles no mode.** It carries the delay only, so a LAN launch
   has `rollback = 0` and `input_prediction = 0` on both peers (the engine's
   own override, e.g. `SNES_NET_MODE`, still applies) rather than each peer
-  inventing its own. LAN `session_id` is always 1.
+  inventing its own.
 - **`host_can_spectate` stays NULL.** `HOST_FIRST` folds `host_spectates` into
   the launch the way psxrecomp does, but no engine on this backend has run a
   match that way yet, so the UI does not offer it. Under `SEAT`, a launch with
   the host in the gallery is refused (`host_spectates_unsupported`).
-- **A LAN / Direct IP rematch does not reach the guest** (found 2026-09-25 by
-  n64lle's headless lobby harness, `tools/rb_lobby.sh lan 2`; not fixed here).
-  `arm_lan_launch` closes BOTH Direct IP sockets when the match starts, and
-  `recomp_netplay_host_prepare_rematch` re-opens only the HOST's listener. The
-  guest comes back to a room with `in_lobby()` true but no socket to the host,
-  so it never hears the next START; the host's room still lists the guest
-  (its seat was never cleared), so the host can start alone and its match then
-  times out on connect. Measured: host second match `connect_timeout_lan`,
-  guest waiting in a room that never launched. A fix has two halves: the guest
-  re-joins over Direct IP after the soft return (the host may not be
-  listening yet, so it has to retry), and the host frees the joiner seat when
-  it re-opens (a re-join into a seat still marked taken is refused `full`).
-  Online rooms are unaffected: their rematch was measured working.
 - **No pre-seat mod transfer.** The transfer rides the seated `signal` relay;
   a joiner the server refused (`need_mods`) has no seat, so
   `need_mods_can_transfer` answers 0 and `mod_xfer_start` is not offered. The
   seated path (`lobby_mods_*`) is the transfer.
+
+### LAN / Direct IP rematch
+
+A LAN launch closes BOTH Direct IP sockets (`arm_lan_launch`): the host's
+because the game session binds the same UDP port, the guest's with it. The
+soft return (`recomp_netplay_host_prepare_rematch`) rebuilds the channel from
+both ends, since neither knows when the other is back:
+
+- **Host:** re-opens the listener and **frees the joiner seat** -- the new
+  socket has no guest, and a seat still marked taken let the host start alone
+  (`connect_timeout_lan`) and refused the returning guest `full`. A port that
+  is not free yet is retried from the pump every 500 ms, with one stderr line.
+- **Guest:** starts a non-blocking re-join (recomp-net
+  `rnet_lan_direct_guest_join_begin` / `_join_poll`) to the same host with the
+  password and bind it first joined with, polled from the pump and from
+  `launch_pending`, re-sending `JOIN_REQ` while the host is not listening yet.
+  While it re-joins the guest stays `in_lobby`, with no chat or seat swap.
+  It gives up after 30 s (`last_error` `lan_rejoin_timeout`) or on a refusal
+  (`lan_rejoin_refused`), and leaves the room either way, rather than sitting
+  in one that can never launch.
+
+**Requires recomp-net with `rnet_lan_direct_guest_join_begin` and
+`RNetLanLobby.session_id`** (recomp-net `feat/lan-direct-rematch`, 8342229);
+an older recomp-net does not compile this backend.
+
+Found 2026-09-25 by n64lle's headless lobby harness (`tools/rb_lobby.sh lan
+2`: host second match `connect_timeout_lan`, guest never launched) and fixed
+the same day; `recomp-ui-netplay-host-test` drives both halves on loopback.
+
+**`session_id` on LAN: fresh per START, allocated by the host.** The rematch
+contract -- never reuse the last match's UDP `session_id`, so a late
+HELLO/BYE from match N is not taken for match N+1's (recomp-net-server
+`docs/WS_LOBBY.md`, recomp-net `README.md`) -- is a property of the session
+protocol, not of the server, so it applies to LAN too; what LAN lacks is the
+server that allocates. The room's host does: `cb_request_start` takes the next
+id, `START` and the registry file carry it (recomp-net `RNetLanLobby.session_id`,
+a trailing optional field on both wires), and the guest launches with the one
+it heard. Monotonic per room, the first one seeded from the clock so a room
+re-created on the same port does not reuse the previous room's ids; never 0.
+The id only filters packets -- it is not simulation input. A host that
+predates the field sends none, and its guest falls back to 1, which is what
+such a host launches with. (Until 2026-09-25 every LAN match was session 1.)
 
 For the engine-side checklist see snesrecomp
 [`docs/RECOMP_NET.md`](https://github.com/mstan/snesrecomp/blob/main/docs/RECOMP_NET.md)

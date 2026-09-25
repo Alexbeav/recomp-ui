@@ -72,6 +72,36 @@ static int g_lobby_rollback = 1;
 static int g_lobby_input_prediction = 0;
 static int g_lan_guest_rtt_ms = -1;
 
+/* ---- a LAN / Direct IP room across a soft return --------------------------
+ *
+ * arm_lan_launch closes BOTH Direct IP sockets: the host's because the game
+ * session binds the same UDP port, the guest's with it (the room is over for
+ * the length of the match). The rematch has to rebuild the channel from both
+ * ends, and neither end knows when the other one is back:
+ *
+ *   host   prepare_rematch re-opens the listener and FREES the joiner seat --
+ *          the new socket has no guest, and a seat still marked taken both
+ *          lets the host start alone (connect timeout) and refuses the
+ *          returning guest "full". If the port is not free yet, the re-open
+ *          is retried from the pump (g_direct_reopen).
+ *   guest  prepare_rematch starts a non-blocking re-join to the same host
+ *          with the same password and bind (g_direct_rejoin); the pump polls
+ *          it, re-sending JOIN_REQ while the host is not listening yet, for
+ *          at most g_lan_rejoin_window_ms. Give-up and refusal are loud:
+ *          stderr plus last_error, and the guest leaves the room rather than
+ *          sitting in one that can never launch.
+ *
+ * Each START carries a fresh session id, allocated here by the host (no
+ * server allocates one on LAN): see next_lan_session_id. */
+static char g_direct_password[RNET_LAN_LOBBY_PASSWORD_MAX];
+static char g_direct_bind[64];
+static int g_direct_rejoin;
+static uint64_t g_direct_rejoin_deadline_ms;
+static unsigned g_lan_rejoin_window_ms = 30000;
+static int g_direct_reopen;
+static uint64_t g_direct_reopen_next_ms;
+static uint32_t g_lan_session_last;
+
 /* The title's own ceiling, from the hooks, inside the launcher's array. */
 static int title_max_players(void)
 {
@@ -147,6 +177,40 @@ static const char *game_version(void);
  * (guest side, and the host's own instant result). */
 static int g_lan_swap_incoming;
 static int g_lan_swap_outgoing;
+
+static uint64_t host_now_ms(void)
+{
+#ifdef _WIN32
+  return (uint64_t)GetTickCount64();
+#else
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint64_t)ts.tv_sec * 1000u + (uint64_t)(ts.tv_nsec / 1000000);
+#endif
+}
+
+/* The session id of the host's next START. A LAN room has no server to hand
+ * one out, and the rematch contract is the server's (recomp-net-server
+ * docs/WS_LOBBY.md: a fresh id per match, so the next match's HELLO/BYE
+ * cannot be confused with the last one's): the host allocates it, START and
+ * the registry file carry it, the guest launches with the one it heard.
+ * Monotonic per room; the room's FIRST id is seeded from the clock so a room
+ * re-created on the same port does not reuse the previous room's ids. It is
+ * a packet-header filter, never simulation input (NETPLAY.md §2). Never 0:
+ * 0 reads as "a host that sent none". */
+static uint32_t next_lan_session_id(void)
+{
+  if (g_lan_session_last == 0) {
+    uint32_t x = (uint32_t)time(NULL) ^ (uint32_t)(host_now_ms() * 2654435761u);
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    g_lan_session_last = x & 0x3fffffffu; /* room to count up */
+  }
+  if (++g_lan_session_last == 0)
+    g_lan_session_last = 1;
+  return g_lan_session_last;
+}
 
 static void close_direct_sockets(void)
 {
@@ -575,6 +639,9 @@ static int create_lan(const char *name, const char *endpoint,
   g_joined_direct = 0;
   g_direct_peer_endpoint[0] = '\0';
   g_lan_guest_rtt_ms = -1;
+  g_direct_rejoin = 0;
+  g_direct_reopen = 0;
+  g_lan_session_last = 0; /* a new room seeds a new id range */
   memset(&g_lan_launch, 0, sizeof(g_lan_launch));
   snprintf(g_resume_endpoint, sizeof(g_resume_endpoint), "%s",
            g_lan_room.endpoint);
@@ -606,14 +673,126 @@ static int fill_lan_row(RecompLauncherCNetplayLobby *out)
 static void clear_lan_joiner(void)
 {
   if (g_joined_direct && g_direct_guest)
-    (void)rnet_lan_direct_guest_leave(g_direct_guest);
+    (void)rnet_lan_direct_guest_leave(g_direct_guest); /* no-op unseated */
   close_direct_sockets();
   g_joined_lan = 0;
   g_joined_direct = 0;
+  g_direct_rejoin = 0;
   g_direct_peer_endpoint[0] = '\0';
   g_lan_guest_rtt_ms = -1;
   memset(&g_lan_room, 0, sizeof(g_lan_room));
   memset(&g_lan_launch, 0, sizeof(g_lan_launch));
+}
+
+/* Guest, after a soft return: poll the re-join prepare_rematch began. */
+static void direct_rejoin_step(void)
+{
+  RNetLanLobby state;
+  int rc;
+  if (!g_direct_rejoin)
+    return;
+  if (!g_direct_guest) {
+    g_direct_rejoin = 0;
+    return;
+  }
+  rc = rnet_lan_direct_guest_join_poll(g_direct_guest, &state);
+  if (rc == RNET_LAN_DIRECT_PENDING) {
+    if (host_now_ms() < g_direct_rejoin_deadline_ms)
+      return;
+    fprintf(stderr,
+            "recomp_netplay: LAN rematch: the host at %s did not take the "
+            "guest back within %u ms -- leaving the room\n",
+            g_direct_peer_endpoint, g_lan_rejoin_window_ms);
+    snprintf(g_runtime_error, sizeof(g_runtime_error), "%s",
+             "lan_rejoin_timeout");
+    clear_lan_joiner(); /* unseated: no LEAVE goes out */
+    return;
+  }
+  g_direct_rejoin = 0;
+  if (rc == RNET_LAN_DIRECT_OK) {
+    g_lan_room = state;
+    fprintf(stderr, "recomp_netplay: LAN rematch: re-seated with the host at "
+                    "%s\n", g_direct_peer_endpoint);
+    return;
+  }
+  fprintf(stderr,
+          "recomp_netplay: LAN rematch: the host at %s refused the guest "
+          "back (rc=%d%s) -- leaving the room\n",
+          g_direct_peer_endpoint, rc,
+          rc == RNET_LAN_DIRECT_ERR_FULL ? ": its seat is taken" : "");
+  snprintf(g_runtime_error, sizeof(g_runtime_error), "%s",
+           "lan_rejoin_refused");
+  clear_lan_joiner();
+}
+
+/* Guest: begin re-seating after the match closed our socket. */
+static void direct_rejoin_begin(void)
+{
+  const char *name = rnet_lobby_display_name();
+  int rc;
+  if (!g_joined_direct || g_direct_guest || !g_direct_peer_endpoint[0])
+    return;
+  rc = rnet_lan_direct_guest_join_begin(
+      g_direct_peer_endpoint, game_name(), game_version(), g_direct_password,
+      name && name[0] ? name : "Player",
+      g_direct_bind[0] ? g_direct_bind : NULL, &g_direct_guest);
+  if (rc != RNET_LAN_DIRECT_OK && g_direct_bind[0]) {
+    /* The bind we joined from is taken now: any port will do -- the host
+     * answers the address the request came from. */
+    fprintf(stderr, "recomp_netplay: LAN rematch: bind %s unavailable (%d); "
+                    "re-joining from an ephemeral port\n", g_direct_bind, rc);
+    rc = rnet_lan_direct_guest_join_begin(
+        g_direct_peer_endpoint, game_name(), game_version(),
+        g_direct_password, name && name[0] ? name : "Player", NULL,
+        &g_direct_guest);
+  }
+  if (rc != RNET_LAN_DIRECT_OK) {
+    fprintf(stderr, "recomp_netplay: LAN rematch: cannot open a socket to "
+                    "re-join %s (%d) -- leaving the room\n",
+            g_direct_peer_endpoint, rc);
+    snprintf(g_runtime_error, sizeof(g_runtime_error), "%s",
+             "lan_rejoin_failed");
+    clear_lan_joiner();
+    return;
+  }
+  g_direct_rejoin = 1;
+  g_direct_rejoin_deadline_ms = host_now_ms() + g_lan_rejoin_window_ms;
+  fprintf(stderr, "recomp_netplay: LAN rematch: re-joining the host at %s\n",
+          g_direct_peer_endpoint);
+}
+
+/* Host: (re-)open the Direct IP listener the match closed. The seat the
+ * closed socket knew is freed -- the guest re-joins into it. */
+static void direct_reopen_step(void)
+{
+  const char *colon;
+  const char *port;
+  char bind_hp[64];
+  const uint64_t now = host_now_ms();
+  if (!g_direct_reopen)
+    return;
+  if (!g_hosting_lan || g_direct_host || !g_lan_room.endpoint[0]) {
+    g_direct_reopen = 0;
+    return;
+  }
+  if (now < g_direct_reopen_next_ms)
+    return;
+  colon = strrchr(g_lan_room.endpoint, ':');
+  port = colon ? colon + 1 : "7777";
+  snprintf(bind_hp, sizeof(bind_hp), "0.0.0.0:%s", port);
+  if (rnet_lan_direct_host_open(&g_direct_host, bind_hp, &g_lan_room) !=
+      RNET_LAN_DIRECT_OK) {
+    if (g_direct_reopen_next_ms == 0)
+      fprintf(stderr, "recomp_netplay: LAN rematch: Direct IP re-listen on %s "
+                      "failed (port still held?) -- retrying\n", bind_hp);
+    g_direct_reopen_next_ms = now + 500;
+    return;
+  }
+  g_direct_reopen = 0;
+  g_direct_reopen_next_ms = 0;
+  (void)publish_lan_room();
+  fprintf(stderr, "recomp_netplay: LAN rematch: listening on %s again; the "
+                  "guest's seat is open for it to re-join\n", bind_hp);
 }
 
 static void sync_lan_joiner(void)
@@ -621,6 +800,8 @@ static void sync_lan_joiner(void)
   RNetLanLobby state;
   const char *name;
   int ev;
+  direct_reopen_step();
+  direct_rejoin_step();
   if (!g_joined_lan)
     return;
   if (g_joined_direct) {
@@ -773,7 +954,9 @@ static void arm_lan_launch(const RNetLanLobby *state)
   g_lan_launch.local_slot = plan.local_slot;
   launch_apply_plan(&g_lan_launch, &plan);
   g_lan_launch.input_player = g_h.input_player;
-  g_lan_launch.session_id = 1;
+  /* The id the host allocated for this START (cb_request_start); 1 from a
+   * host that predates it, which is what such a host itself launches. */
+  g_lan_launch.session_id = state->session_id ? state->session_id : 1u;
   g_lan_launch.input_delay =
       clamp_input_delay(state->input_delay >= 2 ? state->input_delay
                                                 : g_lobby_input_delay);
@@ -813,6 +996,11 @@ int recomp_netplay_host_init(const RecompNetplayHostHooks *hooks)
   memset(&g_lan_room, 0, sizeof(g_lan_room));
   memset(&g_lan_launch, 0, sizeof(g_lan_launch));
   g_direct_peer_endpoint[0] = '\0';
+  g_direct_password[0] = '\0';
+  g_direct_bind[0] = '\0';
+  g_direct_rejoin = 0;
+  g_direct_reopen = 0;
+  g_lan_session_last = 0;
   g_lobby_url[0] = '\0';
   g_resume_endpoint[0] = '\0';
   g_runtime_error[0] = '\0';
@@ -868,20 +1056,27 @@ void recomp_netplay_host_shutdown(void)
 
 void recomp_netplay_host_prepare_rematch(void)
 {
-  const char *colon;
-  const char *port;
-  char bind_hp[64];
   if (g_hosting_lan || g_joined_lan) {
     g_lan_room.started = 0;
     (void)rnet_lan_lobby_set_started(lan_path(), 0);
   }
-  /* Re-bind Direct IP listen after the game session released the UDP port. */
+  /* The match closed the Direct IP sockets (arm_lan_launch); rebuild the
+   * channel from both ends. See "a LAN / Direct IP room across a soft
+   * return" at the top of this file. */
   if (g_hosting_lan && !g_direct_host && g_lan_room.endpoint[0]) {
-    colon = strrchr(g_lan_room.endpoint, ':');
-    port = colon ? colon + 1 : "7777";
-    snprintf(bind_hp, sizeof(bind_hp), "0.0.0.0:%s", port);
-    (void)rnet_lan_direct_host_open(&g_direct_host, bind_hp, &g_lan_room);
+    /* The closed socket was the only thing that knew the guest: free its
+     * seat, so the host cannot start alone and the guest is not refused
+     * "full" when it asks for the seat back. */
+    g_lan_room.joiner_name[0] = '\0';
+    g_lan_guest_rtt_ms = -1;
+    g_direct_reopen = 1;
+    g_direct_reopen_next_ms = 0;
+    direct_reopen_step();
+    if (g_direct_reopen)
+      (void)publish_lan_room(); /* the freed seat, for the file browsers */
   }
+  if (g_joined_direct && !g_direct_guest)
+    direct_rejoin_begin();
   if (g_h.rematch_set_ready)
     rnet_lobby_set_ready(1);
   else
@@ -921,6 +1116,8 @@ int recomp_netplay_host_leave(void)
   g_hosting_lan = 0;
   g_joined_lan = 0;
   g_joined_direct = 0;
+  g_direct_rejoin = 0;
+  g_direct_reopen = 0;
   g_direct_peer_endpoint[0] = '\0';
   memset(&g_lan_room, 0, sizeof(g_lan_room));
   memset(&g_lan_launch, 0, sizeof(g_lan_launch));
@@ -1067,7 +1264,7 @@ static void cb_pump(void *ctx)
         (void)rnet_lan_direct_host_ping(g_direct_host);
     }
   }
-  if (g_joined_direct && g_direct_guest) {
+  if (g_joined_direct && g_direct_guest && !g_direct_rejoin) {
     static unsigned s_gtick;
     s_gtick++;
     if ((s_gtick % 60) == 0)
@@ -1371,6 +1568,8 @@ static int cb_create(void *ctx, const char *lobby_name, char *host_endpoint,
   g_hosting_lan = 0;
   g_joined_lan = 0;
   g_joined_direct = 0;
+  g_direct_rejoin = 0;
+  g_direct_reopen = 0;
   memset(&g_lan_launch, 0, sizeof(g_lan_launch));
   return rnet_lobby_create(
       lobby_name && lobby_name[0]
@@ -1396,7 +1595,15 @@ static int cb_join(void *ctx, const char *lobby_id, const char *password,
     g_hosting_lan = 0;
     g_joined_lan = 0;
     g_joined_direct = 0;
+    g_direct_rejoin = 0;
+    g_direct_reopen = 0;
     g_direct_peer_endpoint[0] = '\0';
+    /* Kept for the rematch re-join (direct_rejoin_begin): the match closes
+     * this socket, and the guest asks for its seat back the same way. */
+    snprintf(g_direct_password, sizeof(g_direct_password), "%s",
+             password ? password : "");
+    snprintf(g_direct_bind, sizeof(g_direct_bind), "%s",
+             guest_bind ? guest_bind : "");
 
     /* UDP JOIN_REQ to the host's socket first -- on the same machine too.
      * The host's seat table, chat and seat swaps all live on that socket;
@@ -1608,7 +1815,7 @@ static int lan_chat_available(void)
   if (g_hosting_lan)
     return g_direct_host != NULL;
   if (g_joined_lan)
-    return g_joined_direct && g_direct_guest != NULL;
+    return g_joined_direct && g_direct_guest != NULL && !g_direct_rejoin;
   return 0;
 }
 
@@ -2066,6 +2273,7 @@ static int cb_request_start(void *ctx, const RecompLauncherCSettings *settings)
     if (!g_lan_room.joiner_name[0])
       return -1;
     g_lan_room.started = 1;
+    g_lan_room.session_id = next_lan_session_id();
     g_lan_room.input_delay = clamp_input_delay(g_lobby_input_delay);
     (void)publish_lan_room();
     arm_lan_launch(&g_lan_room);
@@ -2079,7 +2287,9 @@ static int cb_launch_pending(void *ctx)
   RNetLanLobby state;
   int ev;
   (void)ctx;
-  if (g_joined_direct && !g_lan_launch.enabled) {
+  direct_reopen_step();
+  direct_rejoin_step();
+  if (g_joined_direct && g_direct_guest && !g_lan_launch.enabled) {
     int rtt = -1;
     ev = rnet_lan_direct_guest_pump(g_direct_guest, &g_lan_room, &rtt);
     if (ev == 3 && rtt >= 0)

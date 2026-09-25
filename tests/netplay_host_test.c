@@ -2,8 +2,8 @@
  * recomp_netplay_host.c's launch planning, driven directly.
  *
  * Includes the module's translation unit (so the static seat planner and the
- * LAN launch are the real ones) and links recomp-net. Nothing here opens a
- * socket: no case connects, creates or joins.
+ * LAN launch are the real ones) and links recomp-net. Only the LAN rematch
+ * cases open sockets, all on 127.0.0.1; nothing connects to a lobby server.
  *
  * Built only when RECOMP_UI_RECOMP_NET_DIR names a recomp-net checkout
  * (see CMakeLists.txt); recomp-ui itself does not need recomp-net.
@@ -11,6 +11,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
+#include <unistd.h>
 
 #include "../src/netplay/recomp_netplay_host.c"
 
@@ -218,6 +220,250 @@ static void case_table_and_names(void)
        "no pre-seat transfer is offered (the transfer needs a seat)");
 }
 
+/* ---- a LAN / Direct IP room across a soft return ------------------------
+ *
+ * The rematch socket lifecycle, on loopback. The backend is one role per
+ * process, so each case drives it in one role against a raw recomp-net peer
+ * in the other: the backend HOSTING against a raw guest, then the backend
+ * JOINED to a raw host. What was broken (docs/HOST_NETPLAY.md, "LAN / Direct
+ * IP rematch"): after a match the host re-opened its listener with the old
+ * guest still in its seat table, and the guest -- whose socket the launch
+ * closed -- never asked for its seat back. */
+
+static unsigned test_port_base(void)
+{
+    return 43800u + ((unsigned)getpid() % 600u) * 4u;
+}
+
+static void lan_hooks(const char *registry)
+{
+    RecompNetplayHostHooks h;
+    memset(&h, 0, sizeof(h));
+    h.game_name = "Test Game";
+    h.game_version = "1.2.3";
+    h.platform = "test";
+    h.max_players = 2;
+    h.lan_registry_path = registry;
+    ck(recomp_netplay_host_init(&h) == 0, "init");
+}
+
+/* Pump the backend (the launcher's frame) and poll a raw guest's join. */
+static int raw_join_while_pumping(RNetLanDirectGuest *g, RNetLanLobby *room)
+{
+    int i;
+    int rc = RNET_LAN_DIRECT_PENDING;
+    for (i = 0; i < 2000 && rc == RNET_LAN_DIRECT_PENDING; ++i) {
+        cb_pump(NULL);
+        rc = rnet_lan_direct_guest_join_poll(g, room);
+        if (rc == RNET_LAN_DIRECT_PENDING)
+            usleep(1000);
+    }
+    return rc;
+}
+
+static int raw_guest_hears_start(RNetLanDirectGuest *g, RNetLanLobby *room)
+{
+    int i;
+    for (i = 0; i < 1000; ++i) {
+        if (rnet_lan_direct_guest_pump(g, room, NULL) == 1)
+            return 1;
+        usleep(1000);
+    }
+    return 0;
+}
+
+static void case_lan_rematch_as_host(void)
+{
+    char registry[64];
+    char ep[64];
+    const unsigned port = test_port_base();
+    RNetLanDirectGuest *g = NULL;
+    RNetLanLobby groom;
+    RecompLauncherCNetplayLaunch l;
+    uint32_t first_sid;
+    printf("  LAN rematch, backend hosting: the seat frees, the guest returns\n");
+    snprintf(registry, sizeof(registry), "netplay_host_test_%u.txt", port);
+    lan_hooks(registry);
+    snprintf(ep, sizeof(ep), "127.0.0.1:%u", port);
+    ck(cb_create(NULL, "Room", ep, "", NULL, 1, 2) == 0, "create a LAN room");
+    ck(g_direct_host != NULL, "listening");
+
+    ck(rnet_lan_direct_guest_join_begin(ep, "Test Game", "1.2.3", "", "Guesty",
+                                        NULL, &g) == RNET_LAN_DIRECT_OK,
+       "a guest asks");
+    ck(g && raw_join_while_pumping(g, &groom) == RNET_LAN_DIRECT_OK, "seated");
+    ck(cb_all_ready(NULL) == 1, "the room can start");
+    ck(cb_request_start(NULL, NULL) == 0, "match 1 starts");
+    ck(g_direct_host == NULL, "the launch closed the listener (the game "
+                              "session takes the port)");
+    ck(g && raw_guest_hears_start(g, &groom), "the guest hears START");
+    memset(&l, 0, sizeof(l));
+    ck(cb_fill_launch(NULL, &l) == 1, "the host's launch");
+    first_sid = l.session_id;
+    ck(first_sid != 0 && groom.session_id == first_sid,
+       "both peers launch the host's session id");
+
+    /* The match runs, and ends: the guest's socket is gone with it. */
+    rnet_lan_direct_guest_close(&g);
+    recomp_netplay_host_prepare_rematch();
+    ck(g_direct_host != NULL, "the soft return re-opens the listener");
+    ck(g_lan_room.joiner_name[0] == '\0', "and frees the joiner seat");
+    ck(cb_all_ready(NULL) == 0, "so the room is NOT ready");
+    ck(cb_request_start(NULL, NULL) == -1,
+       "and the host cannot start match 2 alone (was: connect timeout)");
+    ck(cb_in_lobby(NULL) == 1, "the host is still in its room");
+
+    ck(rnet_lan_direct_guest_join_begin(ep, "Test Game", "1.2.3", "", "Guesty",
+                                        NULL, &g) == RNET_LAN_DIRECT_OK,
+       "the guest asks for its seat back");
+    ck(g && raw_join_while_pumping(g, &groom) == RNET_LAN_DIRECT_OK,
+       "and gets it (was: refused full)");
+    ck(cb_all_ready(NULL) == 1, "the room is ready again");
+    ck(cb_request_start(NULL, NULL) == 0, "match 2 starts");
+    ck(g && raw_guest_hears_start(g, &groom), "the guest hears the rematch");
+    memset(&l, 0, sizeof(l));
+    ck(cb_fill_launch(NULL, &l) == 1, "the host's second launch");
+    ck(l.session_id != 0 && l.session_id != first_sid,
+       "with a fresh session id (a rematch never reuses the last one)");
+    ck(groom.session_id == l.session_id, "that the guest heard too");
+
+    rnet_lan_direct_guest_close(&g);
+    (void)recomp_netplay_host_leave();
+    remove(registry);
+}
+
+struct RawHostPump {
+    RNetLanDirectHost *host;
+    RNetLanLobby *room;
+    volatile int stop;
+};
+
+static void *raw_host_pump_thread(void *p)
+{
+    struct RawHostPump *a = (struct RawHostPump *)p;
+    while (!a->stop) {
+        (void)rnet_lan_direct_host_pump(a->host, a->room, NULL);
+        usleep(500);
+    }
+    return NULL;
+}
+
+static int backend_launches(void)
+{
+    int i;
+    for (i = 0; i < 1000; ++i) {
+        if (cb_launch_pending(NULL))
+            return 1;
+        usleep(1000);
+    }
+    return 0;
+}
+
+static void case_lan_rematch_as_guest(void)
+{
+    char registry[64];
+    char ep[64];
+    char id[80];
+    char gbind[64];
+    const unsigned port = test_port_base() + 2u;
+    RNetLanDirectHost *host = NULL;
+    RNetLanLobby hroom;
+    RecompLauncherCNetplayLaunch l;
+    int i;
+    printf("  LAN rematch, backend joined: the guest re-joins by itself\n");
+    snprintf(registry, sizeof(registry), "netplay_host_test_%u.txt", port);
+    lan_hooks(registry);
+    cb_set_player_name(NULL, "Guesty");
+    snprintf(ep, sizeof(ep), "127.0.0.1:%u", port);
+    snprintf(id, sizeof(id), "lan:%s", ep);
+    snprintf(gbind, sizeof(gbind), "127.0.0.1:%u", port + 1u);
+
+    memset(&hroom, 0, sizeof(hroom));
+    snprintf(hroom.game, sizeof(hroom.game), "%s", "Test Game");
+    snprintf(hroom.game_version, sizeof(hroom.game_version), "%s", "1.2.3");
+    snprintf(hroom.host_name, sizeof(hroom.host_name), "%s", "Hostess");
+    snprintf(hroom.endpoint, sizeof(hroom.endpoint), "%s", ep);
+    ck(rnet_lan_direct_host_open(&host, ep, &hroom) == RNET_LAN_DIRECT_OK,
+       "a raw host listens");
+    {
+        /* cb_join blocks until the host answers; pump it from a thread for
+         * that call only. */
+        struct RawHostPump a;
+        pthread_t th;
+        a.host = host;
+        a.room = &hroom;
+        a.stop = 0;
+        (void)pthread_create(&th, NULL, raw_host_pump_thread, &a);
+        ck(cb_join(NULL, id, "", gbind) == 0, "the backend joins");
+        a.stop = 1;
+        (void)pthread_join(th, NULL);
+    }
+    ck(strcmp(hroom.joiner_name, "Guesty") == 0, "seated at the host");
+
+    hroom.started = 1;
+    hroom.session_id = 0x51000001u;
+    ck(rnet_lan_direct_host_notify_start(host, &hroom) == RNET_LAN_DIRECT_OK,
+       "match 1 START");
+    ck(backend_launches(), "the backend launches");
+    memset(&l, 0, sizeof(l));
+    ck(cb_fill_launch(NULL, &l) == 1 && l.session_id == 0x51000001u,
+       "with the host's session id");
+    ck(g_direct_guest == NULL, "the launch closed the guest's socket");
+
+    /* The match ends; the host is slower getting back than the guest. */
+    rnet_lan_direct_host_close(&host);
+    recomp_netplay_host_prepare_rematch();
+    ck(g_direct_rejoin == 1 && g_direct_guest != NULL,
+       "the soft return starts a re-join (was: nothing, the guest sat in a "
+       "room it had no socket to)");
+    for (i = 0; i < 30; ++i) {
+        cb_pump(NULL);
+        usleep(2000);
+    }
+    ck(g_direct_rejoin == 1, "it keeps asking while the host is away");
+    ck(cb_in_lobby(NULL) == 1, "still in the room meanwhile");
+    ck(lan_chat_available() == 0, "with no chat until re-seated");
+
+    hroom.started = 0;
+    hroom.joiner_name[0] = '\0'; /* what the backend's host does on re-open */
+    ck(rnet_lan_direct_host_open(&host, ep, &hroom) == RNET_LAN_DIRECT_OK,
+       "the host listens again");
+    for (i = 0; i < 2000 && g_direct_rejoin; ++i) {
+        (void)rnet_lan_direct_host_pump(host, &hroom, NULL);
+        cb_pump(NULL);
+        usleep(1000);
+    }
+    ck(!g_direct_rejoin && g_direct_guest != NULL, "re-seated");
+    ck(strcmp(hroom.joiner_name, "Guesty") == 0, "in its seat at the host");
+    ck(lan_chat_available() == 1, "chat is back");
+
+    hroom.started = 1;
+    hroom.session_id = 0x51000002u;
+    ck(rnet_lan_direct_host_notify_start(host, &hroom) == RNET_LAN_DIRECT_OK,
+       "match 2 START");
+    ck(backend_launches(), "the backend launches the rematch");
+    memset(&l, 0, sizeof(l));
+    ck(cb_fill_launch(NULL, &l) == 1 && l.session_id == 0x51000002u,
+       "with the rematch's own session id");
+
+    /* A host that never comes back: the guest gives up, loudly. */
+    rnet_lan_direct_host_close(&host);
+    g_lan_rejoin_window_ms = 150;
+    recomp_netplay_host_prepare_rematch();
+    for (i = 0; i < 400 && g_direct_rejoin; ++i) {
+        cb_pump(NULL);
+        usleep(1000);
+    }
+    ck(!g_direct_rejoin && !cb_in_lobby(NULL),
+       "past the window the guest leaves the room");
+    ck(!strcmp(cb_last_error(NULL), "lan_rejoin_timeout"),
+       "and the room says why");
+    g_lan_rejoin_window_ms = 30000;
+    cb_clear_last_error(NULL);
+    (void)recomp_netplay_host_leave();
+    remove(registry);
+}
+
 int main(void)
 {
     case_host_first_standard_and_swapped();
@@ -228,6 +474,8 @@ int main(void)
     case_default_caps();
     case_seat_ceiling();
     case_table_and_names();
+    case_lan_rematch_as_host();
+    case_lan_rematch_as_guest();
     printf(fails ? "\n%d failure(s)\n" : "\nall netplay host cases passed\n",
            fails);
     return fails != 0;
