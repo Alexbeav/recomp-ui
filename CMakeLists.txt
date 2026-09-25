@@ -472,4 +472,26 @@ if(BUILD_TESTING)
     target_include_directories(recomp-runtime-ui-imgui-test PRIVATE
         src src/common src/third_party/imgui)
     add_test(NAME recomp-runtime-ui-imgui COMMAND $<TARGET_FILE:recomp-runtime-ui-imgui-test>)
+
+    # The optional netplay backend (recomp_target_launcher_netplay). Built and
+    # tested only when a recomp-net checkout is named; recomp-ui itself never
+    # needs one.
+    #   cmake -DRECOMP_UI_RECOMP_NET_DIR=<path-to-recomp-net> ...
+    set(RECOMP_UI_RECOMP_NET_DIR "" CACHE PATH
+        "recomp-net checkout for the optional netplay backend's test")
+    if(RECOMP_UI_RECOMP_NET_DIR AND NOT WIN32)
+        set(RNET_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+        set(RNET_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+        add_subdirectory("${RECOMP_UI_RECOMP_NET_DIR}"
+                         "${CMAKE_BINARY_DIR}/recomp-net-build" EXCLUDE_FROM_ALL)
+        add_executable(recomp-ui-netplay-host-test tests/netplay_host_test.c)
+        target_include_directories(recomp-ui-netplay-host-test PRIVATE src)
+        find_package(Threads REQUIRED)
+        target_link_libraries(recomp-ui-netplay-host-test PRIVATE recomp_net
+                              Threads::Threads)
+        target_compile_definitions(recomp-ui-netplay-host-test PRIVATE
+            _POSIX_C_SOURCE=200809L _DEFAULT_SOURCE)
+        add_test(NAME recomp-ui-netplay-host
+                 COMMAND $<TARGET_FILE:recomp-ui-netplay-host-test>)
+    endif()
 endif()

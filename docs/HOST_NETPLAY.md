@@ -1,11 +1,120 @@
 # Host netplay integration notes
 
-Status: **active** · 2026-07-23
+Status: **active** · 2026-07-23 · shared backend added 2026-09-25
 
 recomp-ui owns presentation and the universal UDP port policy. The **game**
-owns lobby transport, soft-return, and rematch reboot. This page lists
-contracts that bite every snesrecomp (and sibling) title wiring MotK-style
-netplay through `RecompLauncherCNetplayCallbacks`.
+owns soft-return and rematch reboot. Lobby transport is either the engine's
+own, or -- the way to get it without writing a fourth copy -- the shared
+backend below. This page lists contracts that bite every title wiring
+MotK-style netplay through `RecompLauncherCNetplayCallbacks`.
+
+---
+
+## The shared backend: `recomp_netplay_host` (optional)
+
+`src/recomp_netplay_host.h` implements `RecompLauncherCNetplayCallbacks` once,
+over recomp-net's lobby protocol client (`recomp_net/lobby_client.h`) and its
+LAN modules. It was snesrecomp's `snes_host_lobby.c`; snesrecomp is now a thin
+adapter over it, and an engine that has no lobby yet (n64lle) binds it instead
+of writing one.
+
+It is **optional** and recomp-ui never needs recomp-net: a consumer opts in
+with `recomp_target_launcher_netplay(<target> [RECOMP_NET_TARGET recomp_net])`
+after the recomp-net target exists, which builds the static library
+`recomp_launcher_netplay` once and links it. Nothing else changes for a build
+that does not call it.
+
+Wiring: fill a `RecompNetplayHostHooks`, call `recomp_netplay_host_init`, set
+`gi.netplay = recomp_netplay_host_callbacks()` and `gi.netplay_supported = 1`.
+After a launch, `recomp_netplay_host_begin_soft_return(&gi, 1)` is the
+soft-return helper (prepare_rematch + `resume_netplay_room` / endpoint).
+
+| Hook | What the engine supplies | Absent means |
+| --- | --- | --- |
+| `game_name`, `game_version` | scoping key and exact release pin (SHIPPING.md §2) | init fails without a name |
+| `content_fingerprint` | 64-hex SHA-256 of the guest image | joins work; automatch refuses to queue |
+| `platform`, `legacy_env_prefix` | moderation tag; older env spelling (`"SNES_NET_"`) | `"unknown"`; `RNET_LOBBY_*` only |
+| `max_players` | online seat ceiling (N64: 4) | 2 |
+| `slot_policy` | `HOST_FIRST` (default, the contract below) or `SEAT` | `HOST_FIRST` |
+| `exe_dir_path` | resolve files beside the executable | LAN registry / account secret cwd-relative |
+| `name_store` / `name_load` | persist the display name | name not remembered across runs |
+| `caps_codec` | the engine's own `match_caps` keys, in `RNetLobbyMatchCaps.ext` | none sent |
+| `fill_match_caps` | host: finish the caps the room publishes | the waiting room's delay/runway/rollback only |
+| `apply_match_caps` | every peer: adjust the launch from the caps | launch as filled |
+| `mods` (`RecompNetplayModHooks`) | plan / installed rows, effective set, adopt, grant, transfer | **vanilla only**: empty plan, and a launch into a room whose host requires mods is REFUSED (`last_error` `mods_unsupported`) |
+| `mods_enabled`, `cosmetic_allow` | automatch sim-mod assertion; host's cosmetic grant | never / grants nothing |
+| `last_fork` | first simulation fork (tick, partition, both digests) | no `desync_report` |
+| `auto_ready_guests`, `rematch_set_ready` | rematch ready policy | off |
+
+What the backend fills that the SNES copy left NULL: `rollback_get/set` and
+`input_prediction_get/set` (published in `match_caps.rollback` /
+`match_caps.input_prediction`; the runway is published only once somebody sets
+it, so the launch carries 0 and the engine keeps its default until then),
+`connecting` (WebSocket upgrade until `welcome`), `name_rejected` (recomp-net's
+chat filter), `need_mods_count/get/can_transfer` and `mod_xfer_progress`. The
+launch now carries `input_prediction`, `rollback`, `force_turn`,
+`occupied_mask`, `slot_port[]` and `host_spectates`.
+
+Not implemented, and said rather than faked:
+
+- **LAN / Direct IP rooms are two seats.** recomp-net's `lan_lobby` /
+  `lan_direct` carry one joiner. A title with more seats hosting on LAN gets a
+  two-seat room, a stderr line and `last_error` `lan_two_seats_only`. More
+  seats means hosting online.
+- **A LAN room settles no mode.** It carries the delay only, so a LAN launch
+  has `rollback = 0` and `input_prediction = 0` on both peers (the engine's
+  own override, e.g. `SNES_NET_MODE`, still applies) rather than each peer
+  inventing its own.
+- **`host_can_spectate` stays NULL.** `HOST_FIRST` folds `host_spectates` into
+  the launch the way psxrecomp does, but no engine on this backend has run a
+  match that way yet, so the UI does not offer it. Under `SEAT`, a launch with
+  the host in the gallery is refused (`host_spectates_unsupported`).
+- **No pre-seat mod transfer.** The transfer rides the seated `signal` relay;
+  a joiner the server refused (`need_mods`) has no seat, so
+  `need_mods_can_transfer` answers 0 and `mod_xfer_start` is not offered. The
+  seated path (`lobby_mods_*`) is the transfer.
+
+### LAN / Direct IP rematch
+
+A LAN launch closes BOTH Direct IP sockets (`arm_lan_launch`): the host's
+because the game session binds the same UDP port, the guest's with it. The
+soft return (`recomp_netplay_host_prepare_rematch`) rebuilds the channel from
+both ends, since neither knows when the other is back:
+
+- **Host:** re-opens the listener and **frees the joiner seat** -- the new
+  socket has no guest, and a seat still marked taken let the host start alone
+  (`connect_timeout_lan`) and refused the returning guest `full`. A port that
+  is not free yet is retried from the pump every 500 ms, with one stderr line.
+- **Guest:** starts a non-blocking re-join (recomp-net
+  `rnet_lan_direct_guest_join_begin` / `_join_poll`) to the same host with the
+  password and bind it first joined with, polled from the pump and from
+  `launch_pending`, re-sending `JOIN_REQ` while the host is not listening yet.
+  While it re-joins the guest stays `in_lobby`, with no chat or seat swap.
+  It gives up after 30 s (`last_error` `lan_rejoin_timeout`) or on a refusal
+  (`lan_rejoin_refused`), and leaves the room either way, rather than sitting
+  in one that can never launch.
+
+**Requires recomp-net with `rnet_lan_direct_guest_join_begin` and
+`RNetLanLobby.session_id`** (recomp-net `feat/lan-direct-rematch`, 8342229);
+an older recomp-net does not compile this backend.
+
+Found 2026-09-25 by n64lle's headless lobby harness (`tools/rb_lobby.sh lan
+2`: host second match `connect_timeout_lan`, guest never launched) and fixed
+the same day; `recomp-ui-netplay-host-test` drives both halves on loopback.
+
+**`session_id` on LAN: fresh per START, allocated by the host.** The rematch
+contract -- never reuse the last match's UDP `session_id`, so a late
+HELLO/BYE from match N is not taken for match N+1's (recomp-net-server
+`docs/WS_LOBBY.md`, recomp-net `README.md`) -- is a property of the session
+protocol, not of the server, so it applies to LAN too; what LAN lacks is the
+server that allocates. The room's host does: `cb_request_start` takes the next
+id, `START` and the registry file carry it (recomp-net `RNetLanLobby.session_id`,
+a trailing optional field on both wires), and the guest launches with the one
+it heard. Monotonic per room, the first one seeded from the clock so a room
+re-created on the same port does not reuse the previous room's ids; never 0.
+The id only filters packets -- it is not simulation input. A host that
+predates the field sends none, and its guest falls back to 1, which is what
+such a host launches with. (Until 2026-09-25 every LAN match was session 1.)
 
 For the engine-side checklist see snesrecomp
 [`docs/RECOMP_NET.md`](https://github.com/mstan/snesrecomp/blob/main/docs/RECOMP_NET.md)
@@ -28,7 +137,7 @@ Before every `join()` call, the ImGui backend fills `guest_bind` via
 |------|----------------|
 | Online / lobby-server join | Pass `guest_bind` through to the lobby client |
 | LAN file-registry (`lan:…`) | May ignore `guest_bind` |
-| Engine fallback | snesrecomp `snes_lobby_join` still rewrites NULL/empty/`host:0` |
+| Engine fallback | recomp-net `rnet_lobby_join` (was snesrecomp `snes_lobby_join`) still rewrites NULL/empty/`host:0` |
 
 Never rewrite a prepared bind to `:0` — the server would publish `peer_ip:0`
 and LAN session start rejects it.
@@ -114,9 +223,14 @@ the backend runs the match that way. "Keep my seat" declines that ask and,
 unseen, every further ask from anyone for the next 30 seconds. At launch, backends must keep the host as **session slot
 0** regardless (`launch.slot_port_valid` + `slot_port[]`: host first, then
 the players in seat order, each driving the port of its *lobby* seat). PSX
-does this on both the online and LAN paths. A backend that maps session slot
-== lobby seat instead makes whoever sits in seat 0 the sim authority, with
-the host's save-state and overlay controls in that player's hands.
+does this on both the online and LAN paths, and so does `recomp_netplay_host`
+under its default `RECOMP_NETPLAY_SLOTS_HOST_FIRST`. A backend that maps
+session slot == lobby seat instead makes whoever sits in seat 0 the sim
+authority, with the host's save-state and overlay controls in that player's
+hands. snesrecomp still does (`RECOMP_NETPLAY_SLOTS_SEAT`, because its engine
+does not read `slot_port[]` yet): its launch carries identity `slot_port[]`
+and a seat `occupied_mask`, so it is complete, but a moved host is not slot 0
+there -- a known gap, recorded here where the contract is stated.
 
 ### Host in the spectator table
 
