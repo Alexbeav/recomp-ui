@@ -176,7 +176,10 @@ void recomp_netplay_host_shutdown(void);
 const RecompLauncherCNetplayCallbacks *recomp_netplay_host_callbacks(void);
 
 /* Soft-return: un-start the LAN room, re-open its Direct IP listener, clear
- * the launch, apply the rematch ready policy. */
+ * the launch, apply the rematch ready policy.
+ * KNOWN GAP: on a LAN / Direct IP room only the HOST's socket is re-opened;
+ * the guest's was closed at launch and is not, so a LAN rematch never reaches
+ * the guest (docs/HOST_NETPLAY.md, "A LAN / Direct IP rematch"). */
 void recomp_netplay_host_prepare_rematch(void);
 /* prepare_rematch + reopen the launcher on the waiting room (sets
  * resume_netplay_room / resume_netplay_endpoint on `gi`). */

@@ -69,6 +69,19 @@ Not implemented, and said rather than faked:
   the launch the way psxrecomp does, but no engine on this backend has run a
   match that way yet, so the UI does not offer it. Under `SEAT`, a launch with
   the host in the gallery is refused (`host_spectates_unsupported`).
+- **A LAN / Direct IP rematch does not reach the guest** (found 2026-09-25 by
+  n64lle's headless lobby harness, `tools/rb_lobby.sh lan 2`; not fixed here).
+  `arm_lan_launch` closes BOTH Direct IP sockets when the match starts, and
+  `recomp_netplay_host_prepare_rematch` re-opens only the HOST's listener. The
+  guest comes back to a room with `in_lobby()` true but no socket to the host,
+  so it never hears the next START; the host's room still lists the guest
+  (its seat was never cleared), so the host can start alone and its match then
+  times out on connect. Measured: host second match `connect_timeout_lan`,
+  guest waiting in a room that never launched. A fix has two halves: the guest
+  re-joins over Direct IP after the soft return (the host may not be
+  listening yet, so it has to retry), and the host frees the joiner seat when
+  it re-opens (a re-join into a seat still marked taken is refused `full`).
+  Online rooms are unaffected: their rematch was measured working.
 - **No pre-seat mod transfer.** The transfer rides the seated `signal` relay;
   a joiner the server refused (`need_mods`) has no seat, so
   `need_mods_can_transfer` answers 0 and `mod_xfer_start` is not offered. The
