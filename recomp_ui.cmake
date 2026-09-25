@@ -384,3 +384,57 @@ function(recomp_stage_launcher_assets TGT)
             VERBATIM)
     endif()
 endfunction()
+
+# recomp_target_launcher_netplay(<host_target> [RECOMP_NET_TARGET <tgt>])
+#
+# OPTIONAL. The launcher's netplay backend -- RecompLauncherCNetplayCallbacks
+# over recomp-net's lobby protocol client and LAN modules -- as the static
+# library `recomp_launcher_netplay`, linked into <host_target>. Header:
+# src/recomp_netplay_host.h; contract: docs/HOST_NETPLAY.md.
+#
+# It needs recomp-net (a target, `recomp_net` unless RECOMP_NET_TARGET names
+# another, that exports recomp_net/lobby_client.h). recomp-ui itself does not:
+# a consumer that never calls this builds exactly as before, and the launcher
+# NULL-guards every netplay callback. Call it after the recomp-net target
+# exists (add_subdirectory / the engine's own helper). The library is created
+# once and shared by every target that asks.
+function(recomp_target_launcher_netplay TGT)
+    cmake_parse_arguments(RTN "" "RECOMP_NET_TARGET" "" ${ARGN})
+    if(NOT TARGET ${TGT})
+        message(FATAL_ERROR
+            "recomp_target_launcher_netplay(${TGT}): target does not exist")
+    endif()
+    if(NOT RTN_RECOMP_NET_TARGET)
+        set(RTN_RECOMP_NET_TARGET recomp_net)
+    endif()
+    if(NOT TARGET ${RTN_RECOMP_NET_TARGET})
+        message(FATAL_ERROR
+            "recomp_target_launcher_netplay(${TGT}): recomp-net target "
+            "'${RTN_RECOMP_NET_TARGET}' does not exist. Add recomp-net first "
+            "(it provides recomp_net/lobby_client.h), or do not call this -- "
+            "the netplay backend is optional.")
+    endif()
+    if(NOT TARGET recomp_launcher_netplay)
+        add_library(recomp_launcher_netplay STATIC
+            ${RUI_SRC}/netplay/recomp_netplay_host.c)
+        target_include_directories(recomp_launcher_netplay PUBLIC ${RUI_SRC})
+        target_link_libraries(recomp_launcher_netplay PUBLIC ${RTN_RECOMP_NET_TARGET})
+        set_target_properties(recomp_launcher_netplay PROPERTIES
+            C_STANDARD 11 C_STANDARD_REQUIRED ON)
+        if(UNIX)
+            target_compile_definitions(recomp_launcher_netplay PRIVATE
+                _POSIX_C_SOURCE=200809L _DEFAULT_SOURCE)
+        endif()
+        set_property(TARGET recomp_launcher_netplay PROPERTY
+            RECOMP_NET_TARGET ${RTN_RECOMP_NET_TARGET})
+    else()
+        get_target_property(_rtn_prev recomp_launcher_netplay RECOMP_NET_TARGET)
+        if(NOT _rtn_prev STREQUAL RTN_RECOMP_NET_TARGET)
+            message(FATAL_ERROR
+                "recomp_target_launcher_netplay(${TGT}): recomp_launcher_netplay "
+                "already links '${_rtn_prev}', not '${RTN_RECOMP_NET_TARGET}'")
+        endif()
+    endif()
+    target_link_libraries(${TGT} PRIVATE recomp_launcher_netplay)
+    target_compile_definitions(${TGT} PRIVATE RECOMP_UI_HAS_NETPLAY_HOST=1)
+endfunction()
