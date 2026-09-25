@@ -1707,7 +1707,8 @@ void draw_source_selectables(LauncherModel* m, int p) {
             m->s.player_gamepad_guid[p][0] && g_pads[i].guid[0] &&
             std::strcmp(m->s.player_gamepad_guid[p], g_pads[i].guid) == 0;
         bool sel = m->s.player_src[p] == 2 &&
-                   (m->player_pad_id[p] == g_pads[i].id || guid_match);
+                   (m->s.player_gamepad_instance[p] ?
+                    m->s.player_gamepad_instance[p] == g_pads[i].id + 1 : guid_match);
         if (ImGui::Selectable(g_pads[i].name, sel))
             launcher_model_set_source(m, p, 2, g_pads[i].id, g_pads[i].name,
                                      g_pads[i].guid);

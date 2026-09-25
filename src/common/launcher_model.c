@@ -1954,6 +1954,7 @@ void launcher_model_set_source(LauncherModel* m, int player, int kind,
     m->s.player_src[player] = clampi(kind, 0, 2);
     if (kind == 2) {
         m->player_pad_id[player] = pad_id;
+        m->s.player_gamepad_instance[player] = pad_id + 1;
         safe_copy(m->player_pad_name[player], sizeof(m->player_pad_name[player]),
                   pad_name ? pad_name : "Gamepad");
         safe_copy(m->s.player_gamepad_guid[player],
@@ -1961,6 +1962,7 @@ void launcher_model_set_source(LauncherModel* m, int player, int kind,
                   pad_guid ? pad_guid : "");
     } else {
         m->player_pad_id[player] = 0;
+        m->s.player_gamepad_instance[player] = 0;
         m->player_pad_name[player][0] = '\0';
         m->s.player_gamepad_guid[player][0] = '\0';
     }

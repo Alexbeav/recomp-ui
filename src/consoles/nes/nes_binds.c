@@ -49,7 +49,7 @@ static const SDL_Scancode kNesCameraDefaults[LNG_CAMERA_BIND_COUNT] = {
     SDL_SCANCODE_KP_5, SDL_SCANCODE_KP_0,
 };
 
-static SDL_Scancode s_nes_binds[2][LNG_NES_PAD_BUTTON_COUNT];
+static SDL_Scancode s_nes_binds[4][LNG_NES_PAD_BUTTON_COUNT];
 static SDL_Scancode s_nes_camera_binds[LNG_CAMERA_BIND_COUNT];
 static int s_nes_camera_seen[LNG_CAMERA_BIND_COUNT];
 static int s_nes_binds_init = 0;
@@ -169,6 +169,8 @@ static void nes_kb_load_ini(const char* path) {
             player = -1; in_zapper = 0; in_camera = 0;
             if (!strcmp(section, "player1")) player = 0;
             else if (!strcmp(section, "player2")) player = 1;
+            else if (!strcmp(section, "player3")) player = 2;
+            else if (!strcmp(section, "player4")) player = 3;
             else if (!strcmp(section, "zapper")) in_zapper = 1;
             else if (!strcmp(section, "camera")) in_camera = 1;
             continue;
@@ -212,6 +214,7 @@ static void nes_kb_load_ini(const char* path) {
 }
 
 void rui_nes_binds_init(const char* path) {
+    memset(s_nes_binds,0,sizeof(s_nes_binds));
     memcpy(s_nes_binds[0], kNesDefaultsP1, sizeof(kNesDefaultsP1));
     memcpy(s_nes_binds[1], kNesDefaultsP2, sizeof(kNesDefaultsP2));
     memcpy(s_nes_camera_binds, kNesCameraDefaults,
@@ -239,13 +242,13 @@ void rui_nes_binds_init(const char* path) {
 
 int rui_nes_binds_get(const char* path, int player, int b) {
     if (!s_nes_binds_init) rui_nes_binds_init(path);
-    if (player < 0 || player > 1 || b < 0 || b >= LNG_NES_PAD_BUTTON_COUNT)
+    if (player < 0 || player > 3 || b < 0 || b >= LNG_NES_PAD_BUTTON_COUNT)
         return SDL_SCANCODE_UNKNOWN;
     return (int)s_nes_binds[player][b];
 }
 
 void rui_nes_binds_set(const char* path, int player, int b, int scancode) {
-    if (player < 0 || player > 1 || b < 0 || b >= LNG_NES_PAD_BUTTON_COUNT) return;
+    if (player < 0 || player > 3 || b < 0 || b >= LNG_NES_PAD_BUTTON_COUNT) return;
     if (!s_nes_binds_init) rui_nes_binds_init(path);
     s_nes_binds[player][b] = (SDL_Scancode)scancode;
     char section[16];
@@ -255,10 +258,10 @@ void rui_nes_binds_set(const char* path, int player, int b, int scancode) {
 }
 
 void rui_nes_binds_reset(const char* path, int player) {
-    if (player < 0 || player > 1) return;
+    if (player < 0 || player > 3) return;
     if (!s_nes_binds_init) rui_nes_binds_init(path);
-    memcpy(s_nes_binds[player], player == 1 ? kNesDefaultsP2 : kNesDefaultsP1,
-           sizeof(s_nes_binds[player]));
+    if (player < 2) memcpy(s_nes_binds[player], player == 1 ? kNesDefaultsP2 : kNesDefaultsP1, sizeof(s_nes_binds[player]));
+    else memset(s_nes_binds[player],0,sizeof(s_nes_binds[player]));
     char section[16];
     snprintf(section, sizeof(section), "player%d", player + 1);
     for (int b = 0; b < LNG_NES_PAD_BUTTON_COUNT; ++b)

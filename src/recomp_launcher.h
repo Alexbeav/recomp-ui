@@ -35,6 +35,7 @@ extern "C" {
 #define RECOMP_LAUNCHER_MAX_PLAYERS 8
 /* Host may #ifdef this when reading player_gamepad_guid[] from settings. */
 #define RECOMP_LAUNCHER_HAS_PLAYER_GAMEPAD_GUID 1
+#define RECOMP_LAUNCHER_HAS_PLAYER_GAMEPAD_INSTANCE 1
 
 // N64 Transfer Pak slots — one per controller port.
 #define RECOMP_LAUNCHER_MAX_TPAKS 4
@@ -526,6 +527,9 @@ struct RecompLauncherCSettings {
     // 0 = off (the faithful default on a fresh config).
     int  geometry_correction;    // bool: sub-pixel vertex precision
     int  perspective_texturing;  // bool: perspective-correct UVs
+    // Live device selection returned to the host; SDL instance ID plus one,
+    // zero = unspecified. Never persist across processes (use the GUID above).
+    uint32_t player_gamepad_instance[RECOMP_LAUNCHER_MAX_PLAYERS];
 };
 
 // ---- host verification/inspection results (filled by the callbacks below) ----
