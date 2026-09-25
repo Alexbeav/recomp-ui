@@ -40,7 +40,7 @@ typedef struct { const char* label; int code; } ButtonDef;
 // text; `button_count` is how many LEADING entries of ControllerSpec.buttons[]
 // the rebind page shows in that mode (a Genesis 3-button pad has no X/Y/Z/Mode
 // rows). A profile that leaves ControllerSpec.modes NULL keeps the legacy
-// PSX-shaped selector (Hybrid/Analog/D-Pad, gated by allow_hybrid) with the
+// PSX-shaped selector (Analog/D-Pad) with the
 // full button set in every mode — PSX itself is untouched by this concept.
 typedef struct { int mode; const char* label; int button_count; } PadModeDef;
 
@@ -57,6 +57,29 @@ typedef struct {
     // ---- appended additively (older positional initializers zero-fill) ----
     const PadModeDef* modes; int mode_count;       // custom mode list (NULL => legacy PSX set)
     int  has_pad_binds;                            // rebind page adds a GAMEPAD bind column
+    // ---- per-GUID gamepad bindings panel ----------------------------------
+    // Layout for the Gamepad Bindings page: indices into buttons[], read
+    // COLUMN-MAJOR (down a column, then the next one), which is how a pad's
+    // controls actually group -- D-pad together, face buttons together,
+    // shoulders together. Row-major would scatter each group across rows.
+    //
+    // NULL (the zero-fill of every older positional initializer) means the
+    // console has no per-GUID panel and keeps the plain rebind grid, so adding
+    // this changed no existing console until it opted in.
+    const int* pad_bind_order;
+    int  pad_bind_cols, pad_bind_rows;             // order length == cols*rows
+    // ---- controller accessory (pak) port ----------------------------------
+    // 1 when EVERY controller port on this console physically carries an
+    // accessory slot (N64: Transfer Pak / Controller Pak / Rumble Pak). It is
+    // a property of the HARDWARE, not of a title: an N64 pad takes a pak
+    // whether or not the game declares it uses one, so the pak picker must
+    // exist on any N64 build without a config file asking for it.
+    //
+    // The ABI's GameInfo.tpak_slots stays what it always was — the count a
+    // HOST declares — and remains the whole answer for a console that leaves
+    // this 0 (the zero-fill of every older positional initializer, so adding
+    // this changed no existing console). See launcher_model_pak_ports().
+    int  has_pak;
 } ControllerSpec;
 
 // ---- Save module --------------------------------------------------------------
@@ -77,6 +100,7 @@ typedef struct {
         antialiasing, spu_hq, skip_fmv, turbo_loads, bios, deadzone; // PSX-ish deep surface
     // appended additively (older positional initializers zero-fill):
     int widescreen_cells;   // Genesis-ish: "extra cells per side" stepper shown while widescreen is on
+    int fmv_filter;         // PSX-ish: how a decoded low-res movie is scaled to the window
 } VideoSpec;
 
 // ---- Verify module --------------------------------------------------------------

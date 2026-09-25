@@ -30,7 +30,14 @@
 #define SDL_EVENT_MOUSE_BUTTON_DOWN     SDL_MOUSEBUTTONDOWN
 #define SDL_EVENT_MOUSE_BUTTON_UP       SDL_MOUSEBUTTONUP
 #define SDL_EVENT_MOUSE_WHEEL           SDL_MOUSEWHEEL
+/* Typing. Missing here until the debug console learned to type into the chat
+ * box, at which point every SDL2 build stopped compiling -- the shim is what
+ * lets the rest of the tree name events the SDL3 way, so a name it does not
+ * cover is a build break rather than a fallback. */
+#define SDL_EVENT_TEXT_INPUT            SDL_TEXTINPUT
+#define SDL_EVENT_TEXT_EDITING          SDL_TEXTEDITING
 #define SDL_EVENT_GAMEPAD_BUTTON_DOWN   SDL_CONTROLLERBUTTONDOWN
+#define SDL_EVENT_GAMEPAD_BUTTON_UP     SDL_CONTROLLERBUTTONUP
 #define SDL_EVENT_GAMEPAD_AXIS_MOTION   SDL_CONTROLLERAXISMOTION
 #define SDL_EVENT_JOYSTICK_BUTTON_DOWN  SDL_JOYBUTTONDOWN
 #define SDL_EVENT_JOYSTICK_AXIS_MOTION  SDL_JOYAXISMOTION
@@ -39,11 +46,15 @@
 #define LNG_EVKEY(ev)    ((ev).key.keysym.sym)
 #define LNG_EVSCAN(ev)   ((ev).key.keysym.scancode)
 #define LNG_EVMOD(ev)    ((ev).key.keysym.mod)
+// key auto-repeat flag (same field name in SDL2/SDL3; Uint8 vs bool)
+#define LNG_EVKEYREPEAT(ev) ((ev).key.repeat != 0)
 // gamepad button event field: SDL3 ev.gbutton.button == SDL2 ev.cbutton.button
 #define LNG_EVGBTN(ev)   ((ev).cbutton.button)
+#define LNG_EVGBTNWHICH(ev) ((ev).cbutton.which)
 // gamepad axis event fields: SDL3 ev.gaxis.{axis,value} == SDL2 ev.caxis.{axis,value}
 #define LNG_EVGAXIS(ev)     ((ev).caxis.axis)
 #define LNG_EVGAXISVAL(ev)  ((ev).caxis.value)
+#define LNG_EVGAXISWHICH(ev) ((ev).caxis.which)
 // raw joystick events (jbutton/jaxis field names are the same in SDL2/SDL3)
 #define LNG_EVJBTN(ev)      ((ev).jbutton.button)
 #define LNG_EVJBTNWHICH(ev) ((ev).jbutton.which)
@@ -56,6 +67,7 @@
 // axis->name lookup
 #define SDL_GetGamepadStringForAxis(a)    SDL_GameControllerGetStringForAxis((SDL_GameControllerAxis)(a))
 typedef SDL_GameControllerButton  LNG_GamepadButton;
+typedef SDL_GameControllerAxis    LNG_GamepadAxis;
 
 // key-modifier masks (SDL3 renamed KMOD_* -> SDL_KMOD_*)
 #define SDL_KMOD_CTRL   KMOD_CTRL
@@ -68,15 +80,19 @@ typedef SDL_GameControllerButton  LNG_GamepadButton;
 #define LNG_EVKEY(ev)    ((ev).key.key)
 #define LNG_EVSCAN(ev)   ((ev).key.scancode)
 #define LNG_EVMOD(ev)    ((ev).key.mod)
+#define LNG_EVKEYREPEAT(ev) ((ev).key.repeat != 0)
 #define LNG_EVGBTN(ev)   ((ev).gbutton.button)
+#define LNG_EVGBTNWHICH(ev) ((ev).gbutton.which)
 #define LNG_EVGAXIS(ev)     ((ev).gaxis.axis)
 #define LNG_EVGAXISVAL(ev)  ((ev).gaxis.value)
+#define LNG_EVGAXISWHICH(ev) ((ev).gaxis.which)
 #define LNG_EVJBTN(ev)      ((ev).jbutton.button)
 #define LNG_EVJBTNWHICH(ev) ((ev).jbutton.which)
 #define LNG_EVJAXIS(ev)     ((ev).jaxis.axis)
 #define LNG_EVJAXISVAL(ev)  ((ev).jaxis.value)
 #define LNG_EVJAXISWHICH(ev) ((ev).jaxis.which)
 typedef SDL_GamepadButton  LNG_GamepadButton;
+typedef SDL_GamepadAxis    LNG_GamepadAxis;
 #endif
 
 #endif // LAUNCHER_NG_SDLCOMPAT_H

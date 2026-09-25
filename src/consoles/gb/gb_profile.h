@@ -100,6 +100,10 @@ static const SystemProfile kSystemProfileGb = {
         kGbPadButtons, LNG_GB_PAD_BUTTON_COUNT,
         "pad_gb.tga", NULL, NULL,       // handheld art; no analog/digital pair
         /* max_players */ 1, /* has_pad_mode */ 0,
+        // gb-recompiled keeps a primary AND a secondary key per input
+        // (Arrows/Z/X plus WASD/J/K). Drawing one chip hid the secondary, so a
+        // key claimed for one action kept driving whatever it defaulted to.
+        /* binds_per_input */ 2,
     },
     /* save */    { SAVE_SRAM, 1, NULL },   // one battery .sav per cartridge
     /* video */   LNG_GB_VIDEO_SPEC,
@@ -126,6 +130,7 @@ static const SystemProfile kSystemProfileGbc = {
         kGbPadButtons, LNG_GB_PAD_BUTTON_COUNT,
         "pad_gbc.tga", NULL, NULL,
         /* max_players */ 1, /* has_pad_mode */ 0,
+        /* binds_per_input */ 2,        // primary + secondary; see kSystemProfileGb
     },
     /* save */    { SAVE_SRAM, 1, NULL },
     /* video */   LNG_GB_VIDEO_SPEC,

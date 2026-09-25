@@ -21,12 +21,32 @@ static const ButtonDef kNdsPadButtons[] = {
 // bottom-screen pointer mapping; this profile describes Player 1's ordinary
 // buttons and controller assignment.
 static const char* const kPanelsSettingsNds[] = {
-    "video", "audio", NULL
+    "video", "audio", "input", NULL
+};
+
+static const char* const kNdsHostShortcutLabels[] = {
+    "Virtual Stylus",
+    "Virtual Stylus Tap",
+};
+
+// SDL's standard gamepad ABI uses these stable values in SDL2 and SDL3:
+// scancode Tab=43, south face button=0, left trigger axis=4.
+static const int kNdsHostShortcutKeyDefaults[] = { 43, 0 };
+static const int kNdsHostShortcutPadDefaults[] = {
+    RECOMP_LAUNCHER_PAD_AXIS(4, 1),
+    RECOMP_LAUNCHER_PAD_BUTTON(0),
 };
 
 static const char* const kNdsRomPatterns[] = { "*.nds", "*.srl" };
 #define LNG_NDS_ROM_PATTERN_COUNT \
     ((int)(sizeof(kNdsRomPatterns) / sizeof(kNdsRomPatterns[0])))
+
+// NDS composes the dashboard ONLINE identity card (player name + console
+// identity detail) under the controller card. Availability still gates on
+// GameInfo.has_player_name, so only titles with online play show it.
+static const char* const kPanelsDashboardNds[] = {
+    "game", "controller", "identity", NULL
+};
 
 static const SystemProfile kSystemProfileNds = {
     /* id       */ "nds",
@@ -44,11 +64,11 @@ static const SystemProfile kSystemProfileNds = {
         /*widescreen*/0, /*renderer*/0, /*supersampling*/1,
         /*screen_kind*/0, /*frame_interp*/0, /*aspect*/0,
         /*texture_filter*/0, /*antialiasing*/1, /*spu_hq*/0,
-        /*skip_fmv*/0, /*turbo_loads*/0, /*bios*/0, /*deadzone*/0,
+        /*skip_fmv*/0, /*turbo_loads*/0, /*bios*/1, /*deadzone*/0,
     },
     /* verify */ { 0, NULL },
     /* hotkeys_mask */ 0,
-    /* panels_dashboard  */ kPanelsDashboardCommon,
+    /* panels_dashboard  */ kPanelsDashboardNds,
     /* panels_settings   */ kPanelsSettingsNds,
     /* panels_controller */ kPanelsControllerCommon,
     /* screen_kind_names */ NULL,
@@ -76,6 +96,17 @@ static inline void launcher_profile_apply_nds(RecompLauncherCGameInfo* gi) {
     gi->num_players = 1;
     gi->has_supersampling = 1;
     gi->has_antialiasing = 1;
+    // BIOS is a persisted setting, psxrecomp-style: pick any one of the
+    // three retail dump files (its folder is used), or leave it unset for
+    // the built-in FreeBIOS + generated firmware. The host's bios_verify
+    // explains which mode a given selection produces.
+    gi->has_bios = 1;
+    gi->has_virtual_stylus = 1;
+    gi->settings_bindings = 1;
+    gi->assist_binding_labels = kNdsHostShortcutLabels;
+    gi->assist_binding_count = 2;
+    gi->assist_default_key_bind = kNdsHostShortcutKeyDefaults;
+    gi->assist_default_pad_bind = kNdsHostShortcutPadDefaults;
 }
 
 #ifdef __cplusplus

@@ -1,5 +1,7 @@
 # recomp-ui
 
+> ℹ️ **Note from mstan:** This repo and I are now part of [RetroPortingToolkit](https://retroportingtoolkit.com/). I remain a primary maintainer of recomp-ui alongside the team. [More info](https://1379.tech/forming-a-collective-retro-porting-toolkit/).
+
 A shared, **console-agnostic launcher and in-game settings UI** for static-
 recompilation game ports. One Dear ImGui launcher core serves every recomp
 ecosystem — SNES, PSX, N64, Nintendo DS, Genesis, NES, and beyond — while a small runtime
@@ -105,6 +107,11 @@ RecompLauncherCGameInfo gi = {0};
 launcher_profile_apply("snes", &gi);   // "psx", "n64", ... — one call sets the console identity
 gi.name = "My Game";
 gi.expected_crc = 0x1B4B2E9C; gi.has_expected_crc = 1;
+RecompLauncherCSettings defaults = { /* authoritative first-run values */ };
+gi.default_settings = &defaults;       // optional Restore Defaults action
+gi.has_assist_tools = 1;               // optional host-defined opt-in page
+gi.assist_tools_note = "Enables host convenience features.";
+gi.credits_text = "Original game and port credits."; // optional read-only page
 /* ...per-game overrides... */
 
 char out_rom[512];
@@ -113,6 +120,23 @@ int rc = recomp_launcher_run_window("My Game — Launcher", &io, &gi,
 // rc: 0 = LAUNCH (boot out_rom with the edited io), 1 = QUIT, 2 = UNAVAILABLE
 #endif
 ```
+
+For the SNES profile, this entry point loads launcher preferences from
+`gi.config_path` (default `config.ini`) and saves edited settings on **Play,
+Quit, and Relaunch**. A host that ignores `io` on Quit therefore no longer
+loses the player's fullscreen or other launcher edits. The Settings page
+explains when changes are saved; no separate Save button is needed.
+
+The store uses the established SNES INI keys, preserves unrelated sections
+and comments, and writes only fields changed by the player. Optional settings
+are gated by the host's capability flags. Widescreen mod state, keybindings,
+ROM selection, and transient netplay launch data retain their existing owners.
+Other console profiles keep their host-owned configuration formats.
+
+Hosts must still apply returned preferences to the running game. A UI pin
+cannot implement a renderer/audio feature the host does not consume, or load
+preferences on a boot path that never calls the launcher. Hosts that already
+read the SNES INI keys also see saved settings on direct-ROM/skip-launch boots.
 
 The whole contract is [`src/recomp_launcher.h`](src/recomp_launcher.h): a plain-C
 settings struct in/out, a game-facts struct, and (optionally) **host callbacks**
@@ -417,6 +441,28 @@ snesrecomp `docs/RECOMP_NET.md` → "Soft-return rematch checklist".
   resolution, and committing changes before launch; recomp-ui never executes
   package code.
 - **Footer** — PLAY, skip-launcher-on-boot (+ confirm modal), gamepad navigation.
+- **Optional host pages** — an Assist Tools opt-in backed by
+  `RecompLauncherCSettings.assist_tools`, plus host-owned read-only Credits
+  text. Games that do not supply these capabilities retain the original three
+  views.
+
+---
+
+When `RecompLauncherCGameInfo.default_settings` is non-NULL, the Settings
+footer also exposes a confirmed **Restore Defaults** action. The snapshot is
+copied at launcher initialization; resetting never changes the separately
+owned ROM selection or deletes save files.
+
+`RecompLauncherCGameInfo.has_assist_tools` adds an Assist Tools page and
+persists its checkbox through `RecompLauncherCSettings.assist_tools`.
+An opt-in `settings_bindings` host can keep keyboard and standard-controller
+bindings directly in the settings structure instead of pointing the launcher
+at a runtime-specific bind file. The same mode can supply named global Assist
+actions; they appear on the Assist page and are returned to the host as SDL
+scancodes plus portable standard-controller button/axis encodings.
+`credits_text` adds a Credits page. Both are additive host capabilities:
+recomp-ui defines presentation and navigation, while the game host defines
+the meaning of Assist Tools and owns the UTF-8 credits text.
 
 ---
 

@@ -46,11 +46,18 @@ void launcher_debug_init(void) {
 
 bool launcher_capture_png(const char* path, int w, int h) {
     if (w <= 0 || h <= 0) return false;
-    unsigned char* px = (unsigned char*)malloc((size_t)w * h * 3);
+    unsigned char* px = (unsigned char*)malloc((size_t)w * h * 4);
     if (!px) return false;
 
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, px);
+    // RGBA/UNSIGNED_BYTE is portable to GLES default framebuffers; RGB reads
+    // can fail with GL_INVALID_OPERATION on ANGLE. Keep the saved PNG RGB.
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    for (size_t i = 0; i < (size_t)w * h; ++i) {
+        px[i * 3] = px[i * 4];
+        px[i * 3 + 1] = px[i * 4 + 1];
+        px[i * 3 + 2] = px[i * 4 + 2];
+    }
 
     // GL origin is bottom-left; PNG wants top-down. Flip rows in place.
     const size_t stride = (size_t)w * 3;
@@ -75,13 +82,25 @@ bool launcher_capture_png(const char* path, int w, int h) {
 // that sample SDL_GetMouseState see it) and push button events (so backends
 // that consume the event queue see it). Covers both ImGui and Clay.
 static void synth_click(LauncherPlatform* p, float x, float y) {
+#if defined(LNG_SDL3)
     SDL_WarpMouseInWindow(p->window, x, y);
+#else
+    // SDL2 stores mouse coordinates as integers. Make its existing truncation
+    // behavior explicit while preserving SDL3's subpixel coordinates.
+    const int event_x = (int)x;
+    const int event_y = (int)y;
+    SDL_WarpMouseInWindow(p->window, event_x, event_y);
+#endif
 
     SDL_Event e;
     SDL_zero(e);
     e.type = SDL_EVENT_MOUSE_MOTION;
     e.motion.windowID = SDL_GetWindowID(p->window);
+#if defined(LNG_SDL3)
     e.motion.x = x; e.motion.y = y;
+#else
+    e.motion.x = event_x; e.motion.y = event_y;
+#endif
     SDL_PushEvent(&e);
 
     SDL_zero(e);
@@ -89,10 +108,11 @@ static void synth_click(LauncherPlatform* p, float x, float y) {
     e.button.windowID = SDL_GetWindowID(p->window);
     e.button.button = SDL_BUTTON_LEFT;
     e.button.clicks = 1;
-    e.button.x = x; e.button.y = y;
 #if defined(LNG_SDL3)
+    e.button.x = x; e.button.y = y;
     e.button.down = true;
 #else
+    e.button.x = event_x; e.button.y = event_y;
     e.button.state = SDL_PRESSED;
 #endif
     SDL_PushEvent(&e);
@@ -156,6 +176,18 @@ void launcher_debug_step(LauncherPlatform* p, LauncherModel* m) {
         if      (strcmp(v, "dashboard")  == 0) launcher_model_set_view(m, LNG_VIEW_DASHBOARD);
         else if (strcmp(v, "settings")   == 0) launcher_model_set_view(m, LNG_VIEW_SETTINGS);
         else if (strcmp(v, "controller") == 0) launcher_model_set_view(m, LNG_VIEW_CONTROLLER);
+        else if (strcmp(v, "assist_tools") == 0) launcher_model_set_view(m, LNG_VIEW_ASSIST_TOOLS);
+        else if (strcmp(v, "credits") == 0) launcher_model_set_view(m, LNG_VIEW_CREDITS);
+        /* The LAN-vs-online fork. Reachable only by clicking NETPLAY on the
+         * dashboard, which made it the one netplay page a screenshot script
+         * could not open. */
+        else if (strcmp(v, "netplay_mode") == 0)
+            launcher_model_set_view(m, LNG_VIEW_NETPLAY_MODE);
+        else if (strcmp(v, "netplay") == 0) {
+            m->netplay_list_fresh = false;
+            launcher_model_set_view(m, LNG_VIEW_NETPLAY);
+        }
+        else if (strcmp(v, "lobby") == 0) launcher_model_set_view(m, LNG_VIEW_LOBBY);
     } else if (strncmp(c, "player:", 7) == 0) {
         // Select which player the Controller view configures. Clamp to the
         // launcher's real player range (N64 profiles run up to 4) instead of
@@ -184,6 +216,20 @@ void launcher_debug_step(LauncherPlatform* p, LauncherModel* m) {
             if (k != SDLK_UNKNOWN) synth_key(k);
             else fprintf(stderr, "[dbg] unknown key: %s\n", c + 4);
         }
+    } else if (strncmp(c, "text:", 5) == 0) {
+        /* Type UTF-8 into the focused widget, as an OS text-input event. */
+        static char s_text[256];
+        SDL_Event e;
+        snprintf(s_text, sizeof(s_text), "%s", c + 5);
+        SDL_zero(e);
+        e.type = SDL_EVENT_TEXT_INPUT;
+#if defined(LNG_SDL3)
+        e.text.text = s_text;
+        e.text.windowID = SDL_GetWindowID(p->window);
+#else
+        snprintf(e.text.text, sizeof(e.text.text), "%s", s_text);
+#endif
+        SDL_PushEvent(&e);
     } else if (strncmp(c, "wait:", 5) == 0) {
         g_wait_frames = atoi(c + 5);
     } else if (strncmp(c, "shot:", 5) == 0) {

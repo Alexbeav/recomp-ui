@@ -30,6 +30,22 @@ static OpenPad* free_open_slot(void) {
     return NULL;
 }
 
+static void log_opened_pad(const LauncherPad* pad, const OpenPad* opened) {
+    if (!pad || !opened || !opened->handle) return;
+#if defined(LNG_SDL3)
+    char* mapping = SDL_GetGamepadMapping(opened->handle);
+#else
+    char* mapping = SDL_GameControllerMapping(opened->handle);
+#endif
+    fprintf(stderr,
+            "[launcher] gamepad opened: id=%u name=\"%s\" guid=%s "
+            "mapping=\"%s\"\n",
+            pad->id, pad->name[0] ? pad->name : "Gamepad",
+            pad->guid[0] ? pad->guid : "unknown",
+            mapping ? mapping : "");
+    if (mapping) SDL_free(mapping);
+}
+
 static int id_is_live(const LauncherPad* pads, int count, uint32_t id) {
     for (int i = 0; i < count; ++i)
         if (pads[i].id == id) return 1;
@@ -57,6 +73,56 @@ void launcher_input_shutdown(void) {
     for (int i = 0; i < LNG_MAX_PADS; ++i) close_open(&s_open[i]);
 }
 
+int launcher_input_gamepad_at_rest(uint32_t id) {
+    OpenPad* pad = find_open(id);
+    if (!pad || !pad->handle) return 1;  // no handle → don't block capture
+    // Stick rest band; well below the capture commit threshold (20000).
+    const int kRest = 8000;
+#if defined(LNG_SDL3)
+    for (int b = 0; b < (int)SDL_GAMEPAD_BUTTON_COUNT; ++b) {
+        if (SDL_GetGamepadButton(pad->handle, (SDL_GamepadButton)b))
+            return 0;
+    }
+    for (int a = 0; a < (int)SDL_GAMEPAD_AXIS_COUNT; ++a) {
+        const int v = (int)SDL_GetGamepadAxis(pad->handle, (SDL_GamepadAxis)a);
+        if (v <= -kRest || v >= kRest) return 0;
+    }
+#else
+    for (int b = 0; b < (int)SDL_CONTROLLER_BUTTON_MAX; ++b) {
+        if (SDL_GameControllerGetButton(
+                pad->handle, (SDL_GameControllerButton)b))
+            return 0;
+    }
+    for (int a = 0; a < (int)SDL_CONTROLLER_AXIS_MAX; ++a) {
+        const int v = (int)SDL_GameControllerGetAxis(
+            pad->handle, (SDL_GameControllerAxis)a);
+        if (v <= -kRest || v >= kRest) return 0;
+    }
+#endif
+    return 1;
+}
+
+uint32_t launcher_input_gamepad_button_mask(uint32_t id) {
+    OpenPad* pad = find_open(id);
+    uint32_t mask = 0;
+    if (!pad || !pad->handle) return 0;
+#if defined(LNG_SDL3)
+    const int max_buttons = (int)SDL_GAMEPAD_BUTTON_COUNT;
+    for (int b = 0; b < max_buttons && b < 32; ++b) {
+        if (SDL_GetGamepadButton(pad->handle, (SDL_GamepadButton)b))
+            mask |= (uint32_t)1u << b;
+    }
+#else
+    const int max_buttons = (int)SDL_CONTROLLER_BUTTON_MAX;
+    for (int b = 0; b < max_buttons && b < 32; ++b) {
+        if (SDL_GameControllerGetButton(
+                pad->handle, (SDL_GameControllerButton)b))
+            mask |= (uint32_t)1u << b;
+    }
+#endif
+    return mask;
+}
+
 int launcher_input_poll(LauncherPad* out, int max, int enable_gyro) {
     int n = 0;
     if (!out || max <= 0) return 0;
@@ -82,6 +148,7 @@ int launcher_input_poll(LauncherPad* out, int max, int enable_gyro) {
                 if (opened) {
                     opened->handle = SDL_OpenGamepad(ids[i]);
                     opened->id = out[n].id;
+                    log_opened_pad(&out[n], opened);
                     if (enable_gyro && opened->handle &&
                         SDL_GamepadHasSensor(opened->handle, SDL_SENSOR_GYRO) &&
                         SDL_SetGamepadSensorEnabled(
@@ -140,6 +207,7 @@ int launcher_input_poll(LauncherPad* out, int max, int enable_gyro) {
             if (opened) {
                 opened->handle = SDL_GameControllerOpen(i);
                 opened->id = out[n].id;
+                log_opened_pad(&out[n], opened);
 #if SDL_VERSION_ATLEAST(2, 0, 14)
                 if (enable_gyro && opened->handle &&
                     SDL_GameControllerHasSensor(

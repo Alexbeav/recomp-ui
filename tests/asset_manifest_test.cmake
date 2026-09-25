@@ -1,3 +1,5 @@
+cmake_minimum_required(VERSION 3.24)
+
 if(NOT RECOMP_UI_ROOT)
     message(FATAL_ERROR "RECOMP_UI_ROOT is required")
 endif()
@@ -54,6 +56,28 @@ list(LENGTH _all_assets _all_count)
 if(NOT _all_count EQUAL 24)
     message(FATAL_ERROR
         "The explicit all-console manifest should contain 24 assets, got ${_all_count}")
+endif()
+
+# Optional assets are declared but NOT required to exist — that is the whole
+# point of the second list. What IS enforced: the declared names, and that an
+# optional asset never leaks into the required manifest (where its absence
+# would fail the loop above and break every consumer's build).
+set(_expected_optional_n64 "tpak_empty.tga")
+set(_actual_optional_n64)
+foreach(_asset IN LISTS _RUI_CONSOLE_OPTIONAL_ASSETS_n64)
+    get_filename_component(_name "${_asset}" NAME)
+    list(APPEND _actual_optional_n64 "${_name}")
+    if("${_asset}" IN_LIST _RUI_CONSOLE_ASSETS_n64)
+        message(FATAL_ERROR
+            "optional asset is also in the REQUIRED n64 manifest: ${_asset}")
+    endif()
+endforeach()
+list(SORT _actual_optional_n64)
+if(NOT "${_actual_optional_n64}" STREQUAL "${_expected_optional_n64}")
+    message(FATAL_ERROR
+        "n64 optional asset manifest mismatch.\n"
+        "  expected: ${_expected_optional_n64}\n"
+        "  actual:   ${_actual_optional_n64}")
 endif()
 
 message(STATUS "recomp-ui console asset manifests are scoped and complete")
