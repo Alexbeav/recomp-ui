@@ -4582,6 +4582,9 @@ void draw_hotkeys_controls(LauncherModel* m, const LauncherTheme& th) {
     // catalog. They remain absent for every existing game and have no default
     // binding when the capability is enabled.
     if (m->has_solar_sensor) mask |= LNG_HOTKEYS_SOLAR;
+    // Likewise a host capability: only a host that reopens this launcher
+    // mid-game has anything to bind.
+    if (m->has_open_launcher_hotkey) mask |= 1u << LNG_HK_OPEN_LAUNCHER;
     // Same responsive grid treatment as the bindings list.
     const float cell_w = px(280.0f);
     int cols = (int)(ImGui::GetContentRegionAvail().x / cell_w);
@@ -11618,7 +11621,15 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
     if (rui_nav_rehome_to_play())
         ImGui::SetKeyboardFocusHere();
     float play_x = origin.x + fullw - play_w;
-    if (m->netplay_supported &&
+    if (m->in_session) {
+        /* Opened from a running game: closing the window resumes it, so
+         * leaving the game needs a button of its own. Netplay cannot start
+         * from here -- the session it would replace is still alive. */
+        const float quit_w = px(170.0f);
+        ImGui::SetCursorScreenPos(ImVec2(play_x - quit_w - px(12.0f), cta_y));
+        if (ImGui::Button(ui_text("QUIT GAME"), ImVec2(quit_w, play_h)))
+            m->action = LNG_ACTION_QUIT;
+    } else if (m->netplay_supported &&
         (m->view == LNG_VIEW_DASHBOARD || m->view == LNG_VIEW_SETTINGS ||
          m->view == LNG_VIEW_CONTROLLER)) {
         const float net_w = px(170.0f);
@@ -11640,7 +11651,8 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
     const bool can_play = launcher_model_can_launch(m);
     const bool bios_block = launcher_model_bios_blocks_play(m);
     const bool play_enabled = can_play || bios_block;
-    if (neon_cta("##play", ui_text("PLAY"), ImVec2(play_w, play_h), play_enabled)) {
+    if (neon_cta("##play", ui_text(m->in_session ? "RESUME" : "PLAY"),
+                 ImVec2(play_w, play_h), play_enabled)) {
         /* Prefer mismatch prompt over launch even if can_play races true. */
         if (bios_block)
             launcher_model_bios_play_prompt(m);
@@ -13565,7 +13577,9 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     bool first_present_marked = false;
 
     while (m->action == LNG_ACTION_NONE && !p->should_quit) {
-        if (smoke_frames > 0 && ++frame > smoke_frames) { m->action = LNG_ACTION_QUIT; break; }
+        /* The smoke test closes the window, which is QUIT before boot and
+         * RESUME in session -- the same as a player's close box. */
+        if (smoke_frames > 0 && ++frame > smoke_frames) { p->should_quit = true; break; }
 
         SDL_Event ev;
         if (SDL_WaitEventTimeout(&ev, 16)) do {
@@ -13737,6 +13751,16 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     LNG_ImplSDL_Shutdown();
     ImGui::DestroyContext();
 
+    /* In session, closing the window is "back to the game", the same as
+     * RESUME: the game is frozen behind it, and a window's close box that
+     * silently ended a session in progress would lose the player's run. The
+     * mod commit still runs so a Mods edit reaches state.toml either way. A
+     * commit the plan refuses resumes anyway -- the running game's mods were
+     * fixed at boot, so nothing the player did here is half-applied. */
+    if (p->should_quit && m->action == LNG_ACTION_NONE && m->in_session) {
+        (void)mod_commit_launch(m);
+        m->action = LNG_ACTION_LAUNCH;
+    }
     if (p->should_quit && m->action == LNG_ACTION_NONE) m->action = LNG_ACTION_QUIT;
     // Persist selected gamepads (defaults if never remapped) so PLAY remembers
     // the pad in input.ini / settings even without an explicit Save click.

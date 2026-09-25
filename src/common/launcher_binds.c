@@ -198,22 +198,28 @@ static const char* genesis_binds_file_path(void) {
 }
 
 // The engine's config.ini [KeyMap] keys, in LngHotkey order.
-static const char* kHotkeyKey[LNG_HK_COUNT] = {
+static const char* kHotkeyKey[] = {
     "Fullscreen", "Reset", "Pause", "PauseDimmed", "Turbo",
     "WindowBigger", "WindowSmaller", "VolumeUp", "VolumeDown",
     "DisplayPerf", "ToggleRenderer",
     "SolarBrighter", "SolarDimmer", "SolarLive",
-    "Rewind", "SaveStateMenu"
+    "Rewind", "SaveStateMenu", "OpenLauncher"
 };
 // Built-in defaults (shown when config.ini has no line; "" = unbound).
-static const char* kHotkeyDef[LNG_HK_COUNT] = {
+static const char* kHotkeyDef[] = {
     "Alt+Return", "Ctrl+R", "Shift+P", "P", "Tab",
     /* WindowBigger/Smaller unbound; VolumeUp/Down default keypad +/-
      * (psxrecomp host_keymap reads these from [KeyMap]). */
     "", "", "Keypad +", "Keypad -", "F", "R",
     "", "", "",
-    "F8", "F7"
+    "F8", "F7", "Ctrl+L"
 };
+/* Sized by their initializers, so a hotkey added to LngHotkey without a key
+ * and a default here fails the build instead of reading a NULL. */
+typedef char kHotkeyKey_covers_every_hotkey[
+    (sizeof(kHotkeyKey) / sizeof(kHotkeyKey[0]) == LNG_HK_COUNT) ? 1 : -1];
+typedef char kHotkeyDef_covers_every_hotkey[
+    (sizeof(kHotkeyDef) / sizeof(kHotkeyDef[0]) == LNG_HK_COUNT) ? 1 : -1];
 
 static void copy_str(char* d, size_t cap, const char* s) {
     if (!d || !cap) return;

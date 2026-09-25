@@ -1970,8 +1970,22 @@ typedef struct RecompLauncherCGameInfo {
      * 0 = 4:3 CRT, 1 = 8:7 square pixels, 2 = 1:1 square frame.
      * Leave zero for game-defined aspect_labels (e.g. camera/view modes). */
     int has_snes_display_aspect;
+
+    /* ---- in-session launcher (appended for ABI stability) ---------------
+     * in_session: the host opened this launcher from a running game, with the
+     * game frozen behind it. PLAY reads RESUME; closing the window resumes
+     * rather than quits; a QUIT GAME button is the explicit way out, and
+     * returns RECOMP_LAUNCHER_RESULT_QUIT. The host decides which edits apply
+     * live and which need a restart -- the launcher does not know that.
+     * In session the launcher does not re-read the settings file: the
+     * host's seeded Settings are the running game's, and they win.
+     * has_open_launcher_hotkey: show the [KeyMap] OpenLauncher row, for a host
+     * that offers the hotkey. Both zero keep every existing launcher as-is. */
+    int in_session;
+    int has_open_launcher_hotkey;
 } RecompLauncherCGameInfo;
 #define RECOMP_LAUNCHER_HAS_SNES_DISPLAY_ASPECT 1
+#define RECOMP_LAUNCHER_HAS_IN_SESSION 1
 
 /* recomp_launcher_run_window return codes */
 #define RECOMP_LAUNCHER_RESULT_LAUNCH       0

@@ -47,13 +47,15 @@ static const char* kP1Defaults[LNG_BTN_COUNT] = {
     "Up", "Down", "Left", "Right", "X", "Z", "S", "A", "D", "C", "Enter", "RShift"
 };
 // Display labels for engine hotkeys (order == LngHotkey == [KeyMap] keys).
-static const char* kHotkeyNames[LNG_HK_COUNT] = {
+static const char* kHotkeyNames[] = {
     "Fullscreen", "Reset", "Pause", "Pause (dimmed)", "Fast-forward",
     "Window bigger", "Window smaller", "Volume up", "Volume down",
     "FPS readout", "Toggle renderer",
     "Solar level up", "Solar level down", "Resume live solar",
-    "Rewind", "Save states menu"
+    "Rewind", "Save states menu", "Open launcher"
 };
+typedef char kHotkeyNames_covers_every_hotkey[
+    (sizeof(kHotkeyNames) / sizeof(kHotkeyNames[0]) == LNG_HK_COUNT) ? 1 : -1];
 static const char* kViewNames[8] = {
     "Dashboard", "Settings", "Controller", "Netplay", "Mods",
     "Assist Tools", "Credits", "Lobby"
@@ -363,6 +365,8 @@ void launcher_model_init(LauncherModel* m,
         m->saves_supported      = game->sram_path != NULL;
         m->sram_path            = game->sram_path;
         m->has_solar_sensor     = game->has_solar_sensor != 0;
+    m->in_session           = game->in_session != 0;
+    m->has_open_launcher_hotkey = game->has_open_launcher_hotkey != 0;
         m->has_integer_scale    = game->has_integer_scale != 0;
         m->hdpack_supported     = game->hdpack_supported != 0;
         m->password_save_path   = game->password_save_path;
