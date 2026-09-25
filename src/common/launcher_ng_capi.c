@@ -67,7 +67,13 @@ int recomp_launcher_run_window(const char* window_title,
      * under the placeholder icon. */
     launcher_platform_set_icon(&plat, game ? game->window_icon_path : NULL);
 
-    launcher_settings_load(io, game);
+    /* In session the host seeded *io from the RUNNING game, which can be
+     * ahead of the file: fullscreen and volume hotkeys, a config.local.ini
+     * overlay and values the host clamped all live only in memory until it
+     * writes them. Re-reading the file would hand those back as edits and
+     * undo them on RESUME. */
+    if (!game || !game->in_session)
+        launcher_settings_load(io, game);
     LauncherModel model;
     launcher_model_init(&model, io, game, initial_rom);
     model.settings_saved_on_exit = launcher_settings_supported(game) != 0;
