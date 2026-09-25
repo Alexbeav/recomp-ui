@@ -497,14 +497,15 @@ void launcher_binds_set_button(LauncherModel* m, int player, int b, int scancode
                  scancode_label((SDL_Scancode)scancode));
         return;
     }
-    if (player < 1 || player > 2) return;
     if (is_nes_profile(m)) {
+        if (player < 1 || player > LNG_MAX_PLAYERS) return;
         if (b < 0 || b >= LNG_NES_PAD_BUTTON_COUNT) return;
         rui_nes_binds_set(keybinds_file_path(), player - 1, b, scancode);
         copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
                  scancode_label((SDL_Scancode)scancode));
         return;
     }
+    if (player < 1 || player > 2) return;
     if (is_genesis_profile(m)) {
         if (b < 0 || b >= LNG_GENESIS_PAD_BUTTON_COUNT) return;
         rui_genesis_binds_set_key(genesis_binds_file_path(), player - 1, b, scancode);
@@ -567,12 +568,13 @@ void launcher_binds_reset_player(LauncherModel* m, int player) {
         reload_player_display(m, player);
         return;
     }
-    if (player < 1 || player > 2) return;
     if (is_nes_profile(m)) {
+        if (player < 1 || player > LNG_MAX_PLAYERS) return;
         rui_nes_binds_reset(keybinds_file_path(), player - 1);
         reload_player_display(m, player);
         return;
     }
+    if (player < 1 || player > 2) return;
     if (is_genesis_profile(m)) {
         rui_genesis_binds_reset(genesis_binds_file_path(), player - 1);
         reload_player_display(m, player);
