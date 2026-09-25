@@ -62,6 +62,7 @@ int recomp_launcher_run_window(const char* window_title,
     LngAction act = launcher_backend_run(&plat, &model, &theme);
 
     launcher_platform_close(&plat);
+    launcher_boot_timing_mark("rui:platform_closed");
 
     if (act == LNG_ACTION_LAUNCH || act == LNG_ACTION_RELAUNCH) {
         launcher_model_commit(&model, io);   // edited settings back to the caller

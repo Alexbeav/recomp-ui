@@ -6827,7 +6827,9 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
         }
     }
 
+    launcher_boot_timing_mark("rui:action_requested");
     launcher_input_shutdown();
+    launcher_boot_timing_mark("rui:input_closed");
     launcher_texture_free(&g_boxart);
     launcher_texture_free(&g_pad);
     launcher_texture_free(&g_pad_analog);
@@ -6843,6 +6845,7 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     ImGui_ImplOpenGL3_Shutdown();
     LNG_ImplSDL_Shutdown();
     ImGui::DestroyContext();
+    launcher_boot_timing_mark("rui:backend_closed");
 
     if (p->should_quit && m->action == LNG_ACTION_NONE) m->action = LNG_ACTION_QUIT;
     return m->action;

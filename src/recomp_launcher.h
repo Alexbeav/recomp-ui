@@ -920,6 +920,7 @@ int recomp_launcher_relaunch_exe(char* out, size_t out_cap);
 /* When preserve != 0, the launcher tears down its window/GL context but does
  * NOT call SDL_Quit(), so an in-process host can keep SDL subsystems across
  * launcher → game (and rematch soft-return). Default is 0 (full Quit). */
+#define RECOMP_LAUNCHER_HAS_PRESERVE_SDL 1
 void recomp_launcher_set_preserve_sdl(int preserve);
 
 #ifdef __cplusplus
