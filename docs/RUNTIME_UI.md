@@ -59,6 +59,17 @@ renderer output size, then restore its logical size and viewport before the
 next game frame. Event routing remains the host's responsibility through the
 shared SDL2 platform backend.
 
+`recomp_runtime_ui_set_backdrop(ui, dim, opacity)` lets the host expose how
+much the menu covers the game (how dark the game behind it gets, and how solid
+the panel is), so a player can see a picture setting's effect through it.
+`recomp_runtime_ui_set_status(ui, text)` shows a message in the footer, e.g. a
+"press again" prompt from an action that wants confirming (return 0 from its
+`run_action` so "Done" does not replace it).
+
+Selection is the model's alone: the ImGui window takes no keyboard/gamepad
+navigation of its own (`ImGuiWindowFlags_NoNavInputs`, except while a text row
+is edited), or Enter / A would also activate the row under ImGui's own cursor.
+
 ## What “every recomp-ui game” requires
 
 Consuming recomp-ui is the anchor, but updating the git submodule alone cannot

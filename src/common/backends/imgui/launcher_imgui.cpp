@@ -10367,6 +10367,17 @@ static bool draw_mod_text_option(const RecompLauncherCModOption& option,
     return changed;
 }
 
+/* Option descriptions run to several sentences; SetTooltip never wraps, so a
+ * long one ran off the screen. */
+static void mod_option_tooltip(const RecompLauncherCModOption& option) {
+    if (!option.description[0]) return;
+    ImGui::BeginTooltip();
+    ImGui::PushTextWrapPos(px(420));
+    ImGui::TextUnformatted(option.description);
+    ImGui::PopTextWrapPos();
+    ImGui::EndTooltip();
+}
+
 static bool draw_mod_integer_option(const RecompLauncherCModOption& option,
                                     char* next, size_t next_size) {
     ImGui::TextUnformatted(option.label);
@@ -10632,8 +10643,7 @@ static void draw_mod_packages(LauncherModel* m, const LauncherTheme& th) {
                     changed = draw_mod_integer_option(
                         option, next, sizeof(next));
                 }
-                if (ImGui::IsItemHovered() && option.description[0])
-                    ImGui::SetTooltip("%s", option.description);
+                if (ImGui::IsItemHovered()) mod_option_tooltip(option);
                 if (changed && (!mods->set_option ||
                     !mods->set_option(mods->ctx, package.id, option.id, next)))
                     mod_note_error(m);
@@ -10733,8 +10743,7 @@ static void draw_mod_feature_option(LauncherModel* m,
     const bool hovered = ImGui::IsItemHovered();
     if (inert) ImGui::EndDisabled();
 
-    if (hovered && option.description[0])
-        ImGui::SetTooltip("%s", option.description);
+    if (hovered) mod_option_tooltip(option);
     /* A disabled control cannot report a change, but guard anyway so a future
      * widget that stays interactive can never write through an inert option. */
     if (changed && !inert &&

@@ -28,6 +28,10 @@ struct RecompRuntimeUi {
      */
     int editing_text;
     char edit_buffer[128];
+    /* recomp_runtime_ui_set_backdrop: the game's dimming (alpha of black)
+     * and a scale for the panel's background. */
+    float dim;
+    float opacity;
 };
 
 int recomp_runtime_ui_item_enabled(const RecompRuntimeUi *ui,
