@@ -388,6 +388,17 @@ if(BUILD_TESTING)
     add_test(NAME recomp-ui-launcher-nav-backspace
              COMMAND $<TARGET_FILE:recomp-ui-launcher-nav-backspace-test>)
 
+    # Hidden mod features: the default rule (listed while enabled) and the
+    # title opt-in hide_hidden_features (never presented, package omitted).
+    # Pure logic over a fake provider -- no SDL, no ImGui.
+    add_executable(recomp-ui-launcher-mod-visibility-test
+        tests/launcher_mod_visibility_test.c
+        src/common/launcher_mod_visibility.c)
+    target_include_directories(recomp-ui-launcher-mod-visibility-test PRIVATE
+        src src/common)
+    add_test(NAME recomp-ui-launcher-mod-visibility
+             COMMAND $<TARGET_FILE:recomp-ui-launcher-mod-visibility-test>)
+
     add_executable(recomp-ui-launcher-model-cache-test
         tests/launcher_model_cache_test.c
         src/common/launcher_model.c

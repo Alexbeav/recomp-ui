@@ -165,6 +165,7 @@ function(recomp_target_launcher_ui TGT)
         ${RUI_SRC}/common/launcher_boot_timing.c  # PSX_LAUNCHER_BOOT_TIMING / LNG_BOOT_TIMING
         ${RUI_SRC}/common/launcher_ng_capi.c   # implements recomp_launcher_run_window()
         ${RUI_SRC}/common/launcher_i18n.cpp
+        ${RUI_SRC}/common/launcher_mod_visibility.c # which mod features/packages the player sees
         # color emoji for chat: scanner + per-platform rasterizers (each
         # provider compiles to nothing where its platform/deps are absent)
         ${RUI_SRC}/common/emoji/recomp_emoji.c
