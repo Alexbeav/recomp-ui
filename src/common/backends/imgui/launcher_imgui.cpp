@@ -3974,10 +3974,15 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
                 "Applies when the game starts.\n"
                 "Netplay: your view only; other players are unaffected."));
         }
-        /* The host's words (for example the GPU clamp that applies here). */
+        /* The host's words (for example the GPU clamp that applies here),
+         * wrapped to the card: a sentence about limits does not fit the
+         * control column the way a renderer caveat does. */
         const char* note = launcher_model_internal_resolution_note(m);
-        if (note && *note)
+        if (note && *note) {
+            ImGui::PushTextWrapPos(0.0f);
             ImGui::TextColored(col(th.text_muted), "%s", ui_text(note));
+            ImGui::PopTextWrapPos();
+        }
     } else if (m->has_supersampling) {
         row_label_right("Supersampling", th, px(SETTINGS_CTRL_W));
         ImGui::PushID("supersampling");
