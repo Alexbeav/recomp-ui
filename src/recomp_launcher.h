@@ -1329,6 +1329,15 @@ struct RecompLauncherCSettings {
     // Live device selection returned to the host; SDL instance ID plus one,
     // zero = unspecified. Never persist across processes (use the GUID above).
     uint32_t player_gamepad_instance[RECOMP_LAUNCHER_MAX_PLAYERS];
+    /* Scanline post-process on/off (GameInfo.has_scanlines consoles). 0 = off
+     * (also the unset default, like rewind_enabled — the host default is off, so
+     * a zero-initialized host predating this field gets the right answer), 1 =
+     * on. Appended additively. */
+    int  scanlines;
+    /* Scanline dark-gap depth as a percent. 0 = unset -> the model seeds 50; the
+     * effective range is 1..100. Stored as a percent (not 0..1) so the whole
+     * settings struct stays plain-int. Appended additively. */
+    int  scanline_strength_pct;
 };
 
 /* Largest run-ahead depth the launcher will offer for
@@ -1355,6 +1364,10 @@ struct RecompLauncherCSettings {
 
 /* Hosts can #ifdef on this to stay source-compatible with older recomp-ui. */
 #define RECOMP_LAUNCHER_HAS_FRAME_BLEND 1
+/* Scanline post-process (Settings.scanlines / scanline_strength_pct,
+ * GameInfo.has_scanlines). Hosts #ifdef on this to stay source-compatible with
+ * older recomp-ui that lacks the fields. */
+#define RECOMP_LAUNCHER_HAS_SCANLINES 1
 
 // ---- host verification/inspection results (filled by the callbacks below) ----
 // Plain-C structs so a host can implement the callbacks with zero launcher
@@ -1987,6 +2000,11 @@ typedef struct RecompLauncherCGameInfo {
      * that offers the hotkey. Both zero keep every existing launcher as-is. */
     int in_session;
     int has_open_launcher_hotkey;
+    /* Display row for Settings.scanlines / scanline_strength_pct: a present-time
+     * scanline post-process (a checkbox plus a strength slider). Only meaningful
+     * for a console whose runtime implements it (PSX); everything else leaves
+     * this 0 and the rows are absent. Appended for ABI stability. */
+    int has_scanlines;
 } RecompLauncherCGameInfo;
 #define RECOMP_LAUNCHER_HAS_SNES_DISPLAY_ASPECT 1
 #define RECOMP_LAUNCHER_HAS_IN_SESSION 1

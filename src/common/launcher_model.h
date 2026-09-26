@@ -118,6 +118,7 @@ typedef enum {
     LNG_HK_SAVE_STATE_MENU, /* PSX save-state slot menu → [KeyMap] SaveStateMenu */
     LNG_HK_OPEN_LAUNCHER, /* this launcher, mid-game → [KeyMap] OpenLauncher;
                            * shown only when GameInfo.has_open_launcher_hotkey */
+    LNG_HK_TURBO_TOGGLE, /* PSX press-to-latch fast-forward → [KeyMap] TurboToggle */
     LNG_HK_COUNT
 } LngHotkey;
 
@@ -404,6 +405,7 @@ typedef struct {
     bool     has_texture_filter;
     bool     has_fmv_filter;
     bool     has_screen_kind;
+    bool     has_scanlines;      // present-time scanline post-process (PSX)
     bool     has_frame_interp;
     bool     has_spu_hq;
     bool     has_rewind_depth;
@@ -845,6 +847,9 @@ void launcher_model_toggle_perspective_texturing(LauncherModel* m);
 bool launcher_model_geometry_correction_inert(const LauncherModel* m);
 void launcher_model_cycle_screen_kind(LauncherModel* m);       // Raw/CRT/Composite/Trinitron
 const char* launcher_model_screen_kind_label(const LauncherModel* m);
+void launcher_model_toggle_scanlines(LauncherModel* m);
+void launcher_model_set_scanline_strength_pct(LauncherModel* m, int pct); // clamps 1..100
+int  launcher_model_scanline_strength_pct(const LauncherModel* m);        // effective (seeds 50)
 void launcher_model_toggle_frame_interp(LauncherModel* m);
 void launcher_model_cycle_interp_fps(LauncherModel* m);        // {0,90,120,144,165,240} wrap
 const char* launcher_model_interp_fps_label(const LauncherModel* m);  // "Display refresh"/"90 fps"
