@@ -656,13 +656,7 @@ void launcher_model_init(LauncherModel* m,
     m->netplay_force_turn = false;
     /* Rollback on by default; Lobby Settings “Disable Rollback” opts out. */
     m->netplay_rollback = true;
-    {
-        int max_p = m->player_count > 0 ? m->player_count : 2;
-        if (max_p < 2) max_p = 2;
-        if (max_p > RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS)
-            max_p = RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS;
-        m->netplay_host_max_players = max_p;
-    }
+    /* netplay_host_max_players is set below, after the profile clamp. */
     m->netplay_lobby_max_slots = 0;
     m->mod_selected = 0;
     m->mod_package_selected = 0;
@@ -691,6 +685,17 @@ void launcher_model_init(LauncherModel* m,
          * two-player game/system expose extra controller or lobby seats. */
         m->player_count = clampi(m->player_count, 1,
                                  m->profile->controller.max_players);
+    }
+    /* The lobby seat ceiling follows the CLAMPED player count: set before the
+     * clamp, a game declaring more players than its console routes (Genesis
+     * num_players 8, profile 4) opened a lobby with seats that have no pad.
+     * Same rule as the Host panel's np_game_max_players. */
+    {
+        int max_p = m->player_count > 0 ? m->player_count : 2;
+        if (max_p < 2) max_p = 2;
+        if (max_p > RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS)
+            max_p = RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS;
+        m->netplay_host_max_players = max_p;
     }
 
     // ---- gate pad_mode per player ----

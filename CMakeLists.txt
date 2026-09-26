@@ -290,6 +290,23 @@ if(BUILD_TESTING)
         NAME recomp-ui-launcher-pad-mode
         COMMAND $<TARGET_FILE:recomp-ui-launcher-pad-mode-test>)
 
+    # Genesis seat ceiling: four logical players for a four-player title,
+    # two for every two-port title, never more than the bind store routes.
+    add_executable(recomp-ui-genesis-seats-test
+        tests/genesis_seats_test.c
+        src/common/crc32.c
+        src/common/sha1.c
+        src/common/sha256.c
+        src/common/ips_patch.c
+        src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-genesis-seats-test PRIVATE
+        src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-genesis-seats-test PRIVATE
+        ${RUI_SDL_TARGET})
+    add_test(
+        NAME recomp-ui-genesis-seats
+        COMMAND $<TARGET_FILE:recomp-ui-genesis-seats-test>)
+
     # Memory-card slot facts the Save panel paints: block-usage source order
     # (real inspect beats placeholder; a wired inspector never shows a made-up
     # pattern) and the tri-state enabled flag. Includes launcher_model.c like
