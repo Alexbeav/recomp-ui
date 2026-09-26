@@ -235,6 +235,22 @@ if(BUILD_TESTING)
         NAME recomp-ui-launcher-video-pick
         COMMAND $<TARGET_FILE:recomp-ui-launcher-video-pick-test>)
 
+    # Internal resolution as a host-supplied list (PSX presets), with the
+    # legacy Supersampling cycle untouched when no vocabulary is supplied.
+    add_executable(recomp-ui-launcher-internal-resolution-test
+        tests/launcher_internal_resolution_test.c
+        src/common/crc32.c
+        src/common/sha1.c
+        src/common/sha256.c
+        src/common/ips_patch.c
+        src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-launcher-internal-resolution-test PRIVATE
+        src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-launcher-internal-resolution-test PRIVATE ${RUI_SDL_TARGET})
+    add_test(
+        NAME recomp-ui-launcher-internal-resolution
+        COMMAND $<TARGET_FILE:recomp-ui-launcher-internal-resolution-test>)
+
     # First-run wizard: staging a retail BIOS that has no linked backend.
     # Same include-the-TU shape as the discs test above.
     add_executable(recomp-ui-launcher-setup-bios-test

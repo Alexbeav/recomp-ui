@@ -318,6 +318,15 @@ typedef struct {
     const char* const* renderer_ids;
     const char* renderer_note;
 
+    // ---- internal-resolution vocabulary (GameInfo.internal_resolution_*) ---
+    // Borrowed. When offered (see launcher_model_internal_resolution_offered)
+    // the has_supersampling row becomes an "Internal resolution" dropdown
+    // storing m->s.internal_resolution; otherwise the legacy 1x..4x cycle.
+    const char* const* internal_resolution_labels;
+    const int*         internal_resolution_values;
+    int                num_internal_resolutions;
+    const char*        internal_resolution_note;
+
     // ---- rebind-page opt-out (GameInfo.hide_rebind) ------------------------
     bool hide_rebind;
     // ---- mouse controls (GameInfo.has_mouse_controls; Snap) ----------------
@@ -852,6 +861,21 @@ const char* launcher_model_renderer_note(const LauncherModel* m);
 void launcher_model_apply_renderer_settings(LauncherModel* m);
 void launcher_model_cycle_supersampling(LauncherModel* m);     // 1x..4x wrap
 const char* launcher_model_supersampling_label(const LauncherModel* m);
+/* Internal resolution as a host-supplied LIST (Native / 720p / ... / Match
+ * display). offered: has_supersampling and a non-empty vocabulary. The index
+ * getters speak the vocabulary; set stores the entry's value, and a value
+ * outside the vocabulary never becomes the selection. */
+bool        launcher_model_internal_resolution_offered(const LauncherModel* m);
+int         launcher_model_internal_resolution_count(const LauncherModel* m);
+const char* launcher_model_internal_resolution_label_at(const LauncherModel* m, int i);
+int         launcher_model_internal_resolution_index(const LauncherModel* m);
+const char* launcher_model_internal_resolution_label(const LauncherModel* m);
+void        launcher_model_set_internal_resolution(LauncherModel* m, int i);
+const char* launcher_model_internal_resolution_note(const LauncherModel* m);
+/* Seed/validate Settings.internal_resolution against the vocabulary: a value
+ * the host does not list (including unset) selects the first entry.
+ * launcher_model_init calls it; exposed for tests. */
+void        launcher_model_apply_internal_resolution_settings(LauncherModel* m);
 void launcher_model_cycle_aa(LauncherModel* m);            // Off/2x/4x/8x (MSAA sample count)
 const char* launcher_model_aa_label(const LauncherModel* m);
 void launcher_model_toggle_texture_filter(LauncherModel* m);   // Nearest/Bilinear
