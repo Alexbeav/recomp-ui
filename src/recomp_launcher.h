@@ -856,7 +856,9 @@ typedef struct RecompLauncherCModFeature {
     int  camera_controls;
     /* Hidden features are omitted from normal picker lists while disabled.
      * Providers still expose them so an explicitly-enabled hidden feature can
-     * be shown and turned off again. */
+     * be shown and turned off again -- unless the provider sets
+     * hide_hidden_features, which never presents them at all (see
+     * launcher_mod_visibility.h). */
     int  hidden;
     /* RecompLauncherCModChannel. Stable is 0, so zero-init and older providers
      * both mean "stable" and need no special case. Developer-channel features
@@ -1010,6 +1012,12 @@ typedef struct RecompLauncherCModProvider {
     int (*catalog_diagnostic_count)(void* ctx);
     int (*catalog_diagnostic_get)(void* ctx, int index,
                                   RecompLauncherCModDiagnostic* out);
+    /* Title opt-in: non-zero never presents a hidden feature (not even
+     * while enabled), leaves it out of "Enable all" / "Disable all", and
+     * omits a package whose every feature is hidden. The feature still runs
+     * as its package and the saved state say. Zero keeps the default rule
+     * above. Appended for ABI stability. */
+    int hide_hidden_features;
 } RecompLauncherCModProvider;
 
 // Plain-C mirror of the launcher's internal settings (bools as int).
