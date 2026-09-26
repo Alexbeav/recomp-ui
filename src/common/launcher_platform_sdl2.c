@@ -5,10 +5,12 @@
 //
 // DPI on SDL2: SDL_WINDOW_ALLOW_HIGHDPI makes the window size logical (points)
 // while SDL_GL_GetDrawableSize reports physical pixels; their ratio is the
-// content scale. That covers Windows per-monitor, macOS Retina and X11.
-// It does NOT cover Wayland fractional scaling — SDL2 only supports integer
-// buffer scale, so at 125%/150% the compositor downscales and text softens.
-// SDL3 is the preferred path for fractional Wayland scaling.
+// content scale. That covers macOS Retina and Wayland's integer scales.
+// Windows and X11 report both sizes in pixels, so the scale is asked for
+// separately (the Windows DPI setting; X11's Xft.dpi — see
+// x11_desktop_scale). It does NOT cover Wayland fractional scaling — SDL2
+// only supports integer buffer scale, so at 125%/150% the compositor
+// downscales and text softens. SDL3 is the preferred path for that.
 
 #include <stdlib.h>
 #include "launcher_platform.h"
@@ -16,6 +18,11 @@
 #include "launcher_gl.h"
 
 #include <stdio.h>
+#include <string.h>
+
+#if defined(__unix__) && !defined(__ANDROID__) && !defined(__APPLE__)
+#define LNG_X11_DESKTOP_SCALE 1
+#endif
 
 static bool s_quit_sdl = true;
 
@@ -316,6 +323,70 @@ static float forced_display_scale(void) {
     return (v > 1.0f && v <= 4.0f) ? v : 0.0f;
 }
 
+#if LNG_X11_DESKTOP_SCALE
+// The scale the user picked for their X11 desktop. SDL_GetDisplayDPI is no
+// stand-in for it there: on X11 it is the PHYSICAL density, the panel's
+// pixels over its millimetres, so a Steam Deck's 7" 1280x800 screen reads as
+// 200-350 dpi on a desktop set to 100% and the launcher opened at 2-3.5x,
+// too big to use. What desktops publish is Xft.dpi in the X resource
+// database (KDE, GNOME and Xfce write 96 x their scale there), with GDK_SCALE
+// as the manual override — the order SDL3's X11 content scale uses too.
+//
+// Only for SDL's x11 driver: under its wayland one the drawable/window ratio
+// already carries the compositor's scale. libX11 is borrowed from SDL, which
+// loaded it for the x11 driver, rather than linked. Read once — SDL2 sends no
+// scale-change event on X11, and refresh_metrics runs every frame.
+typedef void* (*LngXOpenDisplayFn)(const char* name);
+typedef char* (*LngXGetDefaultFn)(void* display, const char* program, const char* option);
+typedef int   (*LngXCloseDisplayFn)(void* display);
+
+static float x11_desktop_scale(void) {
+    static float cached = 0.0f;
+    const char* driver;
+    const char* source = "default";
+    float scale = 1.0f;
+
+    if (cached > 0.0f) return cached;
+    driver = SDL_GetCurrentVideoDriver();
+    if (driver && strcmp(driver, "x11") == 0) {
+        void* x11 = SDL_LoadObject("libX11.so.6");
+        LngXOpenDisplayFn open_display = x11 ?
+            (LngXOpenDisplayFn)SDL_LoadFunction(x11, "XOpenDisplay") : NULL;
+        LngXGetDefaultFn get_default = x11 ?
+            (LngXGetDefaultFn)SDL_LoadFunction(x11, "XGetDefault") : NULL;
+        LngXCloseDisplayFn close_display = x11 ?
+            (LngXCloseDisplayFn)SDL_LoadFunction(x11, "XCloseDisplay") : NULL;
+        void* display = (open_display && get_default && close_display) ?
+            open_display(NULL) : NULL;
+        if (display) {
+            const char* value = get_default(display, "Xft", "dpi");
+            double dpi = value ? strtod(value, NULL) : 0.0;
+            if (dpi > 0.0) {
+                scale = (float)(dpi / 96.0);
+                source = "Xft.dpi";
+            }
+            close_display(display);
+        }
+        if (x11) SDL_UnloadObject(x11);
+        if (strcmp(source, "Xft.dpi") != 0) {
+            const char* gdk = getenv("GDK_SCALE");
+            int v = gdk ? atoi(gdk) : 0;
+            if (v > 0) {
+                scale = (float)v;
+                source = "GDK_SCALE";
+            }
+        }
+    } else {
+        source = driver ? driver : "no video driver";
+    }
+    if (scale < 1.0f) scale = 1.0f;
+    if (scale > 4.0f) scale = 4.0f;
+    fprintf(stderr, "[launcher] desktop scale %.2f (%s)\n", scale, source);
+    cached = scale;
+    return cached;
+}
+#endif
+
 void launcher_platform_refresh_metrics(LauncherPlatform* p) {
     int win_w = 0, win_h = 0;
     float s = 1.0f, forced;
@@ -329,16 +400,21 @@ void launcher_platform_refresh_metrics(LauncherPlatform* p) {
     if (win_w > 0 && p->pixel_w > 0)
         s = (float)p->pixel_w / (float)win_w;
 
-    // On Windows the drawable and window sizes are both in pixels (no
+    // On Windows and X11 the drawable and window sizes are both in pixels (no
     // point/pixel split), so the ratio is always 1.0 and we must ask the OS for
-    // the real DPI instead. 96 dpi == 100% scaling.
+    // the desktop's scale instead. 96 dpi == 100% scaling.
     if (s <= 1.001f) {
+#if LNG_X11_DESKTOP_SCALE
+        float desktop = x11_desktop_scale();
+        if (desktop > s) s = desktop;
+#else
         int disp = SDL_GetWindowDisplayIndex(p->window);
         float ddpi = 0.0f, hdpi = 0.0f, vdpi = 0.0f;
         if (disp >= 0 && SDL_GetDisplayDPI(disp, &ddpi, &hdpi, &vdpi) == 0 && hdpi > 0.0f) {
             float dpi_scale = hdpi / 96.0f;
             if (dpi_scale > s) s = dpi_scale;
         }
+#endif
     }
     if (s <= 0.0f) s = 1.0f;
     forced = forced_display_scale();
