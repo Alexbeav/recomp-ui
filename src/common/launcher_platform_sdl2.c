@@ -192,11 +192,14 @@ bool launcher_platform_open(LauncherPlatform* p, const char* title,
     SDL_SetHintWithPriority(SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS, "0",
                             SDL_HINT_DEFAULT);
 #endif
-#ifdef LNG_GLES2
+#if defined(LNG_GLES2) && defined(_WIN32)
     // The host links ANGLE's libGLESv2/libEGL; SDL must create the context
     // through that same ES library (via EGL), or the directly-linked ANGLE
     // entry points run with no current context and crash on the first GL call.
     // Must be set BEFORE SDL_Init. Mirrors gb-recompiled's own platform init.
+    // Elsewhere the host links the system GL, which serves an ES context made
+    // either way, and forcing EGL would also demand libGLESv2.so.2, which not
+    // every Linux install has.
     SDL_SetHint(SDL_HINT_OPENGL_ES_DRIVER, "1");
 #endif
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER |

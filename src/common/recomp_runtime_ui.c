@@ -50,6 +50,8 @@ RecompRuntimeUi *recomp_runtime_ui_create(const RecompRuntimeUiConfig *config) {
     RecompRuntimeUi *ui = (RecompRuntimeUi *)calloc(1, sizeof(*ui));
     if (!ui) return NULL;
     ui->config = *config;
+    ui->dim = RECOMP_RUNTIME_UI_DEFAULT_DIM;
+    ui->opacity = 1.0f;
     ui->sections = (const char **)calloc(config->item_count, sizeof(*ui->sections));
     if (!ui->sections) {
         free(ui);
@@ -197,6 +199,22 @@ int recomp_runtime_ui_commit_text(RecompRuntimeUi *ui,
 
 int recomp_runtime_ui_wants_text_input(const RecompRuntimeUi *ui) {
     return (ui && ui->open && ui->editing_text) ? 1 : 0;
+}
+
+static float clamp01(float v) {
+    return v < 0.0f ? 0.0f : v > 1.0f ? 1.0f : v;
+}
+
+void recomp_runtime_ui_set_backdrop(RecompRuntimeUi *ui, float dim, float opacity) {
+    if (!ui) return;
+    ui->dim = clamp01(dim);
+    ui->opacity = clamp01(opacity);
+}
+
+void recomp_runtime_ui_set_status(RecompRuntimeUi *ui, const char *text) {
+    if (!ui) return;
+    snprintf(ui->status, sizeof(ui->status), "%s", text ? text : "");
+    ui->status_frames = ui->status[0] ? 180 : 0;
 }
 
 void recomp_runtime_ui_enter_section(RecompRuntimeUi *ui, size_t section) {
@@ -450,8 +468,12 @@ void recomp_runtime_ui_render_argb8888(RecompRuntimeUi *ui, void *pixels,
     const uint32_t disabled = RGB8(theme.text_muted);
     const uint32_t border = RGB8(theme.border);
 
-    rect(pixels,width,height,pitch,0,0,width,height,0x000000,130);
-    rect(pixels,width,height,pitch,panel_x,panel_y,panel_w,panel_h,panel,238);
+    /* This presentation's own default dim is 130/255. */
+    const float dim = 130.0f * ui->dim / RECOMP_RUNTIME_UI_DEFAULT_DIM;
+    rect(pixels,width,height,pitch,0,0,width,height,0x000000,
+         (unsigned)(dim > 255.0f ? 255.0f : dim));
+    rect(pixels,width,height,pitch,panel_x,panel_y,panel_w,panel_h,panel,
+         (unsigned)(238.0f * ui->opacity));
     outline(pixels,width,height,pitch,panel_x,panel_y,panel_w,panel_h,
             scale,accent);
     const char *title = ui->config.title ? ui->config.title : "Settings";

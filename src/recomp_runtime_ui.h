@@ -19,6 +19,8 @@ extern "C" {
  */
 #define RECOMP_RUNTIME_UI_HAS_TEXT 1
 #define RECOMP_RUNTIME_UI_HAS_PRESENTATION_FLAGS 1
+#define RECOMP_RUNTIME_UI_HAS_BACKDROP 1
+#define RECOMP_RUNTIME_UI_HAS_STATUS 1
 
 typedef struct RecompRuntimeUi RecompRuntimeUi;
 
@@ -211,6 +213,23 @@ int recomp_runtime_ui_handle_input(RecompRuntimeUi *ui,
  * entering characters. The keys should still be withheld from the game.
  */
 int recomp_runtime_ui_wants_text_input(const RecompRuntimeUi *ui);
+
+/*
+ * How the open menu covers the game, so a player can see a picture setting's
+ * effect through it: `dim` is how dark the game behind the menu gets, 0 (not
+ * at all) to 1 (black), RECOMP_RUNTIME_UI_DEFAULT_DIM by default; `opacity`
+ * scales the panel's own background, 0 (text and controls only) to 1 (the
+ * default).
+ */
+#define RECOMP_RUNTIME_UI_DEFAULT_DIM (150.0f / 255.0f)
+void recomp_runtime_ui_set_backdrop(RecompRuntimeUi *ui, float dim, float opacity);
+
+/*
+ * Shows `text` in the footer's status slot for about three seconds, as the
+ * menu does for "Saved" -- e.g. "Press again to quit" from a run_action that
+ * wants a second press (return 0 from it, or "Done" replaces the text).
+ */
+void recomp_runtime_ui_set_status(RecompRuntimeUi *ui, const char *text);
 
 /*
  * Composites the menu over a little-endian SDL_PIXELFORMAT_ARGB8888/BGRA frame.

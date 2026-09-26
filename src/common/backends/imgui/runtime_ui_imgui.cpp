@@ -204,7 +204,8 @@ void draw_items(RecompRuntimeUi *ui, const LauncherTheme &theme,
     }
 }
 
-void push_runtime_style(const LauncherTheme &theme, bool touch_friendly) {
+void push_runtime_style(const LauncherTheme &theme, bool touch_friendly,
+                        float opacity) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, theme.radius_lg);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, theme.radius_sm);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, theme.radius_sm);
@@ -220,8 +221,8 @@ void push_runtime_style(const LauncherTheme &theme, bool touch_friendly) {
         ImGuiStyleVar_GrabMinSize,
         touch_friendly ? std::max(30.0f, theme.spacing_lg * 1.5f)
                        : ImGui::GetStyle().GrabMinSize);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, col(theme.background, 0.98f));
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, col(theme.panel, 0.96f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, col(theme.background, 0.98f * opacity));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, col(theme.panel, 0.96f * opacity));
     ImGui::PushStyleColor(ImGuiCol_Border, col(theme.border));
     ImGui::PushStyleColor(ImGuiCol_Text, col(theme.text));
     ImGui::PushStyleColor(ImGuiCol_TextDisabled, col(theme.text_muted));
@@ -252,7 +253,8 @@ extern "C" void recomp_runtime_ui_render_imgui(RecompRuntimeUi *ui) {
          RECOMP_RUNTIME_UI_PRESENTATION_TOUCH_FRIENDLY) != 0;
 
     ImGui::GetBackgroundDrawList()->AddRectFilled(
-        ImVec2(0.0f, 0.0f), display, IM_COL32(0, 0, 0, 150));
+        ImVec2(0.0f, 0.0f), display,
+        IM_COL32(0, 0, 0, static_cast<int>(255.0f * ui->dim + 0.5f)));
 
     const float short_axis = std::min(display.x, display.y);
     const float touch_row_height =
@@ -283,10 +285,15 @@ extern "C" void recomp_runtime_ui_render_imgui(RecompRuntimeUi *ui) {
                             ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiCond_Always);
 
-    push_runtime_style(theme, touch_friendly);
+    push_runtime_style(theme, touch_friendly, ui->opacity);
+    // The host drives selection through recomp_runtime_ui_handle_input. ImGui's
+    // own keyboard/gamepad navigation would move a second, hidden cursor over
+    // the same rows, and Enter / A would activate whichever row that one is
+    // on. A text row being edited still needs the keyboard.
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration |
                                    ImGuiWindowFlags_NoMove |
-                                   ImGuiWindowFlags_NoSavedSettings;
+                                   ImGuiWindowFlags_NoSavedSettings |
+                                   (ui->editing_text ? 0 : ImGuiWindowFlags_NoNavInputs);
     if (ImGui::Begin("##recomp-runtime-ui", nullptr, flags)) {
         if (touch_friendly) {
             // Scale toward a phone-readable physical size regardless of any
