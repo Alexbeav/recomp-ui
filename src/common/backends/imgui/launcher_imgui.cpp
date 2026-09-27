@@ -6285,6 +6285,16 @@ const RecompLauncherCNetplayCallbacks* np_cb(LauncherModel* m) {
     return (m && m->netplay_supported) ? m->netplay : nullptr;
 }
 
+static void draw_netplay_view(LauncherModel* m) {
+    if (!m->netplay_view_labels || m->num_netplay_view_labels <= 1) return;
+    ImGui::SetNextItemWidth(px(200));
+    ImGui::Combo("Your display##netplay_view", &m->s.netplay_view_index,
+                 m->netplay_view_labels, m->num_netplay_view_labels);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Only changes your view. Other players can use a different size.");
+    ImGui::Spacing();
+}
+
 bool np_connected(LauncherModel* m) {
     const auto* np = np_cb(m);
     return np && np->connected && np->connected(np->ctx);
@@ -9518,6 +9528,7 @@ static void draw_lobby_settings_popup(LauncherModel* m, const LauncherTheme& th,
 void draw_lobby(LauncherModel* m, const LauncherTheme& th) {
     const auto* np = np_cb(m);
     if (!np) return;
+    draw_netplay_view(m);
     /* Keep membership live while the room is up (join/leave/move/kick). */
     if (np->pump) np->pump(np->ctx);
     np_ingest_last_error(m, np);
@@ -9940,6 +9951,7 @@ static bool np_mode_card(const LauncherTheme& th, const char* id, const char* ti
 }
 
 void draw_netplay_mode_page(LauncherModel* m, const LauncherTheme& th) {
+    draw_netplay_view(m);
     /* Pump here too, not only on the browser page. The backend does its own
      * lazy setup from the pump -- parsing the lobby host, loading a stored
      * device key, redeeming it -- and this page asks it questions ("is
@@ -10144,6 +10156,7 @@ void draw_netplay_signin_page(LauncherModel* m, const LauncherTheme& th) {
 void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
     const auto* np = np_cb(m);
     if (!np) return;
+    draw_netplay_view(m);
     static bool network_settings_loaded = false;
     if (!network_settings_loaded) {
         network_settings_loaded = true;

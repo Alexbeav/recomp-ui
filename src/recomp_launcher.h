@@ -1346,6 +1346,9 @@ struct RecompLauncherCSettings {
      * effective range is 1..100. Stored as a percent (not 0..1) so the whole
      * settings struct stays plain-int. Appended additively. */
     int  scanline_strength_pct;
+    // Local display choice from GameInfo.netplay_view_labels. Persisted by
+    // the host, separate from single-player aspect and match capabilities.
+    int netplay_view_index;
 };
 
 /* Largest run-ahead depth the launcher will offer for
@@ -2013,7 +2016,13 @@ typedef struct RecompLauncherCGameInfo {
      * for a console whose runtime implements it (PSX); everything else leaves
      * this 0 and the rows are absent. Appended for ABI stability. */
     int has_scanlines;
+    // Optional local-only netplay display choices. The host must authorize
+    // only rendering that cannot change synchronized game state. Index zero
+    // is the native/default view; omit adaptive for games where it is unsafe.
+    const char* const* netplay_view_labels;
+    int num_netplay_view_labels;
 } RecompLauncherCGameInfo;
+#define RECOMP_LAUNCHER_HAS_NETPLAY_VIEW 1
 #define RECOMP_LAUNCHER_HAS_SNES_DISPLAY_ASPECT 1
 #define RECOMP_LAUNCHER_HAS_IN_SESSION 1
 

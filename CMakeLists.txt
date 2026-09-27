@@ -407,6 +407,12 @@ if(BUILD_TESTING)
         src/common/sha256.c
         src/common/ips_patch.c
         src/consoles/psx/memcard_format.c)
+    add_executable(recomp-ui-netplay-view-test
+        tests/netplay_view_test.c src/common/launcher_model.c
+        src/common/crc32.c src/common/sha1.c src/common/sha256.c
+        src/common/ips_patch.c src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-netplay-view-test PRIVATE src src/common src/consoles/psx)
+    add_test(NAME recomp-ui-netplay-view COMMAND $<TARGET_FILE:recomp-ui-netplay-view-test>)
     target_include_directories(recomp-ui-launcher-model-cache-test PRIVATE
         src src/common src/consoles/psx)
     # Readers also probe beside their executable. Keep them out of the setup
