@@ -418,12 +418,6 @@ typedef struct RecompLauncherCNetplayCallbacks {
      * peers apply via PSX_NET_MODE / launch.rollback. Lobby default on. */
     int  (*rollback_get)(void* ctx);
     int  (*rollback_set)(void* ctx, int enable);
-    /* Optional engine-defined connection types. IDs are stable wire values,
-     * not indices. Guests read the host choice; only the host may set it. */
-    int  (*session_variant_count)(void* ctx);
-    const char* (*session_variant_label)(void* ctx, int index, int* value);
-    int  (*session_variant_get)(void* ctx);
-    int  (*session_variant_set)(void* ctx, int value);
     /* Optional host invent runway (P), frames, clamped 2..16. Rollback only. */
     int  (*input_prediction_get)(void* ctx);
     int  (*input_prediction_set)(void* ctx, int prediction_frames);
@@ -730,6 +724,13 @@ typedef struct RecompLauncherCNetplayCallbacks {
     int         (*automatch_accept)(void* ctx, int accept);
     /* One line for a human when state is FAILED, or after a refused queue. */
     const char* (*automatch_error)(void* ctx);
+    /* Optional (append-only): engine-defined connection types. IDs are stable
+     * wire values, not indices. Guests read the host choice; only the host
+     * may set it. Leave NULL for the existing single-variant behavior. */
+    int  (*session_variant_count)(void* ctx);
+    const char* (*session_variant_label)(void* ctx, int index, int* value);
+    int  (*session_variant_get)(void* ctx);
+    int  (*session_variant_set)(void* ctx, int value);
 } RecompLauncherCNetplayCallbacks;
 
 /* Present since the account callbacks were added. A host guards its wiring

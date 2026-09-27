@@ -120,12 +120,6 @@ typedef struct RecompNetplayHostHooks {
     int max_players;
     int slot_policy;                /* RECOMP_NETPLAY_SLOTS_* */
     int input_player;               /* launch.input_player; 0 or ..._AUTO */
-    /* Optional host-selected hardware/rules choice. Stable wire IDs; zero is
-     * the legacy default. Array and strings must outlive this backend. The
-     * engine still validates this value in its simulation startup identity. */
-    const RecompNetplaySessionVariant *session_variants;
-    int session_variant_count;
-    int default_session_variant;
 
     /* ---- host environment ------------------------------------------------ */
     /* Resolve `leaf` beside the executable (the LAN registry and the account
@@ -174,6 +168,12 @@ typedef struct RecompNetplayHostHooks {
     int rematch_set_ready;  /* 1: prepare_rematch re-arms ready */
 
     void *ctx;
+    /* Optional (append-only): host-selected hardware/rules choice. Stable wire
+     * IDs; zero is the legacy default. Array and strings must outlive this
+     * backend. The engine validates it in its simulation startup identity. */
+    const RecompNetplaySessionVariant *session_variants;
+    int session_variant_count;
+    int default_session_variant;
 } RecompNetplayHostHooks;
 
 /* Init once before the launcher first opens. `hooks` is copied (the strings
