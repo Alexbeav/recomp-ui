@@ -251,6 +251,7 @@ typedef struct RecompLauncherCNetplayChatMessage {
     uint32_t seq;
 } RecompLauncherCNetplayChatMessage;
 
+#define RECOMP_LAUNCHER_HAS_SESSION_VARIANT 1
 typedef struct RecompLauncherCNetplayLaunch {
     int      enabled;
     int      local_slot;
@@ -320,6 +321,8 @@ typedef struct RecompLauncherCNetplayLaunch {
      * gallery). Without it, session slot == lobby seat == port. */
     int      slot_port_valid;
     int      slot_port[RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS + 1];
+    /* Opaque engine-defined session hardware/rules selection, set by host. */
+    int      session_variant;
 } RecompLauncherCNetplayLaunch;
 
 typedef struct RecompLauncherCNetplayLocalAddress {
@@ -721,6 +724,13 @@ typedef struct RecompLauncherCNetplayCallbacks {
     int         (*automatch_accept)(void* ctx, int accept);
     /* One line for a human when state is FAILED, or after a refused queue. */
     const char* (*automatch_error)(void* ctx);
+    /* Optional (append-only): engine-defined connection types. IDs are stable
+     * wire values, not indices. Guests read the host choice; only the host
+     * may set it. Leave NULL for the existing single-variant behavior. */
+    int  (*session_variant_count)(void* ctx);
+    const char* (*session_variant_label)(void* ctx, int index, int* value);
+    int  (*session_variant_get)(void* ctx);
+    int  (*session_variant_set)(void* ctx, int value);
 } RecompLauncherCNetplayCallbacks;
 
 /* Present since the account callbacks were added. A host guards its wiring
