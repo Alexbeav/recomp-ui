@@ -533,6 +533,9 @@ void launcher_model_init(LauncherModel* m,
         m->has_shader           = game->has_shader != 0;
         m->netplay_supported    = game->netplay_supported != 0 && game->netplay != NULL;
         m->netplay              = game->netplay;
+        m->netplay_view_labels = game->netplay_view_labels;
+        m->num_netplay_view_labels = m->netplay_supported && game->netplay_view_labels
+            ? clampi(game->num_netplay_view_labels, 0, 16) : 0;
         m->rom_patch_supported  = game->rom_patch_supported != 0;
         m->rom_patch_note       = game->rom_patch_note;
         m->rom_patch_cache_dir  = game->rom_patch_cache_dir;
@@ -553,6 +556,8 @@ void launcher_model_init(LauncherModel* m,
     }
 
     if (io) m->s = *io;
+    if (m->s.netplay_view_index < 0 || m->s.netplay_view_index >= m->num_netplay_view_labels)
+        m->s.netplay_view_index = 0;
     /* Seed the selected disc from the host's persisted setting BEFORE the ROM
      * is read: launcher_model_set_rom() below binds initial_rom to the roster,
      * and when that path is off-roster (the player relocated the image) the
