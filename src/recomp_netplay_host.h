@@ -94,6 +94,11 @@ typedef struct RecompNetplayModHooks {
     void *ctx;
 } RecompNetplayModHooks;
 
+typedef struct RecompNetplaySessionVariant {
+    int value;
+    const char *label;
+} RecompNetplaySessionVariant;
+
 typedef struct RecompNetplayHostHooks {
     /* ---- identity -------------------------------------------------------- */
     const char *game_name;          /* the server's scoping key; required */
@@ -115,6 +120,12 @@ typedef struct RecompNetplayHostHooks {
     int max_players;
     int slot_policy;                /* RECOMP_NETPLAY_SLOTS_* */
     int input_player;               /* launch.input_player; 0 or ..._AUTO */
+    /* Optional host-selected hardware/rules choice. Stable wire IDs; zero is
+     * the legacy default. Array and strings must outlive this backend. The
+     * engine still validates this value in its simulation startup identity. */
+    const RecompNetplaySessionVariant *session_variants;
+    int session_variant_count;
+    int default_session_variant;
 
     /* ---- host environment ------------------------------------------------ */
     /* Resolve `leaf` beside the executable (the LAN registry and the account

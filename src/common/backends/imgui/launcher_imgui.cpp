@@ -8529,6 +8529,25 @@ static void draw_lobby_match_settings(LauncherModel* m, const LauncherTheme& th,
     }
     ImGui::BeginDisabled(!is_host);
     {
+        if (np->session_variant_count && np->session_variant_label && np->session_variant_get) {
+            const int count = np->session_variant_count(np->ctx);
+            const int current = np->session_variant_get(np->ctx);
+            const char* selected = "Unsupported connection type";
+            for (int i = 0; i < count; ++i) {
+                int id = 0;
+                const char* label = np->session_variant_label(np->ctx, i, &id);
+                if (id == current && label) selected = label;
+            }
+            if (count > 0 && ImGui::BeginCombo("Connection type", selected)) {
+                for (int i = 0; i < count; ++i) {
+                    int id = 0;
+                    const char* label = np->session_variant_label(np->ctx, i, &id);
+                    if (label && ImGui::Selectable(label, id == current) && np->session_variant_set)
+                        np->session_variant_set(np->ctx, id);
+                }
+                ImGui::EndCombo();
+            }
+        }
         /* Rollback is the match mode and is no longer a lobby toggle: it is
          * whatever the backend reports (default on). Delay-sync stays
          * reachable through the backend's env override for debugging. */
