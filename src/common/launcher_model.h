@@ -224,6 +224,13 @@ typedef struct {
     int (*import_sbi_cb)(const char*, const char*, char*, size_t, char*, size_t);
     int (*memcard_inspect_cb)(const char* card_path, RecompLauncherCMemcard* out);
     int (*bios_verify_cb)(const char* bios_path, RecompLauncherCBiosVerify* out);
+    /* GameInfo.bios_verify_for_rom: preferred over bios_verify_cb, and also
+     * given the selected image (re-run when it changes). */
+    int (*bios_verify_for_rom_cb)(void* ctx, const char* bios_path, const char* rom_path,
+                                  RecompLauncherCBiosVerify* out);
+    void*       bios_verify_ctx;
+    /* GameInfo.host_persists_paths: no rom.cfg/disc.cfg/bios.cfg sidecars. */
+    bool        host_persists_paths;
     /* Optional host flush for first-run picks (project-root bios.cfg / disc.cfg). */
     int (*persist_setup_cb)(void* ctx, const char* rom_path, const char* bios_path);
     /* Multi-disc flush. Used INSTEAD of persist_setup_cb when non-NULL and the
@@ -424,6 +431,12 @@ typedef struct {
     // (no has_fullscreen_toggle: the Fullscreen row is universal — every
     // console draws it; the ABI flag of that name is deprecated/ignored.)
     bool     has_bios;
+    // GameInfo.bios_name / bios_patterns: a required system file's name and
+    // the BIOS picker's file types (NULL/0: the PSX/GBA wording, *.bin *.rom).
+    const char*        bios_name;
+    const char* const* bios_patterns;
+    int                num_bios_patterns;
+    const char*        bios_filter_desc;
     bool     has_deadzone_pct;
     // Online identity (opt-in; see GameInfo.has_player_name): dashboard
     // IDENTITY card with the persistent display name + optional host-owned
@@ -506,6 +519,8 @@ typedef struct {
     bool      setup_bios_warn;
     bool      setup_bios_needs_regen; // valid dump but not linked in this binary
     char      setup_bios_detail[256];
+    bool      bios_not_needed;       // host: the selected image needs no BIOS
+    bool      bios_pick_rejected;    // the last pick failed verification (detail says why)
     /* Confirm before persisting a BIOS switch that requires Generate & rebuild. */
     bool      bios_confirm_open;
     char      bios_pending_path[512]; // "" = OpenBIOS; absolute otherwise
@@ -1072,6 +1087,12 @@ bool launcher_model_netplay_disc_ok(const LauncherModel* m);
 // Re-run bios_verify_cb against m->s.bios_path. Empty path means "bundled
 // BIOS" — OK unless the host verifier refuses "".
 void launcher_model_refresh_bios_status(LauncherModel* m);
+// The SYSTEM card / BIOS state applies to this image (has_bios and the host
+// did not say the selected image needs none).
+bool launcher_model_bios_applies(const LauncherModel* m);
+// A BIOS is required for the selected image and none usable is present:
+// PLAY is disabled and the dashboard shows the "required" notice.
+bool launcher_model_bios_missing(const LauncherModel* m);
 // Kick a host prepare_disc job on a background thread. No-op if no callback
 // or a job is already running. On success adopts the resulting disc path.
 // When rebuild_after_prepare is set, automatically chains into rebuild.
