@@ -406,6 +406,11 @@ typedef struct {
     bool     has_fmv_filter;
     bool     has_screen_kind;
     bool     has_scanlines;      // present-time scanline post-process (PSX)
+    // GameInfo.rom_patterns: the ROM picker's file types when they are not
+    // the profile's (the backend's active_rom_filter() picks); borrowed.
+    const char* const* rom_patterns;
+    int         num_rom_patterns;
+    const char* rom_filter_desc;
     bool     has_frame_interp;
     bool     has_spu_hq;
     bool     has_rewind_depth;

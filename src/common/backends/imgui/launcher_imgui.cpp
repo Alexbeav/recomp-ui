@@ -645,6 +645,21 @@ static std::string rom_picker_start_path(LauncherModel* m) {
     return std::string();
 }
 
+// The ROM picker's file types: the game's own (GameInfo.rom_patterns, e.g.
+// Famicom Disk System images under the NES profile), else the profile's.
+static RomFilterSpec active_rom_filter(const LauncherModel* m,
+                                       const SystemProfile* prof) {
+    RomFilterSpec f = {};
+    if (m && m->rom_patterns && m->num_rom_patterns > 0) {
+        f.patterns = m->rom_patterns;
+        f.pattern_count = m->num_rom_patterns;
+        f.desc = m->rom_filter_desc;
+    } else if (prof) {
+        f = prof->rom_filter;
+    }
+    return f;
+}
+
 static PickRequest rom_pick_request(LauncherModel* m, const char* title,
                                     const char* const* patterns,
                                     int pattern_count, const char* description,
@@ -2242,10 +2257,10 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
             snprintf(title, sizeof(title), "Select %s %d", noun, disc_no);
         else
             snprintf(title, sizeof(title), "Select %s%s", noun, m->import_sbi_cb ? " / SBI" : "");
-        if (prof && prof->rom_filter.patterns && prof->rom_filter.pattern_count > 0)
-            request_rom_picker(m, title, prof->rom_filter.patterns,
-                               prof->rom_filter.pattern_count,
-                               prof->rom_filter.desc, false);
+        const RomFilterSpec filter = active_rom_filter(m, prof);
+        if (filter.patterns && filter.pattern_count > 0)
+            request_rom_picker(m, title, filter.patterns, filter.pattern_count,
+                               filter.desc, false);
         else
             request_rom_picker(m, title, NULL, 0, NULL, false);
     }
@@ -2267,12 +2282,11 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
             const SystemProfile* prof = (const SystemProfile*)m->profile;
             char title[64];
             snprintf(title, sizeof(title), "Select %s", noun);
+            const RomFilterSpec filter = active_rom_filter(m, prof);
             PickRequest req =
-                (prof && prof->rom_filter.patterns &&
-                 prof->rom_filter.pattern_count > 0)
-                    ? rom_pick_request(m, title, prof->rom_filter.patterns,
-                                       prof->rom_filter.pattern_count,
-                                       prof->rom_filter.desc, false)
+                (filter.patterns && filter.pattern_count > 0)
+                    ? rom_pick_request(m, title, filter.patterns,
+                                       filter.pattern_count, filter.desc, false)
                     : rom_pick_request(m, title, NULL, 0, NULL, false);
             req.on_pick = [m](const char* path) {
                 if (path) launcher_model_set_rom(m, path);
@@ -12569,10 +12583,10 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                               "Select %s (.cue/.bin/.car/.chd)", noun);
             else
                 std::snprintf(title, sizeof(title), "Select %s", noun);
-            if (prof && prof->rom_filter.pattern_count > 0)
-                request_rom_picker(m, title, prof->rom_filter.patterns,
-                                   prof->rom_filter.pattern_count,
-                                   prof->rom_filter.desc, true);
+            const RomFilterSpec filter = active_rom_filter(m, prof);
+            if (filter.pattern_count > 0)
+                request_rom_picker(m, title, filter.patterns,
+                                   filter.pattern_count, filter.desc, true);
             else
                 request_rom_picker(m, title, NULL, 0, NULL, true);
         }

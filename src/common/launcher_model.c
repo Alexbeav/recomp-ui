@@ -400,6 +400,9 @@ void launcher_model_init(LauncherModel* m,
         m->has_fmv_filter       = game->has_fmv_filter != 0;
         m->has_screen_kind      = game->has_screen_kind != 0;
         m->has_scanlines        = game->has_scanlines != 0;
+        m->rom_patterns         = game->num_rom_patterns > 0 ? game->rom_patterns : NULL;
+        m->num_rom_patterns     = m->rom_patterns ? game->num_rom_patterns : 0;
+        m->rom_filter_desc      = game->rom_filter_desc;
         m->has_frame_interp     = game->has_frame_interp != 0;
         m->has_spu_hq           = game->has_spu_hq != 0;
         m->has_rewind_depth     = game->has_rewind_depth != 0;

@@ -2005,7 +2005,16 @@ typedef struct RecompLauncherCGameInfo {
      * for a console whose runtime implements it (PSX); everything else leaves
      * this 0 and the rows are absent. Appended for ABI stability. */
     int has_scanlines;
+    /* ---- media picker override (appended for ABI stability) -------------
+     * The file types the ROM picker offers, and its description, when this
+     * game's media are not its console profile's usual ones -- e.g. a
+     * Famicom Disk System title (".fds", ".qd") under the NES profile, whose
+     * own filter is ".nes". NULL/0 keeps the profile's filter. Borrowed. */
+    const char* const* rom_patterns;
+    int  num_rom_patterns;
+    const char* rom_filter_desc;
 } RecompLauncherCGameInfo;
+#define RECOMP_LAUNCHER_HAS_ROM_PATTERNS 1
 #define RECOMP_LAUNCHER_HAS_SNES_DISPLAY_ASPECT 1
 #define RECOMP_LAUNCHER_HAS_IN_SESSION 1
 

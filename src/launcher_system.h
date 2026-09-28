@@ -103,6 +103,10 @@ static inline const SystemProfile* launcher_system_infer(const RecompLauncherCGa
         if (lps_streq_ci(gi->platform, "NINTENDO ENTERTAINMENT SYSTEM"))
             return &kSystemProfileNes;
         if (lps_streq_ci(gi->platform, "NINTENDO"))          return &kSystemProfileNes;
+        // The Famicom and its Disk System run on the NES row: the same pad and
+        // host shape; the host names its media (GameInfo.rom_noun/rom_patterns).
+        if (lps_streq_ci(gi->platform, "FAMICOM"))           return &kSystemProfileNes;
+        if (lps_streq_ci(gi->platform, "FAMICOM DISK SYSTEM")) return &kSystemProfileNes;
         if (lps_streq_ci(gi->platform, "GAME BOY COLOR"))    return &kSystemProfileGbc;
         if (lps_streq_ci(gi->platform, "GAME BOY"))          return &kSystemProfileGb;
         if (lps_streq_ci(gi->platform, "NINTENDO DS"))       return &kSystemProfileNds;

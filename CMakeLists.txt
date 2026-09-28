@@ -460,6 +460,36 @@ if(BUILD_TESTING)
         COMMAND $<TARGET_FILE:recomp-ui-launcher-settings-test>
                 "${CMAKE_CURRENT_BINARY_DIR}/settings-fixtures")
 
+    # A host-owned binding store under the NES profile leaves the runner's
+    # keybinds.ini alone (launcher_binds.c nes_native_store).
+    add_executable(recomp-ui-nes-host-bindings-test
+        tests/nes_host_bindings_test.c
+        src/common/launcher_model.c
+        src/common/launcher_binds.c
+        src/common/keybinds.c
+        src/common/pad_binds.c
+        src/consoles/nes/nes_binds.c
+        src/consoles/psx/psx_binds.c
+        src/consoles/psx/psx_pad_binds.c
+        src/consoles/snes/snes_pad_binds.c
+        src/consoles/n64/n64_binds.c
+        src/consoles/n64/n64_pad_binds.c
+        src/consoles/genesis/genesis_binds.c
+        src/consoles/gb/gb_binds.c
+        src/consoles/psx/memcard_format.c
+        src/common/crc32.c
+        src/common/sha1.c
+        src/common/sha256.c
+        src/common/ips_patch.c)
+    target_include_directories(recomp-ui-nes-host-bindings-test PRIVATE
+        src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-nes-host-bindings-test PRIVATE ${RUI_SDL_TARGET})
+    target_compile_definitions(recomp-ui-nes-host-bindings-test PRIVATE ${RUI_SDL_DEFS})
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/nes-host-bindings")
+    add_test(NAME recomp-ui-nes-host-bindings
+        COMMAND $<TARGET_FILE:recomp-ui-nes-host-bindings-test>
+                "${CMAKE_CURRENT_BINARY_DIR}/nes-host-bindings")
+
     add_executable(recomp-runtime-ui-imgui-test
         tests/runtime_ui_imgui_test.cpp
         src/common/recomp_runtime_ui.c
