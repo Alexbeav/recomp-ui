@@ -453,3 +453,19 @@ recomp-ui does not own the in-game disconnect dialog. Hosts should treat
 mid-match peer loss like a local quit: soft-return to the lobby **without** a
 blocking `SDL_ShowSimpleMessageBox`. Reserve modals for connect-timeout /
 firewall guidance before the session starts.
+## Engine-defined connection types
+
+`RecompNetplayHostHooks.session_variants` optionally lists stable integer IDs
+and labels for the connection types supported by a game. The lobby host chooses
+one in **Lobby Settings → Connection type**; guests see that host-owned setting.
+`default_session_variant` defaults to zero. The shared backend carries the ID
+through online match caps and LAN file/Direct IP join, update and start messages.
+It refuses a launch whose ID is not in this build's list. With no list, only
+the legacy zero variant is accepted and no picker appears.
+
+`RecompLauncherCNetplayLaunch.session_variant` is the settled value. The engine
+must validate it and include it in its simulation/checkpoint compatibility
+identity. It is independent of input seats, local display size, and delay-sync
+versus rollback. The shared libraries never interpret the device's protocol.
+The feature requires recomp-net's `RNET_HAS_SESSION_VARIANT`; older recomp-net
+pins still compile and run engines that do not declare connection types.

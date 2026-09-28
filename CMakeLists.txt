@@ -388,6 +388,17 @@ if(BUILD_TESTING)
     add_test(NAME recomp-ui-launcher-nav-backspace
              COMMAND $<TARGET_FILE:recomp-ui-launcher-nav-backspace-test>)
 
+    # Hidden mod features: the default rule (listed while enabled) and the
+    # title opt-in hide_hidden_features (never presented, package omitted).
+    # Pure logic over a fake provider -- no SDL, no ImGui.
+    add_executable(recomp-ui-launcher-mod-visibility-test
+        tests/launcher_mod_visibility_test.c
+        src/common/launcher_mod_visibility.c)
+    target_include_directories(recomp-ui-launcher-mod-visibility-test PRIVATE
+        src src/common)
+    add_test(NAME recomp-ui-launcher-mod-visibility
+             COMMAND $<TARGET_FILE:recomp-ui-launcher-mod-visibility-test>)
+
     add_executable(recomp-ui-launcher-model-cache-test
         tests/launcher_model_cache_test.c
         src/common/launcher_model.c
@@ -396,6 +407,12 @@ if(BUILD_TESTING)
         src/common/sha256.c
         src/common/ips_patch.c
         src/consoles/psx/memcard_format.c)
+    add_executable(recomp-ui-netplay-view-test
+        tests/netplay_view_test.c src/common/launcher_model.c
+        src/common/crc32.c src/common/sha1.c src/common/sha256.c
+        src/common/ips_patch.c src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-netplay-view-test PRIVATE src src/common src/consoles/psx)
+    add_test(NAME recomp-ui-netplay-view COMMAND $<TARGET_FILE:recomp-ui-netplay-view-test>)
     target_include_directories(recomp-ui-launcher-model-cache-test PRIVATE
         src src/common src/consoles/psx)
     # Readers also probe beside their executable. Keep them out of the setup

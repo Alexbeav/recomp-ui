@@ -94,6 +94,11 @@ typedef struct RecompNetplayModHooks {
     void *ctx;
 } RecompNetplayModHooks;
 
+typedef struct RecompNetplaySessionVariant {
+    int value;
+    const char *label;
+} RecompNetplaySessionVariant;
+
 typedef struct RecompNetplayHostHooks {
     /* ---- identity -------------------------------------------------------- */
     const char *game_name;          /* the server's scoping key; required */
@@ -163,6 +168,12 @@ typedef struct RecompNetplayHostHooks {
     int rematch_set_ready;  /* 1: prepare_rematch re-arms ready */
 
     void *ctx;
+    /* Optional (append-only): host-selected hardware/rules choice. Stable wire
+     * IDs; zero is the legacy default. Array and strings must outlive this
+     * backend. The engine validates it in its simulation startup identity. */
+    const RecompNetplaySessionVariant *session_variants;
+    int session_variant_count;
+    int default_session_variant;
 } RecompNetplayHostHooks;
 
 /* Init once before the launcher first opens. `hooks` is copied (the strings

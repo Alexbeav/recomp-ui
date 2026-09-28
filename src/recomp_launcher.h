@@ -251,6 +251,7 @@ typedef struct RecompLauncherCNetplayChatMessage {
     uint32_t seq;
 } RecompLauncherCNetplayChatMessage;
 
+#define RECOMP_LAUNCHER_HAS_SESSION_VARIANT 1
 typedef struct RecompLauncherCNetplayLaunch {
     int      enabled;
     int      local_slot;
@@ -320,6 +321,8 @@ typedef struct RecompLauncherCNetplayLaunch {
      * gallery). Without it, session slot == lobby seat == port. */
     int      slot_port_valid;
     int      slot_port[RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS + 1];
+    /* Opaque engine-defined session hardware/rules selection, set by host. */
+    int      session_variant;
 } RecompLauncherCNetplayLaunch;
 
 typedef struct RecompLauncherCNetplayLocalAddress {
@@ -721,6 +724,13 @@ typedef struct RecompLauncherCNetplayCallbacks {
     int         (*automatch_accept)(void* ctx, int accept);
     /* One line for a human when state is FAILED, or after a refused queue. */
     const char* (*automatch_error)(void* ctx);
+    /* Optional (append-only): engine-defined connection types. IDs are stable
+     * wire values, not indices. Guests read the host choice; only the host
+     * may set it. Leave NULL for the existing single-variant behavior. */
+    int  (*session_variant_count)(void* ctx);
+    const char* (*session_variant_label)(void* ctx, int index, int* value);
+    int  (*session_variant_get)(void* ctx);
+    int  (*session_variant_set)(void* ctx, int value);
 } RecompLauncherCNetplayCallbacks;
 
 /* Present since the account callbacks were added. A host guards its wiring
@@ -856,7 +866,9 @@ typedef struct RecompLauncherCModFeature {
     int  camera_controls;
     /* Hidden features are omitted from normal picker lists while disabled.
      * Providers still expose them so an explicitly-enabled hidden feature can
-     * be shown and turned off again. */
+     * be shown and turned off again -- unless the provider sets
+     * hide_hidden_features, which never presents them at all (see
+     * launcher_mod_visibility.h). */
     int  hidden;
     /* RecompLauncherCModChannel. Stable is 0, so zero-init and older providers
      * both mean "stable" and need no special case. Developer-channel features
@@ -1010,6 +1022,12 @@ typedef struct RecompLauncherCModProvider {
     int (*catalog_diagnostic_count)(void* ctx);
     int (*catalog_diagnostic_get)(void* ctx, int index,
                                   RecompLauncherCModDiagnostic* out);
+    /* Title opt-in: non-zero never presents a hidden feature (not even
+     * while enabled), leaves it out of "Enable all" / "Disable all", and
+     * omits a package whose every feature is hidden. The feature still runs
+     * as its package and the saved state say. Zero keeps the default rule
+     * above. Appended for ABI stability. */
+    int hide_hidden_features;
 } RecompLauncherCModProvider;
 
 // Plain-C mirror of the launcher's internal settings (bools as int).
@@ -1338,6 +1356,9 @@ struct RecompLauncherCSettings {
      * effective range is 1..100. Stored as a percent (not 0..1) so the whole
      * settings struct stays plain-int. Appended additively. */
     int  scanline_strength_pct;
+    // Local display choice from GameInfo.netplay_view_labels. Persisted by
+    // the host, separate from single-player aspect and match capabilities.
+    int netplay_view_index;
 };
 
 /* Largest run-ahead depth the launcher will offer for
@@ -2010,6 +2031,11 @@ typedef struct RecompLauncherCGameInfo {
      * for a console whose runtime implements it (PSX); everything else leaves
      * this 0 and the rows are absent. Appended for ABI stability. */
     int has_scanlines;
+    // Optional local-only netplay display choices. The host must authorize
+    // only rendering that cannot change synchronized game state. Index zero
+    // is the native/default view; omit adaptive for games where it is unsafe.
+    const char* const* netplay_view_labels;
+    int num_netplay_view_labels;
     /* ---- media picker override (appended for ABI stability) -------------
      * The file types the ROM picker offers, and its description, when this
      * game's media are not its console profile's usual ones -- e.g. a
@@ -2022,7 +2048,7 @@ typedef struct RecompLauncherCGameInfo {
      * For a game whose image needs a system file this build cannot ship and
      * the player supplies (e.g. the Famicom Disk System's disksys.rom), with
      * has_bios set:
-     *   bios_name        what to call it ("FDS BIOS (disksys.rom)") on the
+     *   bios_name        what to call it ("FDS BIOS") on the
      *                    SYSTEM card, the picker's title, the dashboard's
      *                    "required" notice and PLAY's tooltip. NULL keeps the
      *                    PSX / GBA wording.
@@ -2052,6 +2078,7 @@ typedef struct RecompLauncherCGameInfo {
     void* bios_verify_ctx;
     int  host_persists_paths;
 } RecompLauncherCGameInfo;
+#define RECOMP_LAUNCHER_HAS_NETPLAY_VIEW 1
 #define RECOMP_LAUNCHER_HAS_ROM_PATTERNS 1
 #define RECOMP_LAUNCHER_HAS_SNES_DISPLAY_ASPECT 1
 #define RECOMP_LAUNCHER_HAS_IN_SESSION 1

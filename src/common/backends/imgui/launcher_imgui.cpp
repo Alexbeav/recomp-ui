@@ -21,6 +21,7 @@
 #include "launcher_panels.h"
 #include "launcher_system.h"
 #include "launcher_i18n.h"
+#include "launcher_mod_visibility.h"
 #include "recomp_moderation.h"   // local ignore/block list (online only)
 #include "consoles/n64/n64_binds.h"   // RUI_N64_FIELD_* for the pad-capture path
 
@@ -6381,6 +6382,16 @@ const RecompLauncherCNetplayCallbacks* np_cb(LauncherModel* m) {
     return (m && m->netplay_supported) ? m->netplay : nullptr;
 }
 
+static void draw_netplay_view(LauncherModel* m) {
+    if (!m->netplay_view_labels || m->num_netplay_view_labels <= 1) return;
+    ImGui::SetNextItemWidth(px(200));
+    ImGui::Combo("Your display##netplay_view", &m->s.netplay_view_index,
+                 m->netplay_view_labels, m->num_netplay_view_labels);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Only changes your view. Other players can use a different size.");
+    ImGui::Spacing();
+}
+
 bool np_connected(LauncherModel* m) {
     const auto* np = np_cb(m);
     return np && np->connected && np->connected(np->ctx);
@@ -8615,6 +8626,25 @@ static void draw_lobby_match_settings(LauncherModel* m, const LauncherTheme& th,
     }
     ImGui::BeginDisabled(!is_host);
     {
+        if (np->session_variant_count && np->session_variant_label && np->session_variant_get) {
+            const int count = np->session_variant_count(np->ctx);
+            const int current = np->session_variant_get(np->ctx);
+            const char* selected = "Unsupported connection type";
+            for (int i = 0; i < count; ++i) {
+                int id = 0;
+                const char* label = np->session_variant_label(np->ctx, i, &id);
+                if (id == current && label) selected = label;
+            }
+            if (count > 0 && ImGui::BeginCombo("Connection type", selected)) {
+                for (int i = 0; i < count; ++i) {
+                    int id = 0;
+                    const char* label = np->session_variant_label(np->ctx, i, &id);
+                    if (label && ImGui::Selectable(label, id == current) && np->session_variant_set)
+                        np->session_variant_set(np->ctx, id);
+                }
+                ImGui::EndCombo();
+            }
+        }
         /* Rollback is the match mode and is no longer a lobby toggle: it is
          * whatever the backend reports (default on). Delay-sync stays
          * reachable through the backend's env override for debugging. */
@@ -8837,6 +8867,11 @@ static void draw_lobby_mods_popup(LauncherModel* m, const LauncherTheme& th,
                 for (int i = 0; i < plan_n; ++i) {
                     RecompLauncherCNetplayLobbyMod lm{};
                     if (!np->lobby_mods_get || !np->lobby_mods_get(np->ctx, i, &lm))
+                        continue;
+                    /* A package this peer has that only carries hidden
+                     * features is not shown. One it is MISSING still is: it
+                     * is why the match cannot start. */
+                    if (lm.installed && !launcher_mod_package_listed(mods, lm.id))
                         continue;
                     const int row_prog = np->lobby_mods_progress_one
                         ? np->lobby_mods_progress_one(np->ctx, i) : -1;
@@ -9064,7 +9099,7 @@ static void draw_lobby_mods_popup(LauncherModel* m, const LauncherTheme& th,
             for (int i = 0; i < feature_count; ++i) {
                 RecompLauncherCModFeature f{};
                 if (!mods->feature_get(mods->ctx, i, &f)) continue;
-                if (f.hidden && !f.enabled) continue;
+                if (!launcher_mod_feature_listed(mods, &f)) continue;
                 ++shown;
                 ImGui::PushID(f.package_id);
                 ImGui::PushID(f.id);
@@ -9116,7 +9151,7 @@ static void draw_lobby_mods_popup(LauncherModel* m, const LauncherTheme& th,
             }
             if (shown == 0) {
                 ImGui::TextColored(col(th.text_muted),
-                                   feature_count
+                                   launcher_mod_listed_feature_count(mods)
                                        ? "No mods enabled — vanilla match."
                                        : "No mod features installed.");
             }
@@ -9152,7 +9187,9 @@ static void draw_lobby_mods_popup(LauncherModel* m, const LauncherTheme& th,
     char first_name[128] = {0};   /* RecompLauncherCModFeature::name */
     for (int i = 0; i < lfc; ++i) {
         RecompLauncherCModFeature f{};
-        if (!lmods->feature_get(lmods->ctx, i, &f) || !f.enabled) continue;
+        if (!lmods->feature_get(lmods->ctx, i, &f) || !f.enabled ||
+            !launcher_mod_feature_listed(lmods, &f))
+            continue;
         if (!enabled_n) std::snprintf(first_name, sizeof(first_name), "%s", f.name);
         ++enabled_n;
     }
@@ -9407,7 +9444,9 @@ static bool np_lobby_mods_summary(const LauncherModel* m, char* out, size_t cap)
     char first_name[128] = {0};   /* RecompLauncherCModFeature::name */
     for (int i = 0; i < lfc; ++i) {
         RecompLauncherCModFeature f{};
-        if (!lmods->feature_get(lmods->ctx, i, &f) || !f.enabled) continue;
+        if (!lmods->feature_get(lmods->ctx, i, &f) || !f.enabled ||
+            !launcher_mod_feature_listed(lmods, &f))
+            continue;
         if (!enabled_n) std::snprintf(first_name, sizeof(first_name), "%s", f.name);
         ++enabled_n;
     }
@@ -9605,6 +9644,7 @@ static void draw_lobby_settings_popup(LauncherModel* m, const LauncherTheme& th,
 void draw_lobby(LauncherModel* m, const LauncherTheme& th) {
     const auto* np = np_cb(m);
     if (!np) return;
+    draw_netplay_view(m);
     /* Keep membership live while the room is up (join/leave/move/kick). */
     if (np->pump) np->pump(np->ctx);
     np_ingest_last_error(m, np);
@@ -10027,6 +10067,7 @@ static bool np_mode_card(const LauncherTheme& th, const char* id, const char* ti
 }
 
 void draw_netplay_mode_page(LauncherModel* m, const LauncherTheme& th) {
+    draw_netplay_view(m);
     /* Pump here too, not only on the browser page. The backend does its own
      * lazy setup from the pump -- parsing the lobby host, loading a stored
      * device key, redeeming it -- and this page asks it questions ("is
@@ -10231,6 +10272,7 @@ void draw_netplay_signin_page(LauncherModel* m, const LauncherTheme& th) {
 void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
     const auto* np = np_cb(m);
     if (!np) return;
+    draw_netplay_view(m);
     static bool network_settings_loaded = false;
     if (!network_settings_loaded) {
         network_settings_loaded = true;
@@ -10702,10 +10744,15 @@ static void draw_mod_packages(LauncherModel* m, const LauncherTheme& th) {
     if (ImGui::BeginChild("##mod_list", ImVec2(list_w, 0), ImGuiChildFlags_Borders)) {
         const int count = mods->package_count(mods->ctx);
         int visible = 0;
+        int first_listed = -1;
+        bool selected_listed = false;
         for (int i = 0; i < count; ++i) {
             RecompLauncherCModPackage package{};
             if (!mods->package_get(mods->ctx, i, &package) ||
-                !mod_text_matches(m->mod_search, package)) continue;
+                !launcher_mod_package_listed(mods, package.id)) continue;
+            if (first_listed < 0) first_listed = i;
+            if (i == m->mod_package_selected) selected_listed = true;
+            if (!mod_text_matches(m->mod_search, package)) continue;
             visible++;
             ImGui::PushID(i);
             const bool selected = m->mod_package_selected == i;
@@ -10725,13 +10772,18 @@ static void draw_mod_packages(LauncherModel* m, const LauncherTheme& th) {
             ImGui::PopID();
         }
         if (!visible) ImGui::TextColored(col(th.text_muted), "No matching packages.");
+        /* Same rule as the feature list: the selection indexes every package,
+         * including one that only carries hidden features. */
+        if (!selected_listed && first_listed >= 0)
+            m->mod_package_selected = first_listed;
     }
     ImGui::EndChild();
     ImGui::SameLine();
 
     if (ImGui::BeginChild("##mod_detail", ImVec2(0, 0), ImGuiChildFlags_Borders)) {
         RecompLauncherCModPackage package{};
-        if (mods->package_get(mods->ctx, m->mod_package_selected, &package)) {
+        if (mods->package_get(mods->ctx, m->mod_package_selected, &package) &&
+            launcher_mod_package_listed(mods, package.id)) {
             ImGui::TextColored(col(th.accent2), "%s", package.name);
             ImGui::SameLine();
             ImGui::TextColored(col(th.text_muted), "%s", package.version);
@@ -11051,7 +11103,11 @@ static bool set_all_mod_features(LauncherModel* m, bool enabled) {
     changed.reserve(features.size());
     for (size_t index = 0; index < features.size(); ++index) {
         const RecompLauncherCModFeature& feature = features[index];
-        if ((feature.enabled != 0) == enabled) continue;
+        /* A concealed feature keeps whatever its package and saved state
+         * say; the player cannot see it, so a bulk action must not flip it. */
+        if (launcher_mod_feature_concealed(mods, &feature) ||
+            (feature.enabled != 0) == enabled)
+            continue;
         if (!mods->feature_enable(mods->ctx, feature.package_id, feature.id,
                                   enabled ? 1 : 0)) {
             char failure[sizeof(m->mod_status)] = {};
@@ -11191,18 +11247,31 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
 
     std::vector<ModFeatureListItem> visible_features;
     visible_features.reserve(feature_count > 0 ? (size_t)feature_count : 0);
+    int listed_count = 0;
+    int first_listed = -1;
+    bool selected_listed = false;
     for (int index = 0; index < feature_count; ++index) {
         ModFeatureListItem item{};
         item.index = index;
         if (!mods->feature_get(mods->ctx, index, &item.feature) ||
-            (item.feature.hidden && !item.feature.enabled) ||
-            !mod_feature_text_matches(m->mod_search, item.feature)) {
+            !launcher_mod_feature_listed(mods, &item.feature)) {
             continue;
         }
+        ++listed_count;
+        if (first_listed < 0) first_listed = index;
+        if (index == m->mod_selected) selected_listed = true;
+        if (!mod_feature_text_matches(m->mod_search, item.feature)) continue;
         visible_features.push_back(item);
     }
     std::stable_sort(visible_features.begin(), visible_features.end(),
                      mod_feature_less);
+    /* The selection starts at index 0 and is an index into the whole catalog,
+     * hidden features included, so it can land on one the player must never
+     * see. Move it to the first row the list actually shows. */
+    if (!selected_listed && listed_count > 0) {
+        m->mod_selected = visible_features.empty()
+            ? first_listed : visible_features.front().index;
+    }
 
     const float list_w = px(330);
     if (ImGui::BeginChild("##mod_feature_list", ImVec2(list_w, 0),
@@ -11283,8 +11352,8 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
         if (visible_features.empty()) {
             ImGui::TextColored(col(th.text_muted),
                                "%s",
-                               feature_count ? ui_text("No matching features.")
-                                             : ui_text("No mod features installed."));
+                               listed_count ? ui_text("No matching features.")
+                                            : ui_text("No mod features installed."));
         }
     }
     ImGui::EndChild();
@@ -11293,8 +11362,9 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
     if (ImGui::BeginChild("##mod_feature_detail", ImVec2(0, 0),
                           ImGuiChildFlags_Borders)) {
         RecompLauncherCModFeature feature{};
-        if (feature_count > 0 &&
-            mods->feature_get(mods->ctx, m->mod_selected, &feature)) {
+        if (listed_count > 0 &&
+            mods->feature_get(mods->ctx, m->mod_selected, &feature) &&
+            launcher_mod_feature_listed(mods, &feature)) {
             ImGui::TextColored(col(th.accent2), "%s", feature.name);
             if (const char* channel_tag = mod_channel_tag(feature.channel)) {
                 ImGui::SameLine();
