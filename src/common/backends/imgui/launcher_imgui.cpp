@@ -2315,8 +2315,9 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
     }
 
     // A required system file the host could not find (GameInfo.bios_name):
-    // say so where the player is looking, with the picker one click away.
-    // PLAY stays disabled until a pick verifies (launcher_model_can_launch).
+    // say so where the player is looking and point at Settings, which owns the
+    // picker (the SYSTEM card). PLAY stays disabled until a pick verifies
+    // (launcher_model_can_launch).
     if (m->bios_name && launcher_model_bios_missing(m)) {
         ImGui::Dummy(ImVec2(0, px(10)));
         char head[192];
@@ -2325,9 +2326,8 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         ImGui::TextColored(col(th.warn), "%s", head);
         if (m->setup_bios_detail[0])
             ImGui::TextColored(col(th.text_muted), "%s", m->setup_bios_detail);
+        ImGui::TextColored(col(th.text_muted), "%s", ui_text("Select it in Settings > System."));
         ImGui::PopTextWrapPos();
-        if (ImGui::Button(ui_text("Select BIOS..."), ImVec2(availw, px(34))))
-            request_bios_picker(m, named_bios_picker_title(m), false);
     }
 
     if (m->setup_error[0]) {
