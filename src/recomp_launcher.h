@@ -1417,6 +1417,11 @@ typedef struct RecompLauncherCBiosVerify {
      * Generate & rebuild (or switch back to a linked BIOS like OpenBIOS).
      * Appended for ABI compatibility; older hosts leave it 0 via memset. */
     int  needs_regen;
+    /* 1 = the selected image needs no BIOS at all (a cartridge in a build that
+     * also runs disk images): the SYSTEM card and the dashboard's "required"
+     * notice hide and PLAY is not gated. Only bios_verify_for_rom, which sees
+     * the image, can know this. Appended; older hosts leave it 0. */
+    int  not_needed;
 } RecompLauncherCBiosVerify;
 
 /* Optional progress callback for prepare_with_progress (worker thread).
@@ -2031,8 +2036,50 @@ typedef struct RecompLauncherCGameInfo {
     // is the native/default view; omit adaptive for games where it is unsafe.
     const char* const* netplay_view_labels;
     int num_netplay_view_labels;
+    /* ---- media picker override (appended for ABI stability) -------------
+     * The file types the ROM picker offers, and its description, when this
+     * game's media are not its console profile's usual ones -- e.g. a
+     * Famicom Disk System title (".fds", ".qd") under the NES profile, whose
+     * own filter is ".nes". NULL/0 keeps the profile's filter. Borrowed. */
+    const char* const* rom_patterns;
+    int  num_rom_patterns;
+    const char* rom_filter_desc;
+    /* ---- a required system file (appended for ABI stability) -------------
+     * For a game whose image needs a system file this build cannot ship and
+     * the player supplies (e.g. the Famicom Disk System's disksys.rom), with
+     * has_bios set:
+     *   bios_name        what to call it ("FDS BIOS") on the
+     *                    SYSTEM card, the picker's title, the dashboard's
+     *                    "required" notice and PLAY's tooltip. NULL keeps the
+     *                    PSX / GBA wording.
+     *   bios_patterns / num_bios_patterns / bios_filter_desc
+     *                    the picker's file types (NULL/0: *.bin, *.rom).
+     *   bios_verify_for_rom (+ bios_verify_ctx)
+     *                    used instead of bios_verify, and also given the image
+     *                    the launcher has selected ("" for none); re-run when
+     *                    it changes. For a host whose lookup depends on the
+     *                    image (a BIOS beside it) or whose images do not all
+     *                    need one (out->not_needed). The empty bios_path asks
+     *                    for the host's own lookup, as with bios_verify; an
+     *                    ok=0 there is the "required" state, and PLAY stays
+     *                    disabled until a pick verifies.
+     *   host_persists_paths
+     *                    1: the host keeps the picks in its own settings file
+     *                    (Settings.bios_path read back on return, and/or
+     *                    persist_setup), so the launcher writes no rom.cfg /
+     *                    disc.cfg / bios.cfg sidecars when the BIOS changes.
+     * Zero / NULL keeps every existing launcher as it is. Borrowed. */
+    const char* bios_name;
+    const char* const* bios_patterns;
+    int  num_bios_patterns;
+    const char* bios_filter_desc;
+    int (*bios_verify_for_rom)(void* ctx, const char* bios_path, const char* rom_path,
+                               RecompLauncherCBiosVerify* out);
+    void* bios_verify_ctx;
+    int  host_persists_paths;
 } RecompLauncherCGameInfo;
 #define RECOMP_LAUNCHER_HAS_NETPLAY_VIEW 1
+#define RECOMP_LAUNCHER_HAS_ROM_PATTERNS 1
 #define RECOMP_LAUNCHER_HAS_SNES_DISPLAY_ASPECT 1
 #define RECOMP_LAUNCHER_HAS_IN_SESSION 1
 

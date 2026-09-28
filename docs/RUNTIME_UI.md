@@ -66,6 +66,14 @@ the panel is), so a player can see a picture setting's effect through it.
 "press again" prompt from an action that wants confirming (return 0 from its
 `run_action` so "Done" does not replace it).
 
+`recomp_runtime_ui_set_toast(ui, title, body)` shows a small notice near the
+top of the display with or without the menu -- the answer to a host shortcut,
+such as what a drive holds after its button was pressed. The model keeps no
+clock: the host sets, refreshes and clears it (`NULL, NULL`) and decides what
+a press means while one is up. Both presentations draw it; like the menu it
+is presentation only, so a host captures the game's own picture before
+drawing either.
+
 Selection is the model's alone: the ImGui window takes no keyboard/gamepad
 navigation of its own (`ImGuiWindowFlags_NoNavInputs`, except while a text row
 is edited), or Enter / A would also activate the row under ImGui's own cursor.

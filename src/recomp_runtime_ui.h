@@ -21,6 +21,7 @@ extern "C" {
 #define RECOMP_RUNTIME_UI_HAS_PRESENTATION_FLAGS 1
 #define RECOMP_RUNTIME_UI_HAS_BACKDROP 1
 #define RECOMP_RUNTIME_UI_HAS_STATUS 1
+#define RECOMP_RUNTIME_UI_HAS_TOAST 1
 
 typedef struct RecompRuntimeUi RecompRuntimeUi;
 
@@ -230,6 +231,23 @@ void recomp_runtime_ui_set_backdrop(RecompRuntimeUi *ui, float dim, float opacit
  * wants a second press (return 0 from it, or "Done" replaces the text).
  */
 void recomp_runtime_ui_set_status(RecompRuntimeUi *ui, const char *text);
+
+/*
+ * A toast: a small notice over the game that shows whether or not the menu is
+ * open -- the answer to a host shortcut, e.g. what a drive holds after the
+ * player pressed its button. `title` is one line; `body` may hold several,
+ * separated by '\n' (either may be NULL). Both are copied. The host owns the
+ * toast's life: it sets it, updates it, and clears it with
+ * recomp_runtime_ui_set_toast(ui, NULL, NULL); the model keeps no clock of its
+ * own, so the host decides how long a notice stays and what a press means
+ * while one is up. Both presentations draw it (render_imgui near the top of
+ * the display, render_argb8888 in the frame's top rows).
+ *
+ * Like the menu, a toast is presentation only: draw it after the game's
+ * picture is captured for anything that must be the game alone.
+ */
+void recomp_runtime_ui_set_toast(RecompRuntimeUi *ui, const char *title, const char *body);
+int  recomp_runtime_ui_toast_visible(const RecompRuntimeUi *ui);
 
 /*
  * Composites the menu over a little-endian SDL_PIXELFORMAT_ARGB8888/BGRA frame.

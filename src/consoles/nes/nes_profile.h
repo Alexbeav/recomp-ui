@@ -41,7 +41,10 @@ static const ButtonDef kNesPadButtons[] = {
 // hotkeys are hardcoded F5 turbo / F6 save / F7 load / F11 fullscreen in
 // main_runner.c), so a hotkey editor would write lines nothing reads. This
 // also matches the old NES launcher, which offered no hotkey UI.
-static const char* const kPanelsSettingsNes[] = { "video", "audio", NULL };
+// "system": the BIOS card, shown only for a game that needs one (has_bios and
+// the host's verdict for the selected image, e.g. a Famicom Disk System image
+// and its disksys.rom); a cartridge never sees it.
+static const char* const kPanelsSettingsNes[] = { "video", "audio", "system", NULL };
 
 // ---- renderer vocabulary --------------------------------------------------------
 // The runner's [Display] Renderer key: 0 = SDL accelerated, 1 = SDL software.
