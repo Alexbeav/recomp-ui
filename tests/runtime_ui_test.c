@@ -119,6 +119,50 @@ int main(void) {
         standard_ui, RECOMP_RUNTIME_UI_INPUT_RIGHT, 1, 0));
     assert(state.level == RECOMP_RUNTIME_UI_VIEW_ADAPTIVE);
     recomp_runtime_ui_destroy(standard_ui);
+
+    /* Toasts: drawn with the menu closed, only in the frame's top rows, and
+     * nothing at all once cleared. The model keeps no clock of its own. */
+    {
+        RecompRuntimeUi *t = recomp_runtime_ui_create(&config);
+        static uint32_t pic[256 * 240], ref[256 * 240];
+        for (int i = 0; i < 256 * 240; ++i) pic[i] = ref[i] = 0xff102030u + (uint32_t)(i % 7);
+        assert(!recomp_runtime_ui_toast_visible(t));
+        recomp_runtime_ui_render_argb8888(t, pic, 256, 240, 256 * 4);
+        assert(!memcmp(pic, ref, sizeof(pic)));             /* closed, no toast: untouched */
+        recomp_runtime_ui_set_toast(t, "DISK 1 SIDE A", "MOTOR OFF\nD AGAIN: DISK 1 SIDE B");
+        assert(recomp_runtime_ui_toast_visible(t) && !recomp_runtime_ui_is_open(t));
+        recomp_runtime_ui_render_argb8888(t, pic, 256, 240, 256 * 4);
+        int changed = 0, lowest = 0;
+        for (int y = 0; y < 240; ++y)
+            for (int x = 0; x < 256; ++x)
+                if (pic[y * 256 + x] != ref[y * 256 + x]) { ++changed; lowest = y; }
+        assert(changed > 0 && lowest < 48);                  /* three lines, near the top */
+        /* the widest line decides the panel: a wider body widens it */
+        memcpy(pic, ref, sizeof(pic));
+        recomp_runtime_ui_set_toast(t, "A", "B");
+        recomp_runtime_ui_render_argb8888(t, pic, 256, 240, 256 * 4);
+        int narrow = 0;
+        for (int x = 0; x < 256; ++x) narrow += pic[10 * 256 + x] != ref[10 * 256 + x];
+        assert(narrow > 0 && narrow < changed);
+        /* NULLs clear it; an overlong text is clipped, never overrun */
+        recomp_runtime_ui_set_toast(t, NULL, NULL);
+        assert(!recomp_runtime_ui_toast_visible(t));
+        memcpy(pic, ref, sizeof(pic));
+        recomp_runtime_ui_render_argb8888(t, pic, 256, 240, 256 * 4);
+        assert(!memcmp(pic, ref, sizeof(pic)));
+        char big[2000];
+        memset(big, 'W', sizeof(big) - 1);
+        big[sizeof(big) - 1] = 0;
+        recomp_runtime_ui_set_toast(t, big, big);
+        recomp_runtime_ui_render_argb8888(t, pic, 256, 240, 256 * 4);
+        /* over an open menu it still draws */
+        recomp_runtime_ui_set_toast(t, "DISK 1 SIDE B", NULL);
+        recomp_runtime_ui_open(t);
+        memcpy(pic, ref, sizeof(pic));
+        recomp_runtime_ui_render_argb8888(t, pic, 256, 240, 256 * 4);
+        assert(memcmp(pic, ref, sizeof(pic)));
+        recomp_runtime_ui_destroy(t);
+    }
     puts("runtime UI tests passed");
     return 0;
 }

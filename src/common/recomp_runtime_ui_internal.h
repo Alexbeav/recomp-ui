@@ -32,6 +32,9 @@ struct RecompRuntimeUi {
      * and a scale for the panel's background. */
     float dim;
     float opacity;
+    /* recomp_runtime_ui_set_toast: shown while toast_title or toast_body is set. */
+    char toast_title[96];
+    char toast_body[320];
 };
 
 int recomp_runtime_ui_item_enabled(const RecompRuntimeUi *ui,

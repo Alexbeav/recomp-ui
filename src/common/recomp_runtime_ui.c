@@ -217,6 +217,16 @@ void recomp_runtime_ui_set_status(RecompRuntimeUi *ui, const char *text) {
     ui->status_frames = ui->status[0] ? 180 : 0;
 }
 
+void recomp_runtime_ui_set_toast(RecompRuntimeUi *ui, const char *title, const char *body) {
+    if (!ui) return;
+    snprintf(ui->toast_title, sizeof(ui->toast_title), "%s", title ? title : "");
+    snprintf(ui->toast_body, sizeof(ui->toast_body), "%s", body ? body : "");
+}
+
+int recomp_runtime_ui_toast_visible(const RecompRuntimeUi *ui) {
+    return ui && (ui->toast_title[0] || ui->toast_body[0]);
+}
+
 void recomp_runtime_ui_enter_section(RecompRuntimeUi *ui, size_t section) {
     if (!ui || section >= ui->section_count) return;
     ui->section_index = section;
@@ -445,10 +455,54 @@ static void item_value(RecompRuntimeUi *ui, const RecompRuntimeUiItem *item,
     }
 }
 
+/* The toast in the frame's top rows: a panel sized to its longest line. */
+static void render_toast_argb(RecompRuntimeUi *ui, void *pixels, int width,
+                              int height, int pitch, int scale) {
+    LauncherTheme theme = launcher_theme_by_name(ui->config.theme);
+    #define RGB8(c) (((uint32_t)((c).r * 255.0f) << 16) | \
+                     ((uint32_t)((c).g * 255.0f) << 8) | \
+                     (uint32_t)((c).b * 255.0f))
+    const char *lines[8];
+    int line_count = 0;
+    char body[sizeof(ui->toast_body)];
+    snprintf(body, sizeof(body), "%s", ui->toast_body);
+    if (ui->toast_title[0]) lines[line_count++] = ui->toast_title;
+    for (char *p = body; *p && line_count < 8;) {
+        lines[line_count++] = p;
+        char *nl = strchr(p, '\n');
+        if (!nl) break;
+        *nl = 0;
+        p = nl + 1;
+    }
+    int widest = 0;
+    for (int i = 0; i < line_count; ++i) {
+        int w = text_width(lines[i], scale);
+        if (w > widest) widest = w;
+    }
+    const int pad = 4 * scale, row = 9 * scale;
+    int panel_w = widest + pad * 2;
+    if (panel_w > width - 2 * scale) panel_w = width - 2 * scale;
+    const int panel_h = line_count * row + pad * 2 - 2 * scale;
+    const int x = (width - panel_w) / 2, y = 4 * scale;
+    rect(pixels,width,height,pitch,x,y,panel_w,panel_h,RGB8(theme.panel),
+         (unsigned)(230.0f * ui->opacity));
+    outline(pixels,width,height,pitch,x,y,panel_w,panel_h,scale > 1 ? scale / 2 : 1,
+            RGB8(theme.accent2));
+    for (int i = 0; i < line_count; ++i)
+        draw_text(pixels,width,height,pitch,x+pad,y+pad+i*row,scale,
+                  i == 0 && ui->toast_title[0] ? RGB8(theme.accent2) : RGB8(theme.text),
+                  lines[i],x+panel_w-pad);
+    #undef RGB8
+}
+
 void recomp_runtime_ui_render_argb8888(RecompRuntimeUi *ui, void *pixels,
                                        int width, int height, int pitch) {
-    if (!ui || !ui->open || !pixels || width <= 0 || height <= 0 ||
-        pitch < width * 4) return;
+    if (!ui || !pixels || width <= 0 || height <= 0 || pitch < width * 4) return;
+    if (recomp_runtime_ui_toast_visible(ui) && !ui->open) {
+        int toast_scale = height / 224;
+        render_toast_argb(ui, pixels, width, height, pitch, toast_scale < 1 ? 1 : toast_scale);
+    }
+    if (!ui->open) return;
     LauncherTheme theme = launcher_theme_by_name(ui->config.theme);
     int scale = height / 224;
     if (scale < 1) scale = 1;
@@ -557,4 +611,6 @@ void recomp_runtime_ui_render_argb8888(RecompRuntimeUi *ui, void *pixels,
         --ui->status_frames;
     }
     #undef RGB8
+    if (recomp_runtime_ui_toast_visible(ui))
+        render_toast_argb(ui, pixels, width, height, pitch, scale);
 }

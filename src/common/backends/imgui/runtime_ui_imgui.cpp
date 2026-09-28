@@ -239,10 +239,52 @@ void pop_runtime_style() {
     ImGui::PopStyleVar(7);
 }
 
+// The toast: a borderless panel centred near the top of the display, drawn
+// with or without the menu. It takes no input and no focus.
+void draw_toast(RecompRuntimeUi *ui, const LauncherTheme &theme) {
+    ImGuiIO &io = ImGui::GetIO();
+    const ImVec2 display = io.DisplaySize;
+    if (display.x <= 0.0f || display.y <= 0.0f) return;
+    ImGui::SetNextWindowPos(ImVec2(display.x * 0.5f, theme.spacing_lg),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.92f * ui->opacity);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, theme.radius_lg);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                        ImVec2(theme.spacing_lg, theme.spacing_md));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, col(theme.panel));
+    ImGui::PushStyleColor(ImGuiCol_Border, col(theme.accent2, 0.85f));
+    ImGui::PushStyleColor(ImGuiCol_Text, col(theme.text));
+    const ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs |
+        ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+        ImGuiWindowFlags_AlwaysAutoResize;
+    if (ImGui::Begin("##recomp-runtime-ui-toast", nullptr, flags)) {
+        if (ui->toast_title[0]) {
+            ImGui::PushStyleColor(ImGuiCol_Text, col(theme.accent2));
+            ImGui::TextUnformatted(ui->toast_title);
+            ImGui::PopStyleColor();
+        }
+        if (ui->toast_body[0]) {
+            if (ui->toast_title[0]) ImGui::Separator();
+            ImGui::TextUnformatted(ui->toast_body);
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleColor(3);
+    ImGui::PopStyleVar(3);
+}
+
 } // namespace
 
 extern "C" void recomp_runtime_ui_render_imgui(RecompRuntimeUi *ui) {
-    if (!ui || !ui->open || ImGui::GetCurrentContext() == nullptr) return;
+    if (!ui || ImGui::GetCurrentContext() == nullptr) return;
+    if (!ui->open) {
+        if (recomp_runtime_ui_toast_visible(ui))
+            draw_toast(ui, launcher_theme_by_name(ui->config.theme));
+        return;
+    }
 
     LauncherTheme theme = launcher_theme_by_name(ui->config.theme);
     ImGuiIO &io = ImGui::GetIO();
@@ -388,4 +430,6 @@ extern "C" void recomp_runtime_ui_render_imgui(RecompRuntimeUi *ui) {
     }
     ImGui::End();
     pop_runtime_style();
+    // Over the menu too: a shortcut can still answer while it is open.
+    if (recomp_runtime_ui_toast_visible(ui)) draw_toast(ui, theme);
 }
