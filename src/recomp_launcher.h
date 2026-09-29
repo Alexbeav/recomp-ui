@@ -1054,7 +1054,7 @@ struct RecompLauncherCSettings {
     // has_* flags below — consoles that don't set the flags leave these unused) ----
     int  window_width;        // px window width (height follows aspect)
     int  renderer;            // 0 = software, 1 = OpenGL
-    int  supersampling;       // 1..4
+    int  supersampling;       // 1..4 (legacy cycle; see internal_resolution)
     int  antialiasing;        // MSAA sample count: 0 = off, else 2/4/8 (x). (A
                               // legacy on/off host may still write 0/1.)
     int  texture_filter;      // 0 = nearest, 1 = bilinear
@@ -1359,6 +1359,15 @@ struct RecompLauncherCSettings {
     // Local display choice from GameInfo.netplay_view_labels. Persisted by
     // the host, separate from single-player aspect and match capabilities.
     int netplay_view_index;
+    /* Internal resolution chosen from the host's vocabulary
+     * (GameInfo.internal_resolution_labels/_values). The encoding is the
+     * host's, but the convention is: 0 = unset (a host that predates this
+     * field, or none chosen: the legacy `supersampling` stands), 1 = native,
+     * -1 = match the display, N >= 2 = target output lines (720, 1080,
+     * 1440, 2160, 2880, 4320, or a host-synthesized legacy entry).
+     * Only meaningful when the host supplied a vocabulary. Appended
+     * additively; a zero-initialized host reads as unset. */
+    int  internal_resolution;
 };
 
 /* Largest run-ahead depth the launcher will offer for
@@ -2077,9 +2086,24 @@ typedef struct RecompLauncherCGameInfo {
                                RecompLauncherCBiosVerify* out);
     void* bios_verify_ctx;
     int  host_persists_paths;
+    /* Host vocabulary for the Internal resolution row (Settings
+     * .internal_resolution). When num_internal_resolutions > 0 and both arrays
+     * are set, the has_supersampling row draws as an "Internal resolution"
+     * dropdown of these labels, storing the parallel value; the host's note,
+     * if any, is drawn under it verbatim (e.g. a GPU clamp). Otherwise the
+     * legacy Supersampling cycle is drawn, unchanged. All borrowed; the host
+     * keeps them alive for the launcher's lifetime. Appended for ABI
+     * stability. */
+    const char* const* internal_resolution_labels;
+    const int*         internal_resolution_values;
+    int                num_internal_resolutions;
+    const char*        internal_resolution_note;
 } RecompLauncherCGameInfo;
 #define RECOMP_LAUNCHER_HAS_NETPLAY_VIEW 1
 #define RECOMP_LAUNCHER_HAS_ROM_PATTERNS 1
+/* Hosts #ifdef on this to stay source-compatible with older recomp-ui that
+ * lacks Settings.internal_resolution and the GameInfo vocabulary. */
+#define RECOMP_LAUNCHER_HAS_INTERNAL_RESOLUTION 1
 #define RECOMP_LAUNCHER_HAS_SNES_DISPLAY_ASPECT 1
 #define RECOMP_LAUNCHER_HAS_IN_SESSION 1
 

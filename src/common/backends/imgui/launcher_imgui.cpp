@@ -3947,7 +3947,43 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
             ImGui::TextColored(col(th.text_muted), "%s", ui_text(note));
     }
 
-    if (m->has_supersampling) {
+    if (launcher_model_internal_resolution_offered(m)) {
+        /* The host's own resolution vocabulary (PSX: Native / 720p / 1080p /
+         * 1440p / 4K / 5K / 8K / Match display, plus any legacy Nx entry it
+         * synthesized). A list for the same reason Renderer is one: eight
+         * entries are not something to click through. */
+        row_label_right("Internal resolution", th, px(SETTINGS_CTRL_W));
+        ImGui::SetNextItemWidth(px(SETTINGS_CTRL_W));
+        if (ImGui::BeginCombo("##internal_resolution",
+                              ui_text(launcher_model_internal_resolution_label(m)))) {
+            const int n = launcher_model_internal_resolution_count(m);
+            const int cur = launcher_model_internal_resolution_index(m);
+            for (int i = 0; i < n; ++i) {
+                const char* lbl = launcher_model_internal_resolution_label_at(m, i);
+                if (!lbl || !lbl[0]) continue;
+                if (ImGui::Selectable(ui_text(lbl), cur == i))
+                    launcher_model_set_internal_resolution(m, i);
+            }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+            ImGui::SetTooltip("%s", ui_text(
+                "Renders the game at this height, not an upscale.\n"
+                "Cost grows with the square of the scale.\n"
+                "Match display uses your monitor's full resolution.\n"
+                "Applies when the game starts.\n"
+                "Netplay: your view only; other players are unaffected."));
+        }
+        /* The host's words (for example the GPU clamp that applies here),
+         * wrapped to the card: a sentence about limits does not fit the
+         * control column the way a renderer caveat does. */
+        const char* note = launcher_model_internal_resolution_note(m);
+        if (note && *note) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(col(th.text_muted), "%s", ui_text(note));
+            ImGui::PopTextWrapPos();
+        }
+    } else if (m->has_supersampling) {
         row_label_right("Supersampling", th, px(SETTINGS_CTRL_W));
         ImGui::PushID("supersampling");
         if (ImGui::Button(ui_text(launcher_model_supersampling_label(m)), ImVec2(px(SETTINGS_CTRL_W), px(30))))

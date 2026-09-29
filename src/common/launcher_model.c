@@ -532,6 +532,10 @@ void launcher_model_init(LauncherModel* m,
         m->renderer_labels      = game->renderer_labels;
         m->num_renderers        = game->num_renderers;
         m->renderer_ids         = game->renderer_ids;
+        m->internal_resolution_labels = game->internal_resolution_labels;
+        m->internal_resolution_values = game->internal_resolution_values;
+        m->num_internal_resolutions   = game->num_internal_resolutions;
+        m->internal_resolution_note   = game->internal_resolution_note;
         m->renderer_note        = game->renderer_note;
         m->hide_rebind          = game->hide_rebind != 0;
         m->has_mouse_controls   = game->has_mouse_controls != 0;
@@ -796,6 +800,7 @@ void launcher_model_init(LauncherModel* m,
         if (!ok) m->s.window_width = kWindowWidths[0];
     }
     if (m->has_supersampling) m->s.supersampling = clampi(m->s.supersampling ? m->s.supersampling : 1, 1, 4);
+    launcher_model_apply_internal_resolution_settings(m);
     if (m->has_screen_kind) {
         // Clamp against the active profile's screen-model vocabulary (GBA has
         // 5 LCD models; the legacy PSX-era set has 4) — see screen_kind_vocab.
@@ -1895,6 +1900,52 @@ void launcher_model_cycle_supersampling(LauncherModel* m) {
     m->s.supersampling = (v % 4) + 1;
 }
 
+bool launcher_model_internal_resolution_offered(const LauncherModel* m) {
+    return m && m->has_supersampling && m->internal_resolution_labels &&
+           m->internal_resolution_values && m->num_internal_resolutions > 0;
+}
+
+int launcher_model_internal_resolution_count(const LauncherModel* m) {
+    return launcher_model_internal_resolution_offered(m) ? m->num_internal_resolutions : 0;
+}
+
+const char* launcher_model_internal_resolution_label_at(const LauncherModel* m, int i) {
+    if (!launcher_model_internal_resolution_offered(m) || i < 0 ||
+        i >= m->num_internal_resolutions)
+        return "";
+    const char* lab = m->internal_resolution_labels[i];
+    return lab ? lab : "";
+}
+
+int launcher_model_internal_resolution_index(const LauncherModel* m) {
+    if (!launcher_model_internal_resolution_offered(m)) return -1;
+    for (int i = 0; i < m->num_internal_resolutions; ++i)
+        if (m->internal_resolution_values[i] == m->s.internal_resolution) return i;
+    return -1;
+}
+
+const char* launcher_model_internal_resolution_label(const LauncherModel* m) {
+    int i = launcher_model_internal_resolution_index(m);
+    return i >= 0 ? launcher_model_internal_resolution_label_at(m, i) : "";
+}
+
+void launcher_model_set_internal_resolution(LauncherModel* m, int i) {
+    if (!launcher_model_internal_resolution_offered(m)) return;
+    if (i < 0 || i >= m->num_internal_resolutions) return;
+    m->s.internal_resolution = m->internal_resolution_values[i];
+}
+
+const char* launcher_model_internal_resolution_note(const LauncherModel* m) {
+    if (!launcher_model_internal_resolution_offered(m)) return NULL;
+    return m->internal_resolution_note;
+}
+
+void launcher_model_apply_internal_resolution_settings(LauncherModel* m) {
+    if (!launcher_model_internal_resolution_offered(m)) return;
+    if (launcher_model_internal_resolution_index(m) < 0)
+        m->s.internal_resolution = m->internal_resolution_values[0];
+}
+
 const char* launcher_model_supersampling_label(const LauncherModel* m) {
     /* Settings SSAA: offline full SW/GL path; netplay dual-raster uses this
      * for OpenGL present quality while SW authority stays 1×. */
@@ -1980,6 +2031,10 @@ void launcher_model_toggle_perspective_texturing(LauncherModel* m) {
  * corrected position rounds back to the pixel it came from. Say so in the UI
  * rather than letting the row look broken when someone ticks it at native res. */
 bool launcher_model_geometry_correction_inert(const LauncherModel* m) {
+    /* With an internal-resolution vocabulary the native entry is value 1
+     * (the documented convention); the legacy cycle keeps its 1x test. */
+    if (launcher_model_internal_resolution_offered(m))
+        return m->s.geometry_correction && m->s.internal_resolution == 1;
     return m->s.geometry_correction && m->s.supersampling < 2;
 }
 
