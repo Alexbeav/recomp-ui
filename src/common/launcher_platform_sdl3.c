@@ -176,8 +176,11 @@ bool launcher_platform_open(LauncherPlatform* p, const char* title,
     // backbuffer on fractional-scale displays (esp. Wayland) instead of a
     // logical-size buffer the compositor blurs up. RESIZABLE lets us exercise
     // the live-resize requirement.
-    const SDL_WindowFlags flags =
+    SDL_WindowFlags flags =
         SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+    /* Automated launcher checks (LNG_SCRIPT + LNG_TEST_HIDDEN, as on SDL2)
+     * must not steal the user's desktop/focus. */
+    if (getenv("LNG_SCRIPT") && getenv("LNG_TEST_HIDDEN")) flags |= SDL_WINDOW_HIDDEN;
 
     int win_w = logical_w;
     int win_h = logical_h;
