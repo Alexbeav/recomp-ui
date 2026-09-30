@@ -7480,7 +7480,15 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
                     std::snprintf(label, sizeof(label), "%d", n);
                     const bool selected = n == max_players;
                     if (ImGui::Selectable(label, selected))
+                    {
                         m->netplay_host_max_players = n;
+                        if (np_cb_host && np_cb_host->create_default_rollback) {
+                            const int preferred = np_cb_host->create_default_rollback(
+                                np_cb_host->ctx, n);
+                            if (preferred >= 0)
+                                m->netplay_rollback = preferred != 0;
+                        }
+                    }
                     if (selected) ImGui::SetItemDefaultFocus();
                 }
                 ImGui::EndCombo();

@@ -211,6 +211,8 @@ static void case_seat_ceiling(void)
        "max_players alone is not a per-title offer (online: unknown)");
     ck(recomp_netplay_host_callbacks()->create_max_slots(NULL, 1) == 2,
        "LAN / Direct IP ceiling is two");
+    ck(recomp_netplay_host_callbacks()->create_default_rollback(NULL, 4) == -1,
+       "legacy titles keep the rollback default");
     ck(clamp_lobby_max_slots(8) == 4, "max_players still clamps create");
 
     /* netplay_max_players: the title declares its link size. */
@@ -222,6 +224,12 @@ static void case_seat_ceiling(void)
     ck(clamp_lobby_max_slots(4) == 4,
        "netplay_max_players replaces max_players as create's clamp");
     ck(clamp_lobby_max_slots(8) == 4, "and still caps create");
+    g_h.netplay_delay_sync_from_players = 3;
+    ck(recomp_netplay_host_callbacks()->create_default_rollback(NULL, 2) == 1,
+       "two-seat rooms default to rollback");
+    ck(recomp_netplay_host_callbacks()->create_default_rollback(NULL, 3) == 0 &&
+       recomp_netplay_host_callbacks()->create_default_rollback(NULL, 4) == 0,
+       "three and four-seat rooms default to delay-sync");
     hooks_with_title(RECOMP_NETPLAY_SLOTS_HOST_FIRST, 0, 99);
     ck(recomp_netplay_host_callbacks()->create_max_slots(NULL, 0) ==
            RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS,

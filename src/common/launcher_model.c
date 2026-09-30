@@ -673,7 +673,8 @@ void launcher_model_init(LauncherModel* m,
      * Online start is always lobby SFU (§108). */
     m->netplay_force_input_relay = false;
     m->netplay_force_turn = false;
-    /* Rollback on by default; Lobby Settings “Disable Rollback” opts out. */
+    /* Rollback is the legacy default; a title may choose delay-sync for the
+     * initial room size through create_default_rollback below. */
     m->netplay_rollback = true;
     /* netplay_host_max_players is set below, after the profile clamp. */
     m->netplay_lobby_max_slots = 0;
@@ -712,6 +713,12 @@ void launcher_model_init(LauncherModel* m,
      * asked instead -- see launcher_model_netplay_room_max_players. */
     m->netplay_host_max_players =
         launcher_model_netplay_room_max_players(m, /*lan_only=*/0);
+    if (m->netplay && m->netplay->create_default_rollback) {
+        int preferred = m->netplay->create_default_rollback(
+            m->netplay->ctx, m->netplay_host_max_players);
+        if (preferred >= 0)
+            m->netplay_rollback = preferred != 0;
+    }
 
     // ---- gate pad_mode per player ----
     if (m->pad_mode_supported) {

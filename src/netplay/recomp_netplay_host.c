@@ -2508,6 +2508,14 @@ static int cb_create_max_slots(void *ctx, int lan_only)
   return g_h.netplay_max_players > 0 ? title_max_players() : 0;
 }
 
+static int cb_create_default_rollback(void *ctx, int max_slots)
+{
+  (void)ctx;
+  if (g_h.netplay_delay_sync_from_players <= 0)
+    return -1;
+  return max_slots >= g_h.netplay_delay_sync_from_players ? 0 : 1;
+}
+
 /* Refuse a launch with a reason the waiting room shows, said once per
  * session id so a launcher polling fill_launch every frame does not repeat
  * it. The launch is dropped (launch_pending cleared): the peers that did
@@ -3516,6 +3524,9 @@ static RecompLauncherCNetplayCallbacks g_callbacks = {
 #endif
 #if defined(RECOMP_LAUNCHER_HAS_CREATE_MAX_SLOTS)
     .create_max_slots = cb_create_max_slots,
+#endif
+#if defined(RECOMP_LAUNCHER_HAS_CREATE_DEFAULT_ROLLBACK)
+    .create_default_rollback = cb_create_default_rollback,
 #endif
 };
 

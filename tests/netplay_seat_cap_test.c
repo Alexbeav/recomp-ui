@@ -33,10 +33,15 @@ static void expect_int(int got, int want, const char* what) {
  * (0 when unset), LAN = 2. */
 static int g_online_cap;
 static int g_calls;
+static int g_delay_sync_from;
 static int fake_create_max_slots(void* ctx, int lan_only) {
     (void)ctx;
     ++g_calls;
     return lan_only ? 2 : g_online_cap;
+}
+static int fake_default_rollback(void* ctx, int max_slots) {
+    (void)ctx;
+    return max_slots >= g_delay_sync_from ? 0 : 1;
 }
 
 typedef struct Seats {
@@ -45,6 +50,7 @@ typedef struct Seats {
     int host_default;   /* m->netplay_host_max_players after init */
     int online;         /* room ceiling, online */
     int lan;            /* room ceiling, LAN / Direct IP */
+    int rollback;       /* initial online mode */
 } Seats;
 
 typedef enum { SYS_GBA, SYS_N64 } Sys;
@@ -68,6 +74,7 @@ static Seats seats_for(Sys sys, int num_players, int with_callback,
     if (num_players > 0) game.num_players = num_players;
     g_online_cap = online_cap;
     if (with_callback) np.create_max_slots = fake_create_max_slots;
+    if (g_delay_sync_from > 0) np.create_default_rollback = fake_default_rollback;
     game.netplay = &np;
     game.netplay_supported = 1;
 
@@ -77,6 +84,7 @@ static Seats seats_for(Sys sys, int num_players, int with_callback,
     out.host_default = m->netplay_host_max_players;
     out.online = launcher_model_netplay_room_max_players(m, 0);
     out.lan = launcher_model_netplay_room_max_players(m, 1);
+    out.rollback = m->netplay_rollback ? 1 : 0;
     free(m);
     return out;
 }
@@ -101,12 +109,17 @@ static void case_gba_backend_two(void) {
 }
 
 static void case_gba_four_link(void) {
+    g_delay_sync_from = 3;
     Seats s = seats_for(SYS_GBA, 0, 1, 4);
     expect_int(s.online, 4, "gba cap 4: online room offers four seats");
     expect_int(s.lan, 2, "gba cap 4: LAN / Direct IP stays two seats");
     expect_int(s.host_default, 4, "gba cap 4: host default is the online cap");
     expect_int(s.player_count, 1, "gba cap 4: NO extra controller card");
     expect_int(s.visible, 1, "gba cap 4: one visible card");
+    expect_int(s.rollback, 0, "gba cap 4: delay-sync initially");
+    s = seats_for(SYS_GBA, 0, 1, 2);
+    expect_int(s.rollback, 1, "gba cap 2: rollback initially");
+    g_delay_sync_from = 0;
 }
 
 static void case_backend_bounds(void) {

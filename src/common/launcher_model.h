@@ -623,7 +623,7 @@ typedef struct {
     /* Lobby UDP SFU (online default). Not exposed in Lobby Settings; LAN clears. */
     bool      netplay_force_input_relay;
     bool      netplay_force_turn;
-    /* True = rollback invent path (lobby default). UI exposes “Disable Rollback”. */
+    /* True = rollback invent path. The title may set the initial room mode. */
     bool      netplay_rollback;
     /* Host Lobby: desired max seats, 2..launcher_model_netplay_room_max_players. */
     int       netplay_host_max_players;

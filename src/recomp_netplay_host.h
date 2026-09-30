@@ -187,10 +187,14 @@ typedef struct RecompNetplayHostHooks {
      * was (SNES passes 4 for every title) and the Max Players combo keeps
      * following num_players, exactly as before this field existed. */
     int netplay_max_players;
+    /* Opt-in: new rooms with this many seats or more default to delay-sync.
+     * Zero leaves the historical rollback default for every room size. */
+    int netplay_delay_sync_from_players;
 } RecompNetplayHostHooks;
 
 /* Present since RecompNetplayHostHooks.netplay_max_players was appended. */
 #define RECOMP_NETPLAY_HOST_HAS_NETPLAY_MAX_PLAYERS 1
+#define RECOMP_NETPLAY_HOST_HAS_DELAY_SYNC_FROM_PLAYERS 1
 
 /* Init once before the launcher first opens. `hooks` is copied (the strings
  * and hook tables it points to must outlive the process's netplay use).

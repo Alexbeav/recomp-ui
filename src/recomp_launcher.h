@@ -785,10 +785,14 @@ typedef struct RecompLauncherCNetplayCallbacks {
      * NULL, or a return < 2, keeps the launcher's older ceiling, derived from
      * num_players, unchanged. */
     int  (*create_max_slots)(void* ctx, int lan_only);
+    /* Optional title preference for a new room of max_slots seats: 1 =
+     * rollback, 0 = delay-sync, -1 = use the historical rollback default. */
+    int  (*create_default_rollback)(void* ctx, int max_slots);
 } RecompLauncherCNetplayCallbacks;
 
 /* Present since create_max_slots was appended. */
 #define RECOMP_LAUNCHER_HAS_CREATE_MAX_SLOTS 1
+#define RECOMP_LAUNCHER_HAS_CREATE_DEFAULT_ROLLBACK 1
 
 /* Present since the account callbacks were added. A host guards its wiring
  * with `#ifdef RECOMP_LAUNCHER_HAS_ACCOUNT` so it builds against an older
