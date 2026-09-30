@@ -364,6 +364,22 @@ if(BUILD_TESTING)
         NAME recomp-ui-launcher-mouse-source
         COMMAND $<TARGET_FILE:recomp-ui-launcher-mouse-source-test>)
 
+    # The PSX-only "NeGcon" pad type (pad_mode 3). Same shape.
+    add_executable(recomp-ui-launcher-negcon-mode-test
+        tests/launcher_negcon_mode_test.c
+        src/common/crc32.c
+        src/common/sha1.c
+        src/common/sha256.c
+        src/common/ips_patch.c
+        src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-launcher-negcon-mode-test PRIVATE
+        src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-launcher-negcon-mode-test PRIVATE
+        ${RUI_SDL_TARGET})
+    add_test(
+        NAME recomp-ui-launcher-negcon-mode
+        COMMAND $<TARGET_FILE:recomp-ui-launcher-negcon-mode-test>)
+
     # Memory-card slot facts the Save panel paints: block-usage source order
     # (real inspect beats placeholder; a wired inspector never shows a made-up
     # pattern) and the tri-state enabled flag. Includes launcher_model.c like

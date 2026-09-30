@@ -785,6 +785,10 @@ void launcher_model_init(LauncherModel* m,
                 /* Hybrid is mod-only and never selectable: migrate any stale
                  * persisted value. The mod requests it at runtime instead. */
                 m->s.pad_mode[p] = 1;
+            } else if (m->s.pad_mode[p] == RECOMP_LAUNCHER_PAD_MODE_NEGCON &&
+                       !launcher_model_negcon_mode_available(m)) {
+                /* The neGcon exists only on PSX. */
+                m->s.pad_mode[p] = 1;
             }
             /* Keyboard cannot drive Analog/Hybrid — present D-Pad.
              *
@@ -810,9 +814,13 @@ void launcher_model_init(LauncherModel* m,
              *
              * Leaving the locked mode intact costs nothing while the keyboard
              * is driving the seat, and is already right the moment the player
-             * attaches a real pad. */
+             * attaches a real pad.
+             *
+             * A keyboard neGcon stays a neGcon: the keyboard drives it
+             * (stick binds twist it, Cross/Square keys press I/II). */
             if (m->pad_mode_selectable &&
                 m->s.player_src[p] == 1 &&
+                m->s.pad_mode[p] != RECOMP_LAUNCHER_PAD_MODE_NEGCON &&
                 !(pm_spec && pm_spec->modes && pm_spec->mode_count > 0))
                 m->s.pad_mode[p] = 2;
         }
@@ -4229,6 +4237,8 @@ static void apply_default_pad_mode_for_source(LauncherModel* m, int player) {
     if (!m->pad_mode_supported || !m->pad_mode_selectable) return;
     player = clampi(player, 0, LNG_MAX_PLAYERS - 1);
     if (!pad_mode_is_psx_legacy(m)) return;
+    /* A neGcon is the device in the port, whichever host input drives it. */
+    if (m->s.pad_mode[player] == RECOMP_LAUNCHER_PAD_MODE_NEGCON) return;
     if (m->s.player_src[player] == 1)
         m->s.pad_mode[player] = 2;   // D-Pad / digital (no sticks)
     else if (m->s.player_src[player] == 2)
@@ -4246,11 +4256,21 @@ void launcher_model_set_pad_mode(LauncherModel* m, int player, int mode) {
             if (spec->modes[i].mode == mode) { m->s.pad_mode[player] = mode; return; }
         return;
     }
+    /* neGcon (PSX): any input source may drive it, the keyboard included. */
+    if (mode == RECOMP_LAUNCHER_PAD_MODE_NEGCON) {
+        if (launcher_model_negcon_mode_available(m)) m->s.pad_mode[player] = mode;
+        return;
+    }
     /* Keyboard has no sticks — Analog is unavailable. */
     if (m->s.player_src[player] == 1 && mode != 2) return;
     mode = clampi(mode, 0, 2);
     if (mode == 0) mode = 1;   /* Hybrid is mod-only -> snap to Analog */
     m->s.pad_mode[player] = mode;
+}
+
+int launcher_model_negcon_mode_available(const LauncherModel* m) {
+    /* The neGcon is a PSX controller; other profiles have no such pad type. */
+    return launcher_model_mouse_source_available(m);
 }
 
 int launcher_model_active_button_count(const LauncherModel* m, int player) {
