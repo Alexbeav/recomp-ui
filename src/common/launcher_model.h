@@ -960,10 +960,14 @@ void launcher_model_skip_msu1_patch(LauncherModel* m);
 // it is a mod-only mode requested at runtime by a trusted game plugin — so a
 // stale persisted 0 snaps to Analog.
 void launcher_model_set_pad_mode(LauncherModel* m, int player, int mode);
-void launcher_model_cycle_player_src(LauncherModel* m, int player); // None/Kbd/Pad
+void launcher_model_cycle_player_src(LauncherModel* m, int player); // None/Kbd/Pad(/Mouse)
+// 1 when this profile offers the mouse source (player_src 3,
+// RECOMP_LAUNCHER_SRC_MOUSE): only PSX, for the PS1 Mouse port device.
+// Elsewhere set_source maps 3 to None and the label reads "None".
+int launcher_model_mouse_source_available(const LauncherModel* m);
 void launcher_model_deadzone_delta(LauncherModel* m, int player, int delta);
 // Set the input source explicitly (used by the device dropdown). kind: 0 None,
-// 1 Keyboard, 2 Gamepad. For gamepad, pass the SDL id + display name + GUID
+// 1 Keyboard, 2 Gamepad, 3 Mouse (PSX only; None elsewhere). For gamepad, pass the SDL id + display name + GUID
 // (GUID may be NULL/empty; then player_gamepad_guid[player] is cleared).
 void launcher_model_set_source(LauncherModel* m, int player, int kind,
                                uint32_t pad_id, const char* pad_name,

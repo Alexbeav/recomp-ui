@@ -58,7 +58,9 @@ static const char* kViewNames[8] = {
     "Dashboard", "Settings", "Controller", "Netplay", "Mods",
     "Assist Tools", "Credits", "Lobby"
 };
-static const char* kSrcNames[3]  = { "None", "Keyboard", "Gamepad" };
+/* Index 3 (RECOMP_LAUNCHER_SRC_MOUSE) exists only where
+ * launcher_model_mouse_source_available() says so. */
+static const char* kSrcNames[4]  = { "None", "Keyboard", "Gamepad", "PS1 Mouse" };
 
 static void safe_copy(char* dst, size_t cap, const char* src) {
     if (!dst || cap == 0) return;
@@ -3695,9 +3697,17 @@ int launcher_model_active_button_count(const LauncherModel* m, int player) {
     return bc;
 }
 
+int launcher_model_mouse_source_available(const LauncherModel* m) {
+    /* The PS1 Mouse is a PSX port device; no other profile has one. */
+    const SystemProfile* prof = m ? (const SystemProfile*)m->profile : NULL;
+    return (prof && prof->id && strcmp(prof->id, "psx") == 0) ? 1 : 0;
+}
+
 void launcher_model_cycle_player_src(LauncherModel* m, int player) {
     player = clampi(player, 0, LNG_MAX_PLAYERS - 1);
-    m->s.player_src[player] = (m->s.player_src[player] + 1) % 3;  // None/Kbd/Pad
+    /* None/Kbd/Pad, plus Mouse where the profile has one. */
+    const int n = launcher_model_mouse_source_available(m) ? 4 : 3;
+    m->s.player_src[player] = (m->s.player_src[player] + 1) % n;
     apply_default_pad_mode_for_source(m, player);
 }
 
@@ -3710,7 +3720,10 @@ void launcher_model_set_source(LauncherModel* m, int player, int kind,
                                uint32_t pad_id, const char* pad_name,
                                const char* pad_guid) {
     player = clampi(player, 0, LNG_MAX_PLAYERS - 1);
-    m->s.player_src[player] = clampi(kind, 0, 2);
+    if (kind == RECOMP_LAUNCHER_SRC_MOUSE && !launcher_model_mouse_source_available(m))
+        kind = 0;
+    kind = clampi(kind, 0, RECOMP_LAUNCHER_SRC_MOUSE);
+    m->s.player_src[player] = kind;
     if (kind == 2) {
         m->player_pad_id[player] = pad_id;
         safe_copy(m->player_pad_name[player], sizeof(m->player_pad_name[player]),
@@ -3942,7 +3955,9 @@ const char* launcher_model_freq_label(const LauncherModel* m) {
 
 const char* launcher_model_player_src_label(const LauncherModel* m, int player) {
     player = clampi(player, 0, LNG_MAX_PLAYERS - 1);
-    int src = clampi(m->s.player_src[player], 0, 2);
+    int src = clampi(m->s.player_src[player], 0, RECOMP_LAUNCHER_SRC_MOUSE);
+    if (src == RECOMP_LAUNCHER_SRC_MOUSE && !launcher_model_mouse_source_available(m))
+        src = 0;
     if (src == 2) {
         // Never show the generic "Gamepad" placeholder when we have a concrete
         // pad name (or at least a GUID-backed label filled by sync/hydrate).

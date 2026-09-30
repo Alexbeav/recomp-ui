@@ -261,6 +261,22 @@ if(BUILD_TESTING)
         NAME recomp-ui-launcher-pad-mode
         COMMAND $<TARGET_FILE:recomp-ui-launcher-pad-mode-test>)
 
+    # The PSX-only "PS1 Mouse" input source (player_src 3). Same shape.
+    add_executable(recomp-ui-launcher-mouse-source-test
+        tests/launcher_mouse_source_test.c
+        src/common/crc32.c
+        src/common/sha1.c
+        src/common/sha256.c
+        src/common/ips_patch.c
+        src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-launcher-mouse-source-test PRIVATE
+        src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-launcher-mouse-source-test PRIVATE
+        ${RUI_SDL_TARGET})
+    add_test(
+        NAME recomp-ui-launcher-mouse-source
+        COMMAND $<TARGET_FILE:recomp-ui-launcher-mouse-source-test>)
+
     # Memory-card slot facts the Save panel paints: block-usage source order
     # (real inspect beats placeholder; a wired inspector never shows a made-up
     # pattern) and the tri-state enabled flag. Includes launcher_model.c like
