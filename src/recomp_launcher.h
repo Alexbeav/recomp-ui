@@ -56,6 +56,9 @@ extern "C" {
 #define RECOMP_LAUNCHER_HAS_MULTITAP_ENABLED 1
 /* Host may #ifdef this when reading multitap_analog (DualShock-on-tap hack). */
 #define RECOMP_LAUNCHER_HAS_MULTITAP_ANALOG 1
+/* Host may #ifdef this when setting GameInfo.has_record_replay and reading
+ * Settings.record_replay (the "Record replay" checkbox). */
+#define RECOMP_LAUNCHER_HAS_RECORD_REPLAY 1
 /* Host may #ifdef this when reading Settings.rewind_depth. */
 #define RECOMP_LAUNCHER_HAS_REWIND_DEPTH 1
 /* Host may #ifdef this when reading Settings.rewind_interval. */
@@ -1446,6 +1449,14 @@ struct RecompLauncherCSettings {
      * Only meaningful when the host supplied a vocabulary. Appended
      * additively; a zero-initialized host reads as unset. */
     int  internal_resolution;
+
+    /* "Record replay" (GameInfo.has_record_replay consoles): 1 = the host
+     * records the next session as a replay from power-on, for automated
+     * testing. A per-launch choice, not a preference: hosts seed it from
+     * their own session state and should not persist it, so a tick is never
+     * left on by accident. 0 = off (the default, and what a zero-initialized
+     * host predating this field gets). Appended for ABI stability. */
+    int  record_replay;
 };
 
 /* Largest run-ahead depth the launcher will offer for
@@ -2204,6 +2215,11 @@ typedef struct RecompLauncherCGameInfo {
     const char* bios_prepare_button;         /* "Prepare BIOS" */
     const char* bios_prepare_busy_status;    /* "Compiling your BIOS…" */
     const char* bios_prepare_success_status; /* "BIOS ready." */
+
+    /* Dashboard footer checkbox for Settings.record_replay. 0 => no checkbox,
+     * so a console without a replay recorder keeps today's footer. Appended
+     * for ABI stability. */
+    int has_record_replay;
 } RecompLauncherCGameInfo;
 #define RECOMP_LAUNCHER_HAS_NETPLAY_VIEW 1
 #define RECOMP_LAUNCHER_HAS_ROM_PATTERNS 1
