@@ -3739,6 +3739,81 @@ void launcher_model_set_source(LauncherModel* m, int player, int kind,
     apply_default_pad_mode_for_source(m, player);
 }
 
+// ---- PS1 Mouse + pad (PS1B-279) --------------------------------------------
+// Mouse titles often want a pad in the other console port for the same player
+// (Syndicate Wars keeps pause and view rotation on the pad; Quake II moves on
+// the pad and aims with the mouse). A one-player title shows one card, so the
+// second port has no card of its own: the Player 1 card owns both ports while
+// either holds the mouse. Seats stay ports (seat 0 = port 1, seat 1 = port 2),
+// so the host needs nothing new: it already round-trips every seat.
+
+int launcher_model_mouse_pair_available(const LauncherModel* m) {
+    return launcher_model_mouse_source_available(m) && LNG_MAX_PLAYERS >= 2 &&
+           launcher_model_visible_player_count(m) == 1;
+}
+
+int launcher_model_mouse_pair_port(const LauncherModel* m) {
+    if (!launcher_model_mouse_pair_available(m)) return 0;
+    if (m->s.player_src[0] == RECOMP_LAUNCHER_SRC_MOUSE) return 1;
+    if (m->s.player_src[1] == RECOMP_LAUNCHER_SRC_MOUSE) return 2;
+    return 0;
+}
+
+int launcher_model_mouse_pair_pad_seat(const LauncherModel* m) {
+    const int port = launcher_model_mouse_pair_port(m);
+    return port == 1 ? 1 : port == 2 ? 0 : -1;
+}
+
+/* Swap everything that belongs to a seat's device between seats 0 and 1. */
+static void swap_seats_0_1(LauncherModel* m) {
+    int t;
+    char g[sizeof(m->s.player_gamepad_guid[0])];
+    char n[sizeof(m->player_pad_name[0])];
+    uint32_t id;
+    t = m->s.player_src[0]; m->s.player_src[0] = m->s.player_src[1]; m->s.player_src[1] = t;
+    t = m->s.pad_mode[0];   m->s.pad_mode[0]   = m->s.pad_mode[1];   m->s.pad_mode[1]   = t;
+    t = m->s.deadzone[0];   m->s.deadzone[0]   = m->s.deadzone[1];   m->s.deadzone[1]   = t;
+    memcpy(g, m->s.player_gamepad_guid[0], sizeof(g));
+    memcpy(m->s.player_gamepad_guid[0], m->s.player_gamepad_guid[1], sizeof(g));
+    memcpy(m->s.player_gamepad_guid[1], g, sizeof(g));
+    memcpy(n, m->player_pad_name[0], sizeof(n));
+    memcpy(m->player_pad_name[0], m->player_pad_name[1], sizeof(n));
+    memcpy(m->player_pad_name[1], n, sizeof(n));
+    id = m->player_pad_id[0]; m->player_pad_id[0] = m->player_pad_id[1]; m->player_pad_id[1] = id;
+}
+
+void launcher_model_set_mouse_pair_port(LauncherModel* m, int port) {
+    const int cur = launcher_model_mouse_pair_port(m);
+    if (!cur || (port != 1 && port != 2) || port == cur) return;
+    swap_seats_0_1(m);
+}
+
+void launcher_model_set_primary_source(LauncherModel* m, int kind,
+                                       uint32_t pad_id, const char* pad_name,
+                                       const char* pad_guid) {
+    if (!launcher_model_mouse_pair_available(m)) {
+        launcher_model_set_source(m, 0, kind, pad_id, pad_name, pad_guid);
+        return;
+    }
+    const int port = launcher_model_mouse_pair_port(m);
+    if (kind == RECOMP_LAUNCHER_SRC_MOUSE) {
+        if (port) return;   /* already the mouse player */
+        /* The keyboard or pad Player 1 had becomes the pad in port 2, unless
+         * port 2 already has a device. */
+        if (m->s.player_src[1] == 0 && m->s.player_src[0] != 0) swap_seats_0_1(m);
+        launcher_model_set_source(m, 0, RECOMP_LAUNCHER_SRC_MOUSE, 0, NULL, NULL);
+        return;
+    }
+    /* Leaving the mouse: the pick goes to port 1. The mouse leaves its port;
+     * a pad kept in port 2 stays there (a one-player title reads it only
+     * after a live port swap), unless it is the very pad just picked. */
+    if (port == 2) launcher_model_set_source(m, 1, 0, 0, NULL, NULL);
+    launcher_model_set_source(m, 0, kind, pad_id, pad_name, pad_guid);
+    if (kind == 2 && pad_guid && pad_guid[0] && m->s.player_src[1] == 2 &&
+        strcmp(m->s.player_gamepad_guid[1], pad_guid) == 0)
+        launcher_model_set_source(m, 1, 0, 0, NULL, NULL);
+}
+
 // ---- mouse controls --------------------------------------------------------
 
 void launcher_model_set_mouse_source(LauncherModel* m, int enabled) {

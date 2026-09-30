@@ -972,6 +972,24 @@ void launcher_model_deadzone_delta(LauncherModel* m, int player, int delta);
 void launcher_model_set_source(LauncherModel* m, int player, int kind,
                                uint32_t pad_id, const char* pad_name,
                                const char* pad_guid);
+// PS1 Mouse + pad (PSX, PS1B-279). In a title that shows one player card, the
+// Player 1 card owns both console ports while either holds the mouse, so the
+// player can pick a pad (or the keyboard) for the other port and which port
+// the mouse is in. Seats stay ports: seat 0 = port 1, seat 1 = port 2.
+//   pair_available: PSX and exactly one visible player card.
+//   pair_port:      0 = Player 1 has no mouse, else the mouse's port (1 or 2).
+//   pair_pad_seat:  the seat of the other port (-1 when pair_port is 0).
+//   set_pair_port:  move the mouse to port 1 or 2 (swaps the two seats).
+//   set_primary_source: the Player 1 card's source pick. PS1 Mouse moves the
+//     device Player 1 had to port 2 when port 2 is empty; any other pick
+//     leaves the mouse and goes to port 1. Plain set_source(0) otherwise.
+int  launcher_model_mouse_pair_available(const LauncherModel* m);
+int  launcher_model_mouse_pair_port(const LauncherModel* m);
+int  launcher_model_mouse_pair_pad_seat(const LauncherModel* m);
+void launcher_model_set_mouse_pair_port(LauncherModel* m, int port);
+void launcher_model_set_primary_source(LauncherModel* m, int kind,
+                                       uint32_t pad_id, const char* pad_name,
+                                       const char* pad_guid);
 
 // ---- mouse controls (has_mouse_controls games only; no-op otherwise) --------
 // Select the player-0 keyboard source with mouse-aim on (enabled != 0) or off

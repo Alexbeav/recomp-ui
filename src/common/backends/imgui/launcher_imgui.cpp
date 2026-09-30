@@ -2701,18 +2701,37 @@ void pad_mode_selector(LauncherModel* m, const LauncherTheme& th, int p, float w
 // keyboard entry splits into "Keyboard + Mouse" (mouse-aim on) and "Keyboard"
 // (off); otherwise it is the single legacy "Keyboard" entry, byte-for-byte
 // identical to before for every non-mouse game.
-void draw_source_selectables(LauncherModel* m, int p) {
+//
+// pick selects what a click changes (PS1B-279, PS1 Mouse + pad):
+//   kPickSeat    - seat p, as always.
+//   kPickPrimary - the Player 1 card of a one-card PSX title, which owns both
+//                  ports while it holds the mouse (launcher_model_set_primary_source).
+//   kPickPadOnly - the pad port next to that mouse: no second mouse offered.
+enum SourcePick { kPickSeat = 0, kPickPrimary = 1, kPickPadOnly = 2 };
+
+void draw_source_selectables(LauncherModel* m, int p, int pick = kPickSeat) {
     const SystemProfile* src_prof = (const SystemProfile*)m->profile;
     const bool psx = src_prof && src_prof->id && !strcmp(src_prof->id, "psx");
     const bool snes_prof = src_prof && src_prof->id &&
                            !strcmp(src_prof->id, "snes");
     const bool n64_prof = src_prof && src_prof->id &&
                           !strcmp(src_prof->id, "n64");
-    if (ImGui::Selectable(ui_text("None"), m->s.player_src[p] == 0)) {
-        launcher_model_set_source(m, p, 0, 0, nullptr, nullptr);
+    if (pick == kPickPrimary) p = 0;
+    const int pair_port = pick == kPickPrimary ? launcher_model_mouse_pair_port(m) : 0;
+    auto choose = [&](int kind, uint32_t id, const char* name, const char* guid) {
+        if (pick == kPickPrimary)
+            launcher_model_set_primary_source(m, kind, id, name, guid);
+        else
+            launcher_model_set_source(m, p, kind, id, name, guid);
+    };
+    // While Player 1 holds the mouse, the card reads "PS1 Mouse" whichever
+    // port it is in; no other entry is the current one.
+    auto current = [&](int kind) { return !pair_port && m->s.player_src[p] == kind; };
+    if (ImGui::Selectable(ui_text("None"), current(0))) {
+        choose(0, 0, nullptr, nullptr);
         if (psx) launcher_binds_refresh(m);
     }
-    if (m->has_mouse_controls && p == 0) {
+    if (m->has_mouse_controls && p == 0 && pick == kPickSeat) {
         const bool kbm = m->s.player_src[p] == 1 && m->s.mouse_enabled;
         const bool kb  = m->s.player_src[p] == 1 && !m->s.mouse_enabled;
         if (ImGui::Selectable(ui_text("Keyboard + Mouse"), kbm))
@@ -2720,23 +2739,24 @@ void draw_source_selectables(LauncherModel* m, int p) {
         if (ImGui::Selectable(ui_text("Keyboard"), kb))
             launcher_model_set_mouse_source(m, 0);
     } else {
-        if (ImGui::Selectable(ui_text("Keyboard"), m->s.player_src[p] == 1)) {
-            launcher_model_set_source(m, p, 1, 0, nullptr, nullptr);
+        if (ImGui::Selectable(ui_text("Keyboard"), current(1))) {
+            choose(1, 0, nullptr, nullptr);
             if (psx) launcher_binds_refresh(m);
         }
     }
 
     // PS1 Mouse: the host pointer drives a mouse in this port. One seat at a
     // time; a second seat would only mirror the same pointer.
-    if (launcher_model_mouse_source_available(m)) {
+    if (pick != kPickPadOnly && launcher_model_mouse_source_available(m)) {
         bool taken = false;
         const int seats = launcher_model_visible_player_count(m);
         for (int o = 0; o < seats; ++o)
             if (o != p && m->s.player_src[o] == RECOMP_LAUNCHER_SRC_MOUSE) taken = true;
         if (taken) ImGui::BeginDisabled();
         if (ImGui::Selectable(ui_text("PS1 Mouse"),
-                              m->s.player_src[p] == RECOMP_LAUNCHER_SRC_MOUSE) && !taken) {
-            launcher_model_set_source(m, p, RECOMP_LAUNCHER_SRC_MOUSE, 0, nullptr, nullptr);
+                              pair_port || m->s.player_src[p] == RECOMP_LAUNCHER_SRC_MOUSE) &&
+            !taken) {
+            choose(RECOMP_LAUNCHER_SRC_MOUSE, 0, nullptr, nullptr);
             launcher_binds_refresh(m);
         }
         if (taken) ImGui::EndDisabled();
@@ -2833,14 +2853,13 @@ void draw_source_selectables(LauncherModel* m, int p) {
         else
             std::snprintf(label, sizeof(label), "%s %s",
                           opts[i].name, ui_text("(disconnected)"));
-        const bool sel = m->s.player_src[p] == 2 &&
+        const bool sel = current(2) &&
                          m->s.player_gamepad_guid[p][0] &&
                          std::strcmp(m->s.player_gamepad_guid[p],
                                      opts[i].guid) == 0;
         if (claimed) ImGui::BeginDisabled();
         if (ImGui::Selectable(label, sel) && !claimed) {
-            launcher_model_set_source(m, p, 2, opts[i].id, opts[i].name,
-                                     opts[i].guid);
+            choose(2, opts[i].id, opts[i].name, opts[i].guid);
             if (psx) {
                 launcher_binds_apply_psx_pad_profile(m, p);
                 launcher_binds_refresh(m);
@@ -2915,6 +2934,13 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
     const float inner = ImGui::GetContentRegionAvail().x;
     const float cw    = inner;   // controls span the card => flush by construction
 
+    // PS1 Mouse + pad (PS1B-279): while Player 1 of a one-card PSX title holds
+    // the mouse, this card owns both ports. pad_seat is the other port's seat;
+    // the pad art, pad type and Configure follow that pad.
+    const int pair_port =
+        (p == 0 && launcher_model_mouse_pair_available(m)) ? launcher_model_mouse_pair_port(m) : 0;
+    const int pad_seat = pair_port ? launcher_model_mouse_pair_pad_seat(m) : p;
+
     // pad art centered in the card: PSX-style games swap analog/digital art
     // with the mode; consoles without a mode-swap art PAIR (SNES, and Genesis —
     // which has pad modes but a SINGLE pad image) always show the generic
@@ -2943,10 +2969,10 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
         // Analog segment is greyed out for it), so it shows the digital pad
         // rather than promising sticks the player does not have.
         const bool kb_digital =
-            m->s.player_src[p] == 1 &&
+            m->s.player_src[pad_seat] == 1 &&
             !(aprof && aprof->controller.modes && aprof->controller.mode_count > 0);
         const bool digital =
-            has_swap_art && (kb_digital || m->s.pad_mode[p] == 2);
+            has_swap_art && (kb_digital || m->s.pad_mode[pad_seat] == 2);
         const LauncherTexture& art = has_swap_art
             ? (digital ? g_pad_digital : g_pad_analog) : g_pad;
         // Center on the FITTED width so a near-square pad (N64) or a portrait
@@ -2958,19 +2984,60 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
 
     // Pad-mode selector: only when the game supports pad modes AND the mode
     // is user-selectable (not locked to a single mode).
-    // A mouse seat has no pad type to choose.
-    if (m->pad_mode_supported && m->pad_mode_selectable &&
+    // A mouse seat has no pad type to choose (next to the mouse, the pad's
+    // selector sits under the pad's own combo below).
+    if (!pair_port && m->pad_mode_supported && m->pad_mode_selectable &&
         m->s.player_src[p] != RECOMP_LAUNCHER_SRC_MOUSE) {
         pad_mode_selector(m, th, p, cw);
         ImGui::Dummy(ImVec2(0, px(6)));
     }
 
     ImGui::SetNextItemWidth(cw);
-    if (ImGui::BeginCombo("##src", ui_text(launcher_model_player_src_label(m, p)))) {
-        draw_source_selectables(m, p);
+    const bool primary = p == 0 && launcher_model_mouse_pair_available(m);
+    if (ImGui::BeginCombo("##src", ui_text(pair_port ? "PS1 Mouse"
+                                                     : launcher_model_player_src_label(m, p)))) {
+        draw_source_selectables(m, p, primary ? kPickPrimary : kPickSeat);
         ImGui::EndCombo();
     }
     ImGui::Dummy(ImVec2(0, px(4)));
+    if (pair_port) {
+        // Which port the mouse is in: Syndicate Wars reads it in port 1,
+        // Quake II and Final Doom in port 2 (pad in port 1).
+        const float gap = px(4.0f);
+        const float seg_w = (cw - gap) * 0.5f;
+        for (int port = 1; port <= 2; ++port) {
+            if (port > 1) ImGui::SameLine(0, gap);
+            const bool sel = pair_port == port;
+            char lbl[48];
+            std::snprintf(lbl, sizeof(lbl), "%s %d##mouseport", ui_text("Mouse in port"), port);
+            ImGui::PushID(port);
+            ImGui::PushStyleColor(ImGuiCol_Button, sel ? col(th.accent) : col(th.control));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, sel ? col(th.accent) : col(th.control_hovered));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, col(th.accent));
+            ImGui::PushStyleColor(ImGuiCol_Text, sel ? col(th.accent_text) : col(th.text));
+            if (ImGui::Button(lbl, ImVec2(seg_w, px(28)))) {
+                launcher_model_set_mouse_pair_port(m, port);
+                launcher_binds_refresh(m);
+            }
+            ImGui::PopStyleColor(4);
+            ImGui::PopID();
+        }
+        ImGui::Dummy(ImVec2(0, px(4)));
+        // The pad (or keyboard) in the other port, for the same player.
+        ImGui::TextColored(col(th.text_muted), "%s %d", ui_text("Controller in port"), pad_seat + 1);
+        ImGui::SetNextItemWidth(cw);
+        if (ImGui::BeginCombo("##pairpad",
+                              ui_text(launcher_model_player_src_label(m, pad_seat)))) {
+            draw_source_selectables(m, pad_seat, kPickPadOnly);
+            ImGui::EndCombo();
+        }
+        ImGui::Dummy(ImVec2(0, px(4)));
+        if (m->pad_mode_supported && m->pad_mode_selectable &&
+            m->s.player_src[pad_seat] != 0) {
+            pad_mode_selector(m, th, pad_seat, cw);
+            ImGui::Dummy(ImVec2(0, px(4)));
+        }
+    }
     // Configure + connection status share ONE half/half row (Configure left,
     // status right) so the card stays short — that keeps the memory cards below
     // it from being pushed off the bottom. (Analog-stick deadzone lives on the
@@ -2979,9 +3046,10 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
         const float gap  = px(th.spacing_sm);
         const float half = (cw - gap) * 0.5f;
         const float btnh = px(32);
-        if (ImGui::Button(ui_text("Configure"), ImVec2(half, btnh))) launcher_model_open_config(m, p);
+        if (ImGui::Button(ui_text("Configure"), ImVec2(half, btnh)))
+            launcher_model_open_config(m, pad_seat);
         ImGui::SameLine(0, gap);
-        const bool on = m->s.player_src[p] != 0;
+        const bool on = pair_port || m->s.player_src[p] != 0;
         const char* st = ui_text(on ? "connected" : "not assigned");
         const float sw = px(10) + px(8) + ImGui::CalcTextSize(st).x;
         // center the dot+label within the right half, vertically on the button
@@ -4650,13 +4718,21 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         m->s.player_gamepad_guid[p][0] && !m->player_pad_name[p][0])
         launcher_binds_hydrate_psx_pad_names(m);
 
+    // The pad next to Player 1's PS1 Mouse (PS1B-279) is Player 1's, in the
+    // other port: say so, and offer no second mouse there.
+    const bool cfg_pair_pad = launcher_model_mouse_pair_port(m) &&
+                              p == launcher_model_mouse_pair_pad_seat(m);
     if (begin_panel("cfg_src", 0)) {
         ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
-        ImGui::Text("%s %d", ui_text("CONTROLLER - PLAYER"), p + 1); ImGui::PopStyleColor(); ImGui::Spacing();
+        if (cfg_pair_pad)
+            ImGui::Text("%s 1 - %s %d", ui_text("CONTROLLER - PLAYER"), ui_text("PORT"), p + 1);
+        else
+            ImGui::Text("%s %d", ui_text("CONTROLLER - PLAYER"), p + 1);
+        ImGui::PopStyleColor(); ImGui::Spacing();
         row_label("Input source", th);
         ImGui::SetNextItemWidth(px(200));
         if (ImGui::BeginCombo("##csrc", ui_text(launcher_model_player_src_label(m, p)))) {
-            draw_source_selectables(m, p);
+            draw_source_selectables(m, p, cfg_pair_pad ? kPickPadOnly : kPickSeat);
             ImGui::EndCombo();
         }
         /* SNES: Save / Rename / Delete for the selected controller.
