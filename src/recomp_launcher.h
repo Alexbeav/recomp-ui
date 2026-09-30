@@ -35,6 +35,12 @@ extern "C" {
 #define RECOMP_LAUNCHER_MAX_PLAYERS 8
 /* Host may #ifdef this when reading player_gamepad_guid[] from settings. */
 #define RECOMP_LAUNCHER_HAS_PLAYER_GAMEPAD_GUID 1
+/* player_src value 3: the port holds a mouse device driven by the host
+ * pointer (PSX: the Sony PS1 Mouse). Offered only by profiles that support it
+ * (launcher_model_mouse_source_available); hosts #ifdef the macro so an older
+ * launcher is never handed a value it would clamp to Gamepad. */
+#define RECOMP_LAUNCHER_HAS_MOUSE_SOURCE 1
+#define RECOMP_LAUNCHER_SRC_MOUSE 3
 /* Host may #ifdef this when reading multitap_enabled from settings. */
 #define RECOMP_LAUNCHER_HAS_MULTITAP_ENABLED 1
 /* Host may #ifdef this when reading multitap_analog (DualShock-on-tap hack). */
@@ -1103,7 +1109,7 @@ struct RecompLauncherCSettings {
     int  enable_audio;      // bool
     int  audio_freq;        // Hz
     int  volume;            // 0..100
-    int  player_src[RECOMP_LAUNCHER_MAX_PLAYERS];  // 0 none, 1 keyboard, 2 gamepad
+    int  player_src[RECOMP_LAUNCHER_MAX_PLAYERS];  // 0 none, 1 keyboard, 2 gamepad, 3 mouse (RECOMP_LAUNCHER_SRC_MOUSE)
     int  deadzone[RECOMP_LAUNCHER_MAX_PLAYERS];    // 0..100
     int  skip_launcher;     // bool: boot straight to the game next time
     int  msu1_enabled;      // bool

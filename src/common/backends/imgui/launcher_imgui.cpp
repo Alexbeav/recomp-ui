@@ -3179,6 +3179,23 @@ void draw_source_selectables(LauncherModel* m, int p) {
         }
         return;
     }
+
+    // PS1 Mouse: the host pointer drives a mouse in this port. One seat at a
+    // time; a second seat would only mirror the same pointer.
+    if (launcher_model_mouse_source_available(m)) {
+        bool taken = false;
+        const int seats = launcher_model_visible_player_count(m);
+        for (int o = 0; o < seats; ++o)
+            if (o != p && m->s.player_src[o] == RECOMP_LAUNCHER_SRC_MOUSE) taken = true;
+        if (taken) ImGui::BeginDisabled();
+        if (ImGui::Selectable(ui_text("PS1 Mouse"),
+                              m->s.player_src[p] == RECOMP_LAUNCHER_SRC_MOUSE) && !taken) {
+            launcher_model_set_source(m, p, RECOMP_LAUNCHER_SRC_MOUSE, 0, nullptr, nullptr);
+            launcher_binds_refresh(m);
+        }
+        if (taken) ImGui::EndDisabled();
+    }
+
     // Unified pad list (no duplicates): saved mappings + live devices.
     // Pads already selected on another player are disabled (keyboard is not).
     struct PadOpt {
@@ -3395,7 +3412,9 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
 
     // Pad-mode selector: only when the game supports pad modes AND the mode
     // is user-selectable (not locked to a single mode).
-    if (m->pad_mode_supported && m->pad_mode_selectable) {
+    // A mouse seat has no pad type to choose.
+    if (m->pad_mode_supported && m->pad_mode_selectable &&
+        m->s.player_src[p] != RECOMP_LAUNCHER_SRC_MOUSE) {
         pad_mode_selector(m, th, p, cw);
         ImGui::Dummy(ImVec2(0, px(6)));
     }
