@@ -3209,21 +3209,39 @@ void draw_source_selectables(LauncherModel* m, int p, int pick = kPickSeat) {
         return;
     }
 
-    // PS1 Mouse: the host pointer drives a mouse in this port. One seat at a
-    // time; a second seat would only mirror the same pointer.
-    if (pick != kPickPadOnly && launcher_model_mouse_source_available(m)) {
-        bool taken = false;
+    // PS1 Mouse and GunCon: the host pointer drives a mouse, or aims a light
+    // gun, in this port. One pointer seat at a time; a second seat would only
+    // share the same pointer.
+    bool pointer_taken = false;
+    {
         const int seats = launcher_model_visible_player_count(m);
         for (int o = 0; o < seats; ++o)
-            if (o != p && m->s.player_src[o] == RECOMP_LAUNCHER_SRC_MOUSE) taken = true;
-        if (taken) ImGui::BeginDisabled();
+            if (o != p && launcher_model_source_is_pointer(m->s.player_src[o]))
+                pointer_taken = true;
+    }
+    if (pick != kPickPadOnly && launcher_model_mouse_source_available(m)) {
+        if (pointer_taken) ImGui::BeginDisabled();
         if (ImGui::Selectable(ui_text("PS1 Mouse"),
                               pair_port || m->s.player_src[p] == RECOMP_LAUNCHER_SRC_MOUSE) &&
-            !taken) {
+            !pointer_taken) {
             choose(RECOMP_LAUNCHER_SRC_MOUSE, 0, nullptr, nullptr);
             launcher_binds_refresh(m);
         }
-        if (taken) ImGui::EndDisabled();
+        if (pointer_taken) ImGui::EndDisabled();
+    }
+    if (pick != kPickPadOnly && launcher_model_guncon_source_available(m)) {
+        if (pointer_taken) ImGui::BeginDisabled();
+        if (ImGui::Selectable(ui_text("GunCon"), current(RECOMP_LAUNCHER_SRC_GUNCON)) &&
+            !pointer_taken) {
+            choose(RECOMP_LAUNCHER_SRC_GUNCON, 0, nullptr, nullptr);
+            launcher_binds_refresh(m);
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", ui_text(
+                "Namco GunCon light gun, aimed with the mouse. Trigger: left "
+                "button. A: right button. B: middle button. Hold side button 4 "
+                "(or aim outside the picture) to shoot off-screen."));
+        if (pointer_taken) ImGui::EndDisabled();
     }
 
     // Unified pad list (no duplicates): saved mappings + live devices.
@@ -3448,10 +3466,10 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
 
     // Pad-mode selector: only when the game supports pad modes AND the mode
     // is user-selectable (not locked to a single mode).
-    // A mouse seat has no pad type to choose (next to the mouse, the pad's
-    // selector sits under the pad's own combo below).
+    // A mouse or light-gun seat has no pad type to choose (next to the mouse,
+    // the pad's selector sits under the pad's own combo below).
     if (!pair_port && m->pad_mode_supported && m->pad_mode_selectable &&
-        m->s.player_src[p] != RECOMP_LAUNCHER_SRC_MOUSE) {
+        !launcher_model_source_is_pointer(m->s.player_src[p])) {
         pad_mode_selector(m, th, p, cw);
         ImGui::Dummy(ImVec2(0, px(6)));
     }

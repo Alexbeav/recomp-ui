@@ -80,7 +80,56 @@ static void test_cycle_includes_mouse_on_psx(void) {
     launcher_model_cycle_player_src(m, 0);
     expect(m->s.player_src[0] == RECOMP_LAUNCHER_SRC_MOUSE, "PSX cycle: Gamepad -> Mouse");
     launcher_model_cycle_player_src(m, 0);
-    expect(m->s.player_src[0] == SRC_NONE, "PSX cycle: Mouse -> None");
+    expect(m->s.player_src[0] == RECOMP_LAUNCHER_SRC_GUNCON, "PSX cycle: Mouse -> GunCon");
+    launcher_model_cycle_player_src(m, 0);
+    expect(m->s.player_src[0] == SRC_NONE, "PSX cycle: GunCon -> None");
+    free(m);
+}
+
+/* ---- the GunCon source (player_src 4, PS1B-305) ---- */
+
+static void test_psx_offers_guncon(void) {
+    LauncherModel* m = session(1, SRC_KEYBOARD);
+    if (!m) return;
+    expect(launcher_model_guncon_source_available(m), "PSX offers the GunCon source");
+    launcher_model_set_source(m, 0, RECOMP_LAUNCHER_SRC_GUNCON, 0, NULL, NULL);
+    expect(m->s.player_src[0] == RECOMP_LAUNCHER_SRC_GUNCON, "set_source stores 4 on PSX");
+    expect(strcmp(launcher_model_player_src_label(m, 0), "GunCon") == 0,
+           "the label reads GunCon");
+    expect(m->s.player_gamepad_guid[0][0] == '\0', "a GunCon seat carries no pad GUID");
+    expect(launcher_model_source_is_pointer(RECOMP_LAUNCHER_SRC_GUNCON) &&
+           launcher_model_source_is_pointer(RECOMP_LAUNCHER_SRC_MOUSE) &&
+           !launcher_model_source_is_pointer(SRC_GAMEPAD) &&
+           !launcher_model_source_is_pointer(SRC_KEYBOARD),
+           "the mouse and the GunCon are the pointer sources");
+    free(m);
+
+    m = session(1, RECOMP_LAUNCHER_SRC_GUNCON);
+    if (!m) return;
+    expect(m->s.player_src[0] == RECOMP_LAUNCHER_SRC_GUNCON,
+           "a host-seeded GunCon seat survives launcher_model_init");
+    free(m);
+
+    m = session(0, SRC_GAMEPAD);
+    if (!m) return;
+    expect(!launcher_model_guncon_source_available(m), "Genesis offers no GunCon source");
+    launcher_model_set_source(m, 0, RECOMP_LAUNCHER_SRC_GUNCON, 0, NULL, NULL);
+    expect(m->s.player_src[0] == SRC_NONE, "set_source maps 4 to None off PSX");
+    m->s.player_src[1] = RECOMP_LAUNCHER_SRC_GUNCON;   /* a stray value from a host */
+    expect(strcmp(launcher_model_player_src_label(m, 1), "None") == 0,
+           "a stray 4 is labelled None off PSX");
+    free(m);
+}
+
+static void test_guncon_leaves_mouse_pair(void) {
+    /* One-card title, mouse in port 2 with a pad in port 1: picking the
+     * GunCon for Player 1 ends the pair and empties port 2. */
+    LauncherModel* m = session_players(1, 1, SRC_GAMEPAD, RECOMP_LAUNCHER_SRC_MOUSE);
+    if (!m) return;
+    launcher_model_set_primary_source(m, RECOMP_LAUNCHER_SRC_GUNCON, 0, NULL, NULL);
+    expect(m->s.player_src[0] == RECOMP_LAUNCHER_SRC_GUNCON && m->s.player_src[1] == SRC_NONE,
+           "GunCon for Player 1 replaces the mouse pair");
+    expect(launcher_model_mouse_pair_port(m) == 0, "and there is no mouse pair");
     free(m);
 }
 
@@ -222,6 +271,8 @@ int main(void) {
     test_leaving_mouse_in_port_1_keeps_port_2_pad();
     test_mouse_does_not_evict_port_2();
     test_host_seeded_mouse_in_port_2();
+    test_psx_offers_guncon();
+    test_guncon_leaves_mouse_pair();
     if (fails) { fprintf(stderr, "launcher_mouse_source_test: %d failure(s)\n", fails); return 1; }
     printf("launcher_mouse_source_test: all checks passed\n");
     return 0;
