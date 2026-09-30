@@ -547,6 +547,7 @@ void launcher_model_init(LauncherModel* m,
         m->has_shader           = game->has_shader != 0;
         m->netplay_supported    = game->netplay_supported != 0 && game->netplay != NULL;
         m->netplay              = game->netplay;
+        m->netplay_mode_changed = game->netplay_mode_changed;
         m->netplay_view_labels = game->netplay_view_labels;
         m->num_netplay_view_labels = m->netplay_supported && game->netplay_view_labels
             ? clampi(game->num_netplay_view_labels, 0, 16) : 0;
@@ -942,7 +943,7 @@ void launcher_model_init(LauncherModel* m,
     if (game && game->resume_netplay_room && m->netplay_supported && m->netplay) {
         const bool seated = m->netplay->in_lobby &&
                             m->netplay->in_lobby(m->netplay->ctx);
-        m->view = LNG_VIEW_NETPLAY;
+        launcher_model_set_view(m, LNG_VIEW_NETPLAY);
         m->netplay_list_fresh = true;
         if (!seated) {
             /* No room, so none of the room-shaped state below applies. */
@@ -1451,6 +1452,15 @@ bool launcher_model_rom_verified(const LauncherModel* m) {
 
 void launcher_model_set_view(LauncherModel* m, LngView v) {
     if (v < 0 || v >= LNG_VIEW__COUNT) return;
+    const bool entering_netplay = v == LNG_VIEW_NETPLAY_MODE ||
+        v == LNG_VIEW_NETPLAY_SIGNIN || v == LNG_VIEW_NETPLAY || v == LNG_VIEW_LOBBY;
+    if (m->netplay_supported && entering_netplay && !m->netplay_policy_active) {
+        m->netplay_policy_active = true;
+        if (m->netplay_mode_changed) m->netplay_mode_changed(1);
+    } else if (v == LNG_VIEW_DASHBOARD && m->netplay_policy_active) {
+        m->netplay_policy_active = false;
+        if (m->netplay_mode_changed) m->netplay_mode_changed(0);
+    }
     /* Re-entering Netplay should rescan server + LAN lists. */
     if (m->view == LNG_VIEW_NETPLAY && v != LNG_VIEW_NETPLAY)
         m->netplay_list_fresh = false;

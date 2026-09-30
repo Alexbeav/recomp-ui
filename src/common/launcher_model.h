@@ -343,6 +343,8 @@ typedef struct {
     bool has_run_ahead;
     bool has_shader;
     bool netplay_supported;
+    bool netplay_policy_active;
+    void (*netplay_mode_changed)(int enabled);
     const char* const* netplay_view_labels;
     int num_netplay_view_labels;
     /* Host opted into first-run wizard + Generate & rebuild (GameInfo). */
