@@ -419,6 +419,7 @@ static const char *game_version(void)
 
 static void dl_queue_step(void);
 static void mod_set_sync_step(void);
+static int room_mods_ready(void);
 static void desync_report_step(void);
 static void cb_push_match_caps(void *ctx);
 static void host_caps_watch_step(void);
@@ -605,6 +606,70 @@ static int read_lan(RNetLanLobby *state)
          RNET_LAN_LOBBY_OK;
 }
 
+/* LAN carries the same canonical selections as an online room. No paths,
+ * ROMs or cosmetic exemption grants are carried by the direct room. */
+static void fill_lan_mod_set(void)
+{
+#ifdef RNET_LAN_LOBBY_HAS_MOD_SET
+  char text[RNET_LAN_LOBBY_MOD_SET_MAX];
+  int n = 0;
+  size_t i;
+  mods_set_cosmetic_allow(NULL);
+  g_lan_room.mod_set[0] = '\0';
+  if (g_mods && g_mods->effective_set)
+    n = g_mods->effective_set(g_mods->ctx, text, sizeof(text));
+  if (n < 0 || n >= (int)sizeof(text)) {
+    /* Never advertise a valid-looking prefix of an oversized plan. */
+    snprintf(g_lan_room.mod_set, sizeof(g_lan_room.mod_set), "(plan-too-large)");
+    return;
+  }
+  if (n > 0) {
+    for (i = 0; text[i]; ++i)
+      g_lan_room.mod_set[i] = text[i] == '\n' ? ';' : text[i];
+    g_lan_room.mod_set[i] = '\0';
+  }
+#endif
+}
+
+static const RNetLobbyMatchCaps *room_caps(void)
+{
+  static RNetLobbyMatchCaps caps;
+  RNetLanLobby state;
+  if (g_hosting_lan || g_joined_lan) {
+    memset(&caps, 0, sizeof(caps));
+    state = g_lan_room;
+    if (!g_hosting_lan && !g_joined_direct) (void)read_lan(&state);
+    caps.valid = 1;
+    caps.rollback = state.rollback;
+    caps.input_delay = state.input_delay;
+    caps.input_prediction = state.input_prediction;
+#ifdef RNET_LAN_LOBBY_HAS_MOD_SET
+    const char *line;
+    snprintf(caps.mod_set, sizeof(caps.mod_set), "%s", state.mod_set);
+    for (line = state.mod_set; *line && caps.mod_count < RNET_LOBBY_MAX_MODS;) {
+      const char *end = strchr(line, ';');
+      const char *at = strchr(line, '@');
+      const char *slash = at ? strchr(at, '/') : NULL;
+      const char *space;
+      RNetLobbyModPkg *row = &caps.mods[caps.mod_count];
+      if (!end) end = line + strlen(line);
+      space = slash && slash < end ? memchr(slash, ' ', (size_t)(end - slash)) : NULL;
+      if (at && slash && at < end && slash < end &&
+          at - line < (ptrdiff_t)sizeof(row->id) && slash - at - 1 < (ptrdiff_t)sizeof(row->ver)) {
+        snprintf(row->id, sizeof(row->id), "%.*s", (int)(at - line), line);
+        snprintf(row->ver, sizeof(row->ver), "%.*s", (int)(slash - at - 1), at + 1);
+        snprintf(row->feats, sizeof(row->feats), "%.*s", (int)((space ? space : end) - slash - 1), slash + 1);
+        snprintf(row->name, sizeof(row->name), "%s", row->id);
+        ++caps.mod_count;
+      }
+      line = *end ? end + 1 : end;
+    }
+#endif
+    return &caps;
+  }
+  return rnet_lobby_match_caps();
+}
+
 static int create_lan(const char *name, const char *endpoint,
                       const char *password)
 {
@@ -646,6 +711,9 @@ static int create_lan(const char *name, const char *endpoint,
   g_lan_room.session_variant = g_session_variant;
 #endif
   g_lan_room.input_delay = clamp_input_delay(g_lobby_input_delay);
+  g_lan_room.rollback = g_lobby_rollback;
+  g_lan_room.input_prediction = clamp_input_prediction(g_lobby_input_prediction);
+  fill_lan_mod_set();
   if (!publish_lan_room())
     return 0;
   /* UDP waiting-room listen on the game port for remote Join Direct. */
@@ -1004,13 +1072,8 @@ static void arm_lan_launch(const RNetLanLobby *state)
   g_lan_launch.input_delay =
       clamp_input_delay(state->input_delay >= 2 ? state->input_delay
                                                 : g_lobby_input_delay);
-  /* The LAN room carries a delay and nothing else -- no rollback flag and no
-   * runway -- so neither is settled between the two peers. Both stay "unset"
-   * (rollback 0, prediction 0) rather than each peer inventing its own: a
-   * mode one side chose locally is a mode the other side never heard of.
-   * The engine's own override (SNES_NET_MODE, say) still applies. */
-  g_lan_launch.rollback = 0;
-  g_lan_launch.input_prediction = 0;
+  g_lan_launch.rollback = state->rollback;
+  g_lan_launch.input_prediction = state->input_prediction;
   if (g_hosting_lan) {
     colon = strrchr(state->endpoint, ':');
     port = colon ? colon + 1 : "7777";
@@ -2544,6 +2607,8 @@ static int cb_fill_launch(void *ctx, RecompLauncherCNetplayLaunch *out)
   if (!out)
     return 0;
   if (g_lan_launch.enabled) {
+    mod_set_sync_step(); /* START may carry a newer plan than the last CAPS. */
+    if (!room_mods_ready()) return 0;
     if (!supports_session_variant(g_lan_launch.session_variant)) {
       snprintf(g_runtime_error, sizeof(g_runtime_error), "unsupported_session_variant");
       return 0;
@@ -2573,6 +2638,10 @@ static int cb_fill_launch(void *ctx, RecompLauncherCNetplayLaunch *out)
     return refuse_launch(join.session_id, "mods_unsupported",
                          "the host requires mods and this build has no mod "
                          "support");
+  mod_set_sync_step();
+  if (!room_mods_ready())
+    return refuse_launch(join.session_id, "mod_set_mismatch",
+                         "the host's mod configuration could not be matched");
   memset(out, 0, sizeof(*out));
   out->enabled = 1;
   out->local_slot = join.local_slot;
@@ -2702,7 +2771,7 @@ static int cb_fill_launch(void *ctx, RecompLauncherCNetplayLaunch *out)
 /* Row `index` of the plan the HOST published. */
 static const RNetLobbyModPkg *plan_row(int index)
 {
-  const RNetLobbyMatchCaps *caps = rnet_lobby_match_caps();
+  const RNetLobbyMatchCaps *caps = room_caps();
   if (!caps || !caps->valid || index < 0 || index >= caps->mod_count)
     return NULL;
   return &caps->mods[index];
@@ -2710,7 +2779,7 @@ static const RNetLobbyModPkg *plan_row(int index)
 
 static int cb_lobby_mods_count(void *ctx)
 {
-  const RNetLobbyMatchCaps *caps = rnet_lobby_match_caps();
+  const RNetLobbyMatchCaps *caps = room_caps();
   (void)ctx;
   if (!caps || !caps->valid)
     return 0;
@@ -2748,7 +2817,7 @@ static int cb_lobby_mods_get(void *ctx, int index,
    * host's actual choices -- "localization language=en" -- rather than its own
    * local settings, which are not what the match will run. */
   {
-    const RNetLobbyMatchCaps *caps = rnet_lobby_match_caps();
+    const RNetLobbyMatchCaps *caps = room_caps();
     size_t o = 0;
     if (caps && caps->valid && caps->mod_set[0]) {
       const char *p = caps->mod_set;
@@ -2898,7 +2967,7 @@ static void host_caps_watch_step(void)
 
   if (!g_mods || !g_mods->effective_set)
     return;
-  if (!rnet_lobby_in_lobby() || !rnet_lobby_is_host()) {
+  if (!g_hosting_lan && (!rnet_lobby_in_lobby() || !rnet_lobby_is_host())) {
     g_published_set[0] = '\0';
     return;
   }
@@ -2943,7 +3012,7 @@ static void mod_set_sync_step(void)
 
   if (!g_mods)
     return;
-  if (!rnet_lobby_in_lobby() || rnet_lobby_is_host()) {
+  if (g_hosting_lan || (!g_joined_lan && (!rnet_lobby_in_lobby() || rnet_lobby_is_host()))) {
     g_adopted_set[0] = '\0';
     /* Out of a lobby, no authority is granting anything, so the exemption
      * lapses rather than lingering from the last host we spoke to. A host
@@ -2952,7 +3021,7 @@ static void mod_set_sync_step(void)
       mods_set_cosmetic_allow(NULL);
     return;
   }
-  caps = rnet_lobby_match_caps();
+  caps = room_caps();
   if (!caps || !caps->valid)
     return;
   /* The host is the authority here, so its grant governs before anything is
@@ -2982,11 +3051,33 @@ static void mod_set_sync_step(void)
       g_mods->adopt_set(g_mods->ctx, want, reason, (uint32_t)sizeof(reason)) == 0) {
     fprintf(stderr, "netplay: matched the host's mod configuration:\n%s", want);
     /* The set changed, so what we announce has changed with it. */
-    (void)rnet_lobby_set_ready(1);
+    if (!g_joined_lan) (void)rnet_lobby_set_ready(1);
   } else {
     fprintf(stderr, "netplay: cannot match the host's mod set: %s\n",
             reason[0] ? reason : "(no reason given)");
   }
+}
+
+/* Failed adoption must not launch an old local plan, including in delay mode
+ * where no rollback mod-set handshake can catch the mismatch afterwards. */
+static int room_mods_ready(void)
+{
+  const RNetLobbyMatchCaps *caps = room_caps();
+  char want[1024], reason[160] = {0};
+  size_t i = 0;
+  if (!caps || !caps->valid || !caps->mod_set[0]) return 1;
+  if (!g_mods || !g_mods->check_set) {
+    if (!caps_require_mods(caps)) return 1;
+    snprintf(g_runtime_error, sizeof(g_runtime_error), "mods_unsupported");
+    return 0;
+  }
+  for (; caps->mod_set[i] && i + 2 < sizeof(want); ++i)
+    want[i] = caps->mod_set[i] == ';' ? '\n' : caps->mod_set[i];
+  if (i == 0 || want[i-1] != '\n') want[i++] = '\n';
+  want[i] = '\0';
+  if (g_mods->check_set(g_mods->ctx, want, reason, sizeof(reason)) == 0) return 1;
+  snprintf(g_runtime_error, sizeof(g_runtime_error), "mod_set_mismatch");
+  return 0;
 }
 
 /*
@@ -3141,6 +3232,14 @@ static void cb_push_match_caps(void *ctx)
 {
   RNetLobbyMatchCaps caps;
   (void)ctx;
+  if (g_hosting_lan) {
+    g_lan_room.rollback = g_lobby_rollback;
+    g_lan_room.input_prediction = clamp_input_prediction(g_lobby_input_prediction);
+    fill_lan_mod_set();
+    (void)publish_lan_room();
+    if (g_direct_host) (void)rnet_lan_direct_host_notify_caps(g_direct_host, &g_lan_room);
+    return;
+  }
   if (!rnet_lobby_is_host())
     return;                    /* guests do not publish a plan */
   caps = default_caps(NULL);   /* already carries the current mod plan */
@@ -3241,7 +3340,7 @@ static int cb_rollback_get(void *ctx)
   const RNetLobbyMatchCaps *caps;
   (void)ctx;
   if (g_hosting_lan || g_joined_lan)
-    return 0; /* the LAN room settles no mode; see arm_lan_launch */
+    return room_caps()->rollback;
   caps = rnet_lobby_match_caps();
   if (rnet_lobby_in_lobby() && caps && caps->valid)
     return caps->rollback ? 1 : 0;
@@ -3252,9 +3351,9 @@ static int cb_rollback_set(void *ctx, int enable)
 {
   RNetLobbyMatchCaps caps;
   (void)ctx;
-  if (g_hosting_lan || g_joined_lan)
-    return -1; /* nowhere to publish it: the LAN room has no caps */
+  if (g_joined_lan) return -1;
   g_lobby_rollback = enable ? 1 : 0;
+  if (g_hosting_lan) { cb_push_match_caps(NULL); return 0; }
   if (!rnet_lobby_in_lobby())
     return 0; /* applies to the next create */
   if (!rnet_lobby_is_host())
@@ -3272,7 +3371,7 @@ static int cb_input_prediction_get(void *ctx)
   const RNetLobbyMatchCaps *caps;
   (void)ctx;
   if (g_hosting_lan || g_joined_lan)
-    return 0;
+    return room_caps()->input_prediction;
   caps = rnet_lobby_match_caps();
   if (rnet_lobby_in_lobby() && caps && caps->valid)
     return caps->input_prediction;
@@ -3283,9 +3382,9 @@ static int cb_input_prediction_set(void *ctx, int prediction_frames)
 {
   RNetLobbyMatchCaps caps;
   (void)ctx;
-  if (g_hosting_lan || g_joined_lan)
-    return -1;
+  if (g_joined_lan) return -1;
   g_lobby_input_prediction = clamp_input_prediction(prediction_frames);
+  if (g_hosting_lan) { cb_push_match_caps(NULL); return 0; }
   if (!rnet_lobby_in_lobby())
     return 0;
   if (!rnet_lobby_is_host())

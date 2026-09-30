@@ -497,6 +497,31 @@ recomp-ui does not own the in-game disconnect dialog. Hosts should treat
 mid-match peer loss like a local quit: soft-return to the lobby **without** a
 blocking `SDL_ShowSimpleMessageBox`. Reserve modals for connect-timeout /
 firewall guidance before the session starts.
+
+## Title session policy and LAN mod choices
+
+`RecompLauncherCGameInfo.netplay_mode_changed` is an optional notification
+when the launcher enters the netplay flow (1) or returns to the offline
+dashboard (0). It remains active across Mods, Controls and Settings subviews,
+and across a match launch. Hosts must release their temporary policy when the
+launcher closes without launching netplay. `RECOMP_LAUNCHER_HAS_NETPLAY_MODE_POLICY`
+allows older hosts to probe the addition. Use this to stage a required co-op
+mode without overwriting the player's offline selections; it is not a place
+to start a transport or simulation.
+
+LAN rooms now settle rollback mode, delay and prediction from their room
+fields. With recomp-net's `RNET_LAN_LOBBY_HAS_MOD_SET`, they also publish the
+canonical feature/version/option set, adopt the host's choices on the guest,
+and recheck the final START plan before launch. The same check guards online
+delay-mode launches, which cannot rely on the rollback handshake as a second
+gate. Missing support or failed adoption refuses launch. No resource paths or
+source assets are included; each peer validates its own resources on commit.
+
+The mod text is bounded to the transport's 512-byte room field. Oversized
+plans publish an invalid marker and are rejected instead of advertising a
+valid-looking prefix. LAN does not grant cosmetic exemptions. Older
+recomp-net headers retain LAN timing controls without the new mod field.
+
 ## Engine-defined connection types
 
 `RecompNetplayHostHooks.session_variants` optionally lists stable integer IDs

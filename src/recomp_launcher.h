@@ -2159,12 +2159,19 @@ typedef struct RecompLauncherCGameInfo {
     const int*         internal_resolution_values;
     int                num_internal_resolutions;
     const char*        internal_resolution_note;
+    /* Entering the netplay flow / returning to the offline dashboard.
+     * Optional title policy (e.g. stage required co-op mods). The callback
+     * remains active through controller/settings subviews and a match launch.
+     * Hosts must release their temporary policy if the launcher is dismissed
+     * without a netplay launch. No simulation or network work belongs here. */
+    void (*netplay_mode_changed)(int enabled);
 } RecompLauncherCGameInfo;
 #define RECOMP_LAUNCHER_HAS_NETPLAY_VIEW 1
 #define RECOMP_LAUNCHER_HAS_ROM_PATTERNS 1
 /* Hosts #ifdef on this to stay source-compatible with older recomp-ui that
  * lacks Settings.internal_resolution and the GameInfo vocabulary. */
 #define RECOMP_LAUNCHER_HAS_INTERNAL_RESOLUTION 1
+#define RECOMP_LAUNCHER_HAS_NETPLAY_MODE_POLICY 1
 #define RECOMP_LAUNCHER_HAS_SNES_DISPLAY_ASPECT 1
 #define RECOMP_LAUNCHER_HAS_IN_SESSION 1
 
