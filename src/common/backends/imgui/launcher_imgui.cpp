@@ -29,6 +29,7 @@
 
 #include "imgui.h"
 #include "launcher_nav.h"
+#include "launcher_pad_nav.h"     // pad buttons held when pad nav starts
 #if defined(LNG_SDL3)
   #include "imgui_impl_sdl3.h"
   #define LNG_ImplSDL_InitForOpenGL  ImGui_ImplSDL3_InitForOpenGL
@@ -14085,11 +14086,18 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
          * and Enter still work while listening. */
         {
             ImGuiIO& nav_io = ImGui::GetIO();
-            if (m->capturing || m->hk_capturing || m->camera_capturing ||
-                automap_in_progress() || !s_pad_nav_armed)
+            const bool pad_nav = !(m->capturing || m->hk_capturing || m->camera_capturing ||
+                                   automap_in_progress() || !s_pad_nav_armed);
+            if (!pad_nav)
                 nav_io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
             else
                 nav_io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+            /* Pad buttons already held as pad nav turns on must be released
+             * first (launcher_pad_nav.h). */
+            static bool s_pad_nav_was_on = false;
+            if (pad_nav && !s_pad_nav_was_on)
+                launcher_pad_nav_lock_held_keys();
+            s_pad_nav_was_on = pad_nav;
         }
         LNG_ImplSDL_NewFrame();
         apply_logical_display(p);   // logical DisplaySize + pixel-density frame
