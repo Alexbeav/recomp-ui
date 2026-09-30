@@ -21,6 +21,7 @@
 #include "launcher_panels.h"
 #include "launcher_system.h"
 #include "launcher_i18n.h"
+#include "launcher_mod_visibility.h"
 #include "recomp_moderation.h"   // local ignore/block list (online only)
 #include "consoles/n64/n64_binds.h"   // RUI_N64_FIELD_* for the pad-capture path
 
@@ -645,6 +646,21 @@ static std::string rom_picker_start_path(LauncherModel* m) {
     return std::string();
 }
 
+// The ROM picker's file types: the game's own (GameInfo.rom_patterns, e.g.
+// Famicom Disk System images under the NES profile), else the profile's.
+static RomFilterSpec active_rom_filter(const LauncherModel* m,
+                                       const SystemProfile* prof) {
+    RomFilterSpec f = {};
+    if (m && m->rom_patterns && m->num_rom_patterns > 0) {
+        f.patterns = m->rom_patterns;
+        f.pattern_count = m->num_rom_patterns;
+        f.desc = m->rom_filter_desc;
+    } else if (prof) {
+        f = prof->rom_filter;
+    }
+    return f;
+}
+
 static PickRequest rom_pick_request(LauncherModel* m, const char* title,
                                     const char* const* patterns,
                                     int pattern_count, const char* description,
@@ -690,14 +706,32 @@ static void request_bios_picker(LauncherModel* m, const char* title,
                                 bool from_setup) {
     PickRequest req;
     req.title = title && title[0] ? title : "Select BIOS file";
-    req.patterns = {"*.bin", "*.rom"};
-    req.description = "BIOS image (.bin .rom)";
+    // A host's required system file names its own file types
+    // (GameInfo.bios_patterns); the PSX / GBA default is .bin / .rom.
+    if (m && m->bios_patterns && m->num_bios_patterns > 0) {
+        req.patterns.clear();
+        for (int i = 0; i < m->num_bios_patterns; ++i)
+            if (m->bios_patterns[i]) req.patterns.push_back(m->bios_patterns[i]);
+        req.description = m->bios_filter_desc ? m->bios_filter_desc : "BIOS image";
+    } else {
+        req.patterns = {"*.bin", "*.rom"};
+        req.description = "BIOS image (.bin .rom)";
+    }
     if (m && m->s.bios_path[0]) req.start_path = m->s.bios_path;
     req.from_setup = from_setup;
     req.on_pick = [m](const char* path) {
         if (path) launcher_model_request_bios_path(m, path);
     };
     ui_pick(m, std::move(req));
+}
+
+// The picker title for a named required system file ("Select FDS BIOS
+// (disksys.rom)"), else NULL.
+static const char* named_bios_picker_title(const LauncherModel* m) {
+    static char title[160];
+    if (!m || !m->bios_name) return NULL;
+    snprintf(title, sizeof(title), "Select %s", m->bios_name);
+    return title;
 }
 
 static void draw_builtin_rom_picker_contents(LauncherModel* m,
@@ -2167,6 +2201,7 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         if (launcher_model_disc_count(m) > 1) reserve += px(62.0f);
         if (m->saves_supported) reserve += px(96.0f);    // compact SAVES row below Change ROM
         if (m->password_save_path) reserve += px(96.0f); // password-save row (same footprint)
+        if (m->bios_name && launcher_model_bios_missing(m)) reserve += px(110.0f);  // "required" notice
         if (m->msu1_patch_available) reserve += px(198.0f);  // MSU-1 patch-available sub-block
                                                               // (title + up-to-3-line wrapped note + 2 stacked buttons)
         float art_h = ImGui::GetContentRegionAvail().y - reserve;
@@ -2242,10 +2277,10 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
             snprintf(title, sizeof(title), "Select %s %d", noun, disc_no);
         else
             snprintf(title, sizeof(title), "Select %s%s", noun, m->import_sbi_cb ? " / SBI" : "");
-        if (prof && prof->rom_filter.patterns && prof->rom_filter.pattern_count > 0)
-            request_rom_picker(m, title, prof->rom_filter.patterns,
-                               prof->rom_filter.pattern_count,
-                               prof->rom_filter.desc, false);
+        const RomFilterSpec filter = active_rom_filter(m, prof);
+        if (filter.patterns && filter.pattern_count > 0)
+            request_rom_picker(m, title, filter.patterns, filter.pattern_count,
+                               filter.desc, false);
         else
             request_rom_picker(m, title, NULL, 0, NULL, false);
     }
@@ -2267,18 +2302,33 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
             const SystemProfile* prof = (const SystemProfile*)m->profile;
             char title[64];
             snprintf(title, sizeof(title), "Select %s", noun);
+            const RomFilterSpec filter = active_rom_filter(m, prof);
             PickRequest req =
-                (prof && prof->rom_filter.patterns &&
-                 prof->rom_filter.pattern_count > 0)
-                    ? rom_pick_request(m, title, prof->rom_filter.patterns,
-                                       prof->rom_filter.pattern_count,
-                                       prof->rom_filter.desc, false)
+                (filter.patterns && filter.pattern_count > 0)
+                    ? rom_pick_request(m, title, filter.patterns,
+                                       filter.pattern_count, filter.desc, false)
                     : rom_pick_request(m, title, NULL, 0, NULL, false);
             req.on_pick = [m](const char* path) {
                 if (path) launcher_model_set_rom(m, path);
             };
             open_builtin_picker(m, std::move(req));
         }
+    }
+
+    // A required system file the host could not find (GameInfo.bios_name):
+    // say so where the player is looking and point at Settings, which owns the
+    // picker (the SYSTEM card). PLAY stays disabled until a pick verifies
+    // (launcher_model_can_launch).
+    if (m->bios_name && launcher_model_bios_missing(m)) {
+        ImGui::Dummy(ImVec2(0, px(10)));
+        char head[192];
+        snprintf(head, sizeof(head), "%s %s", m->bios_name, ui_text("required"));
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + availw);
+        ImGui::TextColored(col(th.warn), "%s", head);
+        if (m->setup_bios_detail[0])
+            ImGui::TextColored(col(th.text_muted), "%s", m->setup_bios_detail);
+        ImGui::TextColored(col(th.text_muted), "%s", ui_text("Select it in Settings > System."));
+        ImGui::PopTextWrapPos();
     }
 
     if (m->setup_error[0]) {
@@ -3897,7 +3947,43 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
             ImGui::TextColored(col(th.text_muted), "%s", ui_text(note));
     }
 
-    if (m->has_supersampling) {
+    if (launcher_model_internal_resolution_offered(m)) {
+        /* The host's own resolution vocabulary (PSX: Native / 720p / 1080p /
+         * 1440p / 4K / 5K / 8K / Match display, plus any legacy Nx entry it
+         * synthesized). A list for the same reason Renderer is one: eight
+         * entries are not something to click through. */
+        row_label_right("Internal resolution", th, px(SETTINGS_CTRL_W));
+        ImGui::SetNextItemWidth(px(SETTINGS_CTRL_W));
+        if (ImGui::BeginCombo("##internal_resolution",
+                              ui_text(launcher_model_internal_resolution_label(m)))) {
+            const int n = launcher_model_internal_resolution_count(m);
+            const int cur = launcher_model_internal_resolution_index(m);
+            for (int i = 0; i < n; ++i) {
+                const char* lbl = launcher_model_internal_resolution_label_at(m, i);
+                if (!lbl || !lbl[0]) continue;
+                if (ImGui::Selectable(ui_text(lbl), cur == i))
+                    launcher_model_set_internal_resolution(m, i);
+            }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+            ImGui::SetTooltip("%s", ui_text(
+                "Renders the game at this height, not an upscale.\n"
+                "Cost grows with the square of the scale.\n"
+                "Match display uses your monitor's full resolution.\n"
+                "Applies when the game starts.\n"
+                "Netplay: your view only; other players are unaffected."));
+        }
+        /* The host's words (for example the GPU clamp that applies here),
+         * wrapped to the card: a sentence about limits does not fit the
+         * control column the way a renderer caveat does. */
+        const char* note = launcher_model_internal_resolution_note(m);
+        if (note && *note) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(col(th.text_muted), "%s", ui_text(note));
+            ImGui::PopTextWrapPos();
+        }
+    } else if (m->has_supersampling) {
         row_label_right("Supersampling", th, px(SETTINGS_CTRL_W));
         ImGui::PushID("supersampling");
         if (ImGui::Button(ui_text(launcher_model_supersampling_label(m)), ImVec2(px(SETTINGS_CTRL_W), px(30))))
@@ -4376,9 +4462,57 @@ void panel_input_draw(LauncherModel* m, const LauncherTheme* th) {
 // profile lists "system" (PSX, GBA) AND only shown for a game instance that
 // needs one (has_bios) — composition + availability, both layers, matching
 // the architecture.
-int avail_system(const LauncherModel* m) { return m->has_bios; }
+int avail_system(const LauncherModel* m) { return launcher_model_bios_applies(m); }
+
+// SYSTEM card for a host-named required system file (GameInfo.bios_name, e.g.
+// the Famicom Disk System BIOS): the file in use (the player's pick, or what
+// the host's own lookup found), its verdict, "Select BIOS..." and Clear.
+static void draw_named_system_file(LauncherModel* m, const LauncherTheme& th) {
+    const bool has_pick = m->s.bios_path[0] != 0;
+    const float btn_h = px(34);
+    const float browse_w = px(120);
+    row_label("BIOS", th);
+    float avail = ImGui::GetContentRegionAvail().x - browse_w - px(th.spacing_sm);
+    if (avail < px(50)) avail = px(50);
+    char none[192];
+    snprintf(none, sizeof(none), "%s", m->setup_bios_ok ? ui_text("Found automatically")
+                                                        : ui_text("Not selected"));
+    const char* bp = has_pick ? m->s.bios_path : none;
+    char elided[192]; elide_left(bp, avail, elided, sizeof(elided));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(col(has_pick ? th.text : th.text_muted), "%s", elided);
+    ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x -
+                    browse_w);
+    if (ImGui::Button(ui_text("Select BIOS..."), ImVec2(browse_w, btn_h)))
+        request_bios_picker(m, named_bios_picker_title(m), false);
+    // The verdict: what the host found or why the pick was refused.
+    const bool bad = !m->setup_bios_ok || m->bios_pick_rejected;
+    char status[320];
+    if (m->setup_bios_detail[0])
+        snprintf(status, sizeof(status), "%s", m->setup_bios_detail);
+    else
+        snprintf(status, sizeof(status), "%s %s", m->bios_name,
+                 m->setup_bios_ok ? ui_text("OK") : ui_text("required"));
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+    ImGui::TextColored(col(bad ? th.warn : th.good), "%s", status);
+    ImGui::PopTextWrapPos();
+    if (has_pick) {
+        if (ImGui::Button(ui_text("Clear"), ImVec2(0, btn_h)))
+            launcher_model_request_bios_path(m, "");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Forget this file and look for %s automatically "
+                              "(beside the game, then in bios/).", m->bios_name);
+    }
+}
+
 void draw_system_controls(LauncherModel* m, const LauncherTheme& th) {
     eyebrow("SYSTEM");
+    if (m->bios_name) {
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(px(14), px(8)));
+        draw_named_system_file(m, th);
+        ImGui::PopStyleVar();
+        return;
+    }
     const SystemProfile* prof = (const SystemProfile*)m->profile;
     const bool is_gba = prof && prof->id && std::strcmp(prof->id, "gba") == 0;
     const bool is_psx = prof && prof->id && std::strcmp(prof->id, "psx") == 0;
@@ -6282,6 +6416,16 @@ void draw_controller(LauncherModel* m, const LauncherTheme& th) {
 
 const RecompLauncherCNetplayCallbacks* np_cb(LauncherModel* m) {
     return (m && m->netplay_supported) ? m->netplay : nullptr;
+}
+
+static void draw_netplay_view(LauncherModel* m) {
+    if (!m->netplay_view_labels || m->num_netplay_view_labels <= 1) return;
+    ImGui::SetNextItemWidth(px(200));
+    ImGui::Combo("Your display##netplay_view", &m->s.netplay_view_index,
+                 m->netplay_view_labels, m->num_netplay_view_labels);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Only changes your view. Other players can use a different size.");
+    ImGui::Spacing();
 }
 
 bool np_connected(LauncherModel* m) {
@@ -8518,6 +8662,25 @@ static void draw_lobby_match_settings(LauncherModel* m, const LauncherTheme& th,
     }
     ImGui::BeginDisabled(!is_host);
     {
+        if (np->session_variant_count && np->session_variant_label && np->session_variant_get) {
+            const int count = np->session_variant_count(np->ctx);
+            const int current = np->session_variant_get(np->ctx);
+            const char* selected = "Unsupported connection type";
+            for (int i = 0; i < count; ++i) {
+                int id = 0;
+                const char* label = np->session_variant_label(np->ctx, i, &id);
+                if (id == current && label) selected = label;
+            }
+            if (count > 0 && ImGui::BeginCombo("Connection type", selected)) {
+                for (int i = 0; i < count; ++i) {
+                    int id = 0;
+                    const char* label = np->session_variant_label(np->ctx, i, &id);
+                    if (label && ImGui::Selectable(label, id == current) && np->session_variant_set)
+                        np->session_variant_set(np->ctx, id);
+                }
+                ImGui::EndCombo();
+            }
+        }
         /* Rollback is the match mode and is no longer a lobby toggle: it is
          * whatever the backend reports (default on). Delay-sync stays
          * reachable through the backend's env override for debugging. */
@@ -8740,6 +8903,11 @@ static void draw_lobby_mods_popup(LauncherModel* m, const LauncherTheme& th,
                 for (int i = 0; i < plan_n; ++i) {
                     RecompLauncherCNetplayLobbyMod lm{};
                     if (!np->lobby_mods_get || !np->lobby_mods_get(np->ctx, i, &lm))
+                        continue;
+                    /* A package this peer has that only carries hidden
+                     * features is not shown. One it is MISSING still is: it
+                     * is why the match cannot start. */
+                    if (lm.installed && !launcher_mod_package_listed(mods, lm.id))
                         continue;
                     const int row_prog = np->lobby_mods_progress_one
                         ? np->lobby_mods_progress_one(np->ctx, i) : -1;
@@ -8967,7 +9135,7 @@ static void draw_lobby_mods_popup(LauncherModel* m, const LauncherTheme& th,
             for (int i = 0; i < feature_count; ++i) {
                 RecompLauncherCModFeature f{};
                 if (!mods->feature_get(mods->ctx, i, &f)) continue;
-                if (f.hidden && !f.enabled) continue;
+                if (!launcher_mod_feature_listed(mods, &f)) continue;
                 ++shown;
                 ImGui::PushID(f.package_id);
                 ImGui::PushID(f.id);
@@ -9019,7 +9187,7 @@ static void draw_lobby_mods_popup(LauncherModel* m, const LauncherTheme& th,
             }
             if (shown == 0) {
                 ImGui::TextColored(col(th.text_muted),
-                                   feature_count
+                                   launcher_mod_listed_feature_count(mods)
                                        ? "No mods enabled — vanilla match."
                                        : "No mod features installed.");
             }
@@ -9055,7 +9223,9 @@ static void draw_lobby_mods_popup(LauncherModel* m, const LauncherTheme& th,
     char first_name[128] = {0};   /* RecompLauncherCModFeature::name */
     for (int i = 0; i < lfc; ++i) {
         RecompLauncherCModFeature f{};
-        if (!lmods->feature_get(lmods->ctx, i, &f) || !f.enabled) continue;
+        if (!lmods->feature_get(lmods->ctx, i, &f) || !f.enabled ||
+            !launcher_mod_feature_listed(lmods, &f))
+            continue;
         if (!enabled_n) std::snprintf(first_name, sizeof(first_name), "%s", f.name);
         ++enabled_n;
     }
@@ -9310,7 +9480,9 @@ static bool np_lobby_mods_summary(const LauncherModel* m, char* out, size_t cap)
     char first_name[128] = {0};   /* RecompLauncherCModFeature::name */
     for (int i = 0; i < lfc; ++i) {
         RecompLauncherCModFeature f{};
-        if (!lmods->feature_get(lmods->ctx, i, &f) || !f.enabled) continue;
+        if (!lmods->feature_get(lmods->ctx, i, &f) || !f.enabled ||
+            !launcher_mod_feature_listed(lmods, &f))
+            continue;
         if (!enabled_n) std::snprintf(first_name, sizeof(first_name), "%s", f.name);
         ++enabled_n;
     }
@@ -9508,6 +9680,7 @@ static void draw_lobby_settings_popup(LauncherModel* m, const LauncherTheme& th,
 void draw_lobby(LauncherModel* m, const LauncherTheme& th) {
     const auto* np = np_cb(m);
     if (!np) return;
+    draw_netplay_view(m);
     /* Keep membership live while the room is up (join/leave/move/kick). */
     if (np->pump) np->pump(np->ctx);
     np_ingest_last_error(m, np);
@@ -9930,6 +10103,7 @@ static bool np_mode_card(const LauncherTheme& th, const char* id, const char* ti
 }
 
 void draw_netplay_mode_page(LauncherModel* m, const LauncherTheme& th) {
+    draw_netplay_view(m);
     /* Pump here too, not only on the browser page. The backend does its own
      * lazy setup from the pump -- parsing the lobby host, loading a stored
      * device key, redeeming it -- and this page asks it questions ("is
@@ -10134,6 +10308,7 @@ void draw_netplay_signin_page(LauncherModel* m, const LauncherTheme& th) {
 void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
     const auto* np = np_cb(m);
     if (!np) return;
+    draw_netplay_view(m);
     static bool network_settings_loaded = false;
     if (!network_settings_loaded) {
         network_settings_loaded = true;
@@ -10605,10 +10780,15 @@ static void draw_mod_packages(LauncherModel* m, const LauncherTheme& th) {
     if (ImGui::BeginChild("##mod_list", ImVec2(list_w, 0), ImGuiChildFlags_Borders)) {
         const int count = mods->package_count(mods->ctx);
         int visible = 0;
+        int first_listed = -1;
+        bool selected_listed = false;
         for (int i = 0; i < count; ++i) {
             RecompLauncherCModPackage package{};
             if (!mods->package_get(mods->ctx, i, &package) ||
-                !mod_text_matches(m->mod_search, package)) continue;
+                !launcher_mod_package_listed(mods, package.id)) continue;
+            if (first_listed < 0) first_listed = i;
+            if (i == m->mod_package_selected) selected_listed = true;
+            if (!mod_text_matches(m->mod_search, package)) continue;
             visible++;
             ImGui::PushID(i);
             const bool selected = m->mod_package_selected == i;
@@ -10628,13 +10808,18 @@ static void draw_mod_packages(LauncherModel* m, const LauncherTheme& th) {
             ImGui::PopID();
         }
         if (!visible) ImGui::TextColored(col(th.text_muted), "No matching packages.");
+        /* Same rule as the feature list: the selection indexes every package,
+         * including one that only carries hidden features. */
+        if (!selected_listed && first_listed >= 0)
+            m->mod_package_selected = first_listed;
     }
     ImGui::EndChild();
     ImGui::SameLine();
 
     if (ImGui::BeginChild("##mod_detail", ImVec2(0, 0), ImGuiChildFlags_Borders)) {
         RecompLauncherCModPackage package{};
-        if (mods->package_get(mods->ctx, m->mod_package_selected, &package)) {
+        if (mods->package_get(mods->ctx, m->mod_package_selected, &package) &&
+            launcher_mod_package_listed(mods, package.id)) {
             ImGui::TextColored(col(th.accent2), "%s", package.name);
             ImGui::SameLine();
             ImGui::TextColored(col(th.text_muted), "%s", package.version);
@@ -10954,7 +11139,11 @@ static bool set_all_mod_features(LauncherModel* m, bool enabled) {
     changed.reserve(features.size());
     for (size_t index = 0; index < features.size(); ++index) {
         const RecompLauncherCModFeature& feature = features[index];
-        if ((feature.enabled != 0) == enabled) continue;
+        /* A concealed feature keeps whatever its package and saved state
+         * say; the player cannot see it, so a bulk action must not flip it. */
+        if (launcher_mod_feature_concealed(mods, &feature) ||
+            (feature.enabled != 0) == enabled)
+            continue;
         if (!mods->feature_enable(mods->ctx, feature.package_id, feature.id,
                                   enabled ? 1 : 0)) {
             char failure[sizeof(m->mod_status)] = {};
@@ -11094,18 +11283,31 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
 
     std::vector<ModFeatureListItem> visible_features;
     visible_features.reserve(feature_count > 0 ? (size_t)feature_count : 0);
+    int listed_count = 0;
+    int first_listed = -1;
+    bool selected_listed = false;
     for (int index = 0; index < feature_count; ++index) {
         ModFeatureListItem item{};
         item.index = index;
         if (!mods->feature_get(mods->ctx, index, &item.feature) ||
-            (item.feature.hidden && !item.feature.enabled) ||
-            !mod_feature_text_matches(m->mod_search, item.feature)) {
+            !launcher_mod_feature_listed(mods, &item.feature)) {
             continue;
         }
+        ++listed_count;
+        if (first_listed < 0) first_listed = index;
+        if (index == m->mod_selected) selected_listed = true;
+        if (!mod_feature_text_matches(m->mod_search, item.feature)) continue;
         visible_features.push_back(item);
     }
     std::stable_sort(visible_features.begin(), visible_features.end(),
                      mod_feature_less);
+    /* The selection starts at index 0 and is an index into the whole catalog,
+     * hidden features included, so it can land on one the player must never
+     * see. Move it to the first row the list actually shows. */
+    if (!selected_listed && listed_count > 0) {
+        m->mod_selected = visible_features.empty()
+            ? first_listed : visible_features.front().index;
+    }
 
     const float list_w = px(330);
     if (ImGui::BeginChild("##mod_feature_list", ImVec2(list_w, 0),
@@ -11186,8 +11388,8 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
         if (visible_features.empty()) {
             ImGui::TextColored(col(th.text_muted),
                                "%s",
-                               feature_count ? ui_text("No matching features.")
-                                             : ui_text("No mod features installed."));
+                               listed_count ? ui_text("No matching features.")
+                                            : ui_text("No mod features installed."));
         }
     }
     ImGui::EndChild();
@@ -11196,8 +11398,9 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
     if (ImGui::BeginChild("##mod_feature_detail", ImVec2(0, 0),
                           ImGuiChildFlags_Borders)) {
         RecompLauncherCModFeature feature{};
-        if (feature_count > 0 &&
-            mods->feature_get(mods->ctx, m->mod_selected, &feature)) {
+        if (listed_count > 0 &&
+            mods->feature_get(mods->ctx, m->mod_selected, &feature) &&
+            launcher_mod_feature_listed(mods, &feature)) {
             ImGui::TextColored(col(th.accent2), "%s", feature.name);
             if (const char* channel_tag = mod_channel_tag(feature.channel)) {
                 ImGui::SameLine();
@@ -11838,7 +12041,9 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
             m->action = LNG_ACTION_LAUNCH;
     } else if (!play_enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         const char* noun = m->rom_noun ? m->rom_noun : "ROM";
-        if (m->has_bios && !m->setup_bios_ok) {
+        if (m->bios_name && launcher_model_bios_missing(m)) {
+            ImGui::SetTooltip("Select the %s first", m->bios_name);
+        } else if (m->has_bios && !m->setup_bios_ok) {
             ImGui::SetTooltip(
                 "Select a valid BIOS first (or Use OpenBIOS when this build "
                 "allows it).");
@@ -12569,10 +12774,10 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                               "Select %s (.cue/.bin/.car/.chd)", noun);
             else
                 std::snprintf(title, sizeof(title), "Select %s", noun);
-            if (prof && prof->rom_filter.pattern_count > 0)
-                request_rom_picker(m, title, prof->rom_filter.patterns,
-                                   prof->rom_filter.pattern_count,
-                                   prof->rom_filter.desc, true);
+            const RomFilterSpec filter = active_rom_filter(m, prof);
+            if (filter.pattern_count > 0)
+                request_rom_picker(m, title, filter.patterns,
+                                   filter.pattern_count, filter.desc, true);
             else
                 request_rom_picker(m, title, NULL, 0, NULL, true);
         }

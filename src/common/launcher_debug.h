@@ -22,6 +22,10 @@
 //
 // Screenshots capture the real framebuffer (glReadPixels), so what lands in the
 // PNG is exactly what a user would see, at whatever DPI scale is in effect.
+//
+// LNG_TEST_HIDDEN=1 (with LNG_SCRIPT) creates the window hidden on both the
+// SDL2 and SDL3 backends, so automated runs never appear on the desktop or
+// take focus; shot: still captures the rendered frame.
 
 #ifndef LAUNCHER_NG_DEBUG_H
 #define LAUNCHER_NG_DEBUG_H

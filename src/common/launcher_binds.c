@@ -1,4 +1,4 @@
-// launcher_binds.c — real binding persistence (keybinds.ini + config.ini [KeyMap]).
+// launcher_binds.c â€” real binding persistence (keybinds.ini + config.ini [KeyMap]).
 
 #include "launcher_binds.h"
 #include "launcher_sdlcompat.h"   // SDL header (2 or 3)
@@ -33,10 +33,10 @@ const char* g_launcher_keybinds_path = NULL;
 // a,b,x,y,l,r,start,select,up,down,left,right,l2,r2,l3,r3 (see keybinds.h).
 //
 // SNES rebind spec order (launcher_system.h kSnesPadButtons): Up,Down,Left,
-// Right,A,B,X,Y,L,R,Start,Select. UNCHANGED from before per-system vocab —
+// Right,A,B,X,Y,L,R,Start,Select. UNCHANGED from before per-system vocab â€”
 // SNES bind persistence stays byte-identical (indices 0..11, same mapping).
 //
-// PSX no longer routes through this generic table/keybinds.c at all — see
+// PSX no longer routes through this generic table/keybinds.c at all â€” see
 // consoles/psx/psx_binds.c, which persists through psxrecomp's own
 // psx_keybinds.c format instead so rebinds actually reach the game (routing
 // PSX's 24 buttons through this 16-slot generic format silently discarded
@@ -66,7 +66,7 @@ static const int* active_kb_index(const LauncherModel* m, int* out_n) {
 }
 
 // ---- PSX-native keybind bridge ---------------------------------------------
-// Lives in consoles/psx/psx_binds.c (the console's own unit) — for a PSX
+// Lives in consoles/psx/psx_binds.c (the console's own unit) â€” for a PSX
 // SystemProfile, persistence routes through psxrecomp's native 24-scancode
 // psx_keybinds.c format instead of the generic keybinds.c store, so rebinds
 // actually reach the game. This file only decides WHICH store to use (by the
@@ -83,6 +83,15 @@ static int is_psx_profile(const LauncherModel* m) {
 static int is_nes_profile(const LauncherModel* m) {
     const SystemProfile* prof = m ? (const SystemProfile*)m->profile : NULL;
     return prof && prof->id && !strcmp(prof->id, "nes");
+}
+
+// The NES-native store (the nesrecomp function-level runner's keybinds.ini)
+// serves only hosts that read that file. A host that owns its bindings
+// (GameInfo.settings_bindings: nesrecomp's cycle host keeps them in its own
+// config.ini) must not have that file created, seeded or rewritten beside it:
+// nothing would read it, and a player editing it would change nothing.
+static int nes_native_store(const LauncherModel* m) {
+    return is_nes_profile(m) && !m->settings_bindings;
 }
 
 static const char* keybinds_file_path(void) {
@@ -110,7 +119,7 @@ void launcher_binds_hydrate_psx_pad_names(LauncherModel* m);
 
 // ---- N64-native input.cfg bridge --------------------------------------------
 // Lives in consoles/n64/n64_binds.c. The N64 runners persist bindings in
-// their own input.cfg format — TWO device-type tables (keyboard, controller —
+// their own input.cfg format â€” TWO device-type tables (keyboard, controller â€”
 // shared by all pads, NOT per-port) with two alternate slots per input, where
 // a controller bind can be a pad button, a signed pad axis, or a raw joystick
 // field. This file only decides WHICH store to use and, for N64, WHICH device
@@ -136,7 +145,7 @@ static int n64_device_for_player(const LauncherModel* m, int player /*0-based*/)
     return m->s.player_src[player] == 2 ? 1 : 0;
 }
 
-// input.ini beside input.cfg — same rule, same shared helper, as PSX above.
+// input.ini beside input.cfg â€” same rule, same shared helper, as PSX above.
 static const char* n64_input_ini_path(void) {
     static char buf[1024];
     rui_n64_pad_binds_path(n64_binds_file_path(), buf, (int)sizeof(buf));
@@ -162,7 +171,7 @@ static const char* n64_player_guid(const LauncherModel* m, int player /*1-based*
 }
 
 // ---- Genesis-native bind bridge ----------------------------------------------
-// Lives in consoles/genesis/genesis_binds.c — for a Genesis SystemProfile,
+// Lives in consoles/genesis/genesis_binds.c â€” for a Genesis SystemProfile,
 // persistence routes through segagenesisrecomp's own settings.ini
 // [input.pN] key.<Name>/pad.<Name> format (runner/app_config.c) instead of
 // the generic keybinds.c store, so rebinds actually reach the game's
@@ -174,7 +183,7 @@ static int is_genesis_profile(const LauncherModel* m) {
 }
 
 // ---- Game Boy-native bind bridge ---------------------------------------------
-// Lives in consoles/gb/gb_binds.c — for a gb/gbc SystemProfile, persistence
+// Lives in consoles/gb/gb_binds.c â€” for a gb/gbc SystemProfile, persistence
 // routes through gb-recompiled's own keybinds.ini [controls] format (SDL
 // scancode names) instead of the generic keybinds.c store, so rebinds reach
 // the game. Single player (the Game Boy is a one-player handheld). Both the
@@ -290,6 +299,7 @@ static void reload_player_display(LauncherModel* m, int player) {
         return;
     }
     if (is_nes_profile(m)) {
+        if (!nes_native_store(m)) return;   /* host-owned: chips read Settings */
         for (int b = 0; b < LNG_NES_PAD_BUTTON_COUNT; ++b)
             copy_str(m->binds[player - 1][b], sizeof(m->binds[player - 1][b]),
                      scancode_label((SDL_Scancode)rui_nes_binds_get(
@@ -321,7 +331,7 @@ static void reload_player_display(LauncherModel* m, int player) {
     }
     if (is_n64_profile(m)) {
         // Two stores, one row each. The KEY chip is input.cfg's keyboard table
-        // (device 0 — still per-device-TYPE, which is right for a keyboard:
+        // (device 0 â€” still per-device-TYPE, which is right for a keyboard:
         // there is one). The GAMEPAD chip is this pad's own input.ini section.
         // binds_alt is deliberately not filled: the page is single-chip now
         // (n64_profile.h binds_per_input), so a second label nothing draws
@@ -355,7 +365,7 @@ static void reload_player_display(LauncherModel* m, int player) {
 }
 
 void launcher_binds_refresh_camera(LauncherModel* m) {
-    if (!m || !is_nes_profile(m)) return;
+    if (!m || !nes_native_store(m)) return;
     for (int action = 0; action < LNG_CAMERA_BIND_COUNT; ++action) {
         copy_str(
             m->camera_binds[action], sizeof(m->camera_binds[action]),
@@ -893,6 +903,7 @@ void launcher_binds_load(LauncherModel* m, const char* config_path_in, const cha
         rui_n64_binds_init(n64_binds_file_path());      // load input.cfg (defaults if absent; never seeds the file)
         rui_n64_pad_binds_init(n64_input_ini_path());   // gamepad maps (input.ini, per GUID)
     } else if (is_nes_profile(m)) {
+        if (!nes_native_store(m)) goto loaded;      // host-owned bindings: no native file
         rui_nes_binds_init(keybinds_file_path());   // load/generate nesrecomp-format keybinds.ini
         // Zapper switches live in the same file ([zapper]); surface them on
         // the model for the controller page's Zapper block.
@@ -907,6 +918,7 @@ void launcher_binds_load(LauncherModel* m, const char* config_path_in, const cha
     } else {
         recompui_keybinds_init(NULL);              // load/generate keybinds.ini (exe-anchored)
     }
+loaded:
     launcher_binds_refresh(m);
     launcher_binds_refresh_camera(m);
     reload_hotkey_display(m);
@@ -918,14 +930,14 @@ void launcher_binds_refresh(LauncherModel* m) {
 }
 
 // Persist the Zapper switches to keybinds.ini [zapper] (surgical: the rest of
-// the file — player binds, gamepad sections, comments — is preserved).
+// the file â€” player binds, gamepad sections, comments â€” is preserved).
 // Called by launcher_model_toggle_zapper_* on every flip.
 void launcher_binds_set_zapper(int mouse_enabled, int crosshair) {
     rui_nes_zapper_set(keybinds_file_path(), mouse_enabled, crosshair);
 }
 
 void launcher_binds_set_camera(LauncherModel* m, int action, int scancode) {
-    if (!m || !is_nes_profile(m) ||
+    if (!m || !nes_native_store(m) ||
         action < 0 || action >= LNG_CAMERA_BIND_COUNT)
         return;
     rui_nes_camera_bind_set(keybinds_file_path(), action, scancode);
@@ -934,7 +946,7 @@ void launcher_binds_set_camera(LauncherModel* m, int action, int scancode) {
 }
 
 void launcher_binds_reset_camera(LauncherModel* m) {
-    if (!m || !is_nes_profile(m)) return;
+    if (!m || !nes_native_store(m)) return;
     rui_nes_camera_bind_reset(keybinds_file_path());
     launcher_binds_refresh_camera(m);
 }
@@ -1020,7 +1032,7 @@ void launcher_binds_set_field(LauncherModel* m, int player, int b, int slot,
     const int dev = (type == RUI_N64_FIELD_KEY) ? 0
                                                 : n64_device_for_player(m, player - 1);
     rui_n64_binds_set(n64_binds_file_path(), dev, b, slot, type, id);
-    // The table is shared by every player on the same device kind — refresh
+    // The table is shared by every player on the same device kind â€” refresh
     // ALL players' display strings, not just the one that captured.
     launcher_binds_refresh(m);
 }
@@ -1055,8 +1067,8 @@ void launcher_binds_set_pad_button(LauncherModel* m, int player, int b,
         // The RT64-era N64 runners read input.cfg and nothing else, so dropping
         // the mirror would leave their players with a Configure page that
         // writes a file the game never opens. The mirror is lossy by
-        // construction — one table for every controller, so the last pad edited
-        // wins — which is precisely the defect input.ini exists to fix, and is
+        // construction â€” one table for every controller, so the last pad edited
+        // wins â€” which is precisely the defect input.ini exists to fix, and is
         // no worse than what those runners had before this store existed.
         n64_mirror_pad_bind_to_cfg(b, kind, code, axis_dir);
         rui_n64_pad_binds_source(n64_input_ini_path(), guid, b,
@@ -1165,7 +1177,7 @@ static void psx_fallback_pad_label(const char* guid, char* out, size_t cap) {
     if (guid && guid[0]) {
         size_t n = strlen(guid);
         if (n >= 8)
-            snprintf(out, cap, "Controller …%s", guid + n - 8);
+            snprintf(out, cap, "Controller â€¦%s", guid + n - 8);
         else
             snprintf(out, cap, "Controller %s", guid);
         return;

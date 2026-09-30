@@ -69,6 +69,17 @@ static int g_lobby_max_slots = 2;   /* seat ceiling for current/created room */
  * default (the lobby default), and a runway only once somebody set one --
  * 0 publishes nothing and the engine keeps its own default P. */
 static int g_lobby_rollback = 1;
+static int g_session_variant;
+
+static int supports_session_variant(int value)
+{
+  int i;
+  if (!g_h.session_variants || g_h.session_variant_count <= 0)
+    return value == 0;
+  for (i = 0; i < g_h.session_variant_count; ++i)
+    if (g_h.session_variants[i].value == value) return 1;
+  return 0;
+}
 static int g_lobby_input_prediction = 0;
 static int g_lan_guest_rtt_ms = -1;
 
@@ -233,8 +244,12 @@ static int publish_lan_room(void)
   /* The seated guest hears every room change over its socket; the file is
    * for browsers on this machine; the beacon (beacon_publish_step, from the
    * pump) is for browsers on the other machines. */
-  if (g_direct_host)
+  if (g_direct_host) {
     (void)rnet_lan_direct_host_notify_room(g_direct_host, &g_lan_room);
+#ifdef RNET_HAS_SESSION_VARIANT
+    (void)rnet_lan_direct_host_notify_caps(g_direct_host, &g_lan_room);
+#endif
+  }
   return rnet_lan_lobby_publish(lan_path(), &g_lan_room) == RNET_LAN_LOBBY_OK;
 }
 
@@ -566,6 +581,9 @@ static RNetLobbyMatchCaps default_caps(const RecompLauncherCSettings *settings)
   caps.valid = 1;
   /* The waiting room's settings; fill_match_caps may override. */
   caps.rollback = g_lobby_rollback ? 1 : 0;
+#ifdef RNET_HAS_SESSION_VARIANT
+  caps.session_variant = g_session_variant;
+#endif
   caps.input_delay = clamp_input_delay(g_lobby_input_delay);
   caps.input_prediction = clamp_input_prediction(g_lobby_input_prediction);
   if (g_h.fill_match_caps)
@@ -685,6 +703,9 @@ static int create_lan(const char *name, const char *endpoint,
   snprintf(g_lan_room.password, sizeof(g_lan_room.password), "%s",
            password ? password : "");
   g_lan_room.host_slot = 0;
+#ifdef RNET_HAS_SESSION_VARIANT
+  g_lan_room.session_variant = g_session_variant;
+#endif
   g_lan_room.input_delay = clamp_input_delay(g_lobby_input_delay);
   g_lan_room.rollback = g_lobby_rollback;
   g_lan_room.input_prediction = clamp_input_prediction(g_lobby_input_prediction);
@@ -1041,6 +1062,9 @@ static void arm_lan_launch(const RNetLanLobby *state)
   /* The id the host allocated for this START (cb_request_start); 1 from a
    * host that predates it, which is what such a host itself launches. */
   g_lan_launch.session_id = state->session_id ? state->session_id : 1u;
+#ifdef RNET_HAS_SESSION_VARIANT
+  g_lan_launch.session_variant = state->session_variant;
+#endif
   g_lan_launch.input_delay =
       clamp_input_delay(state->input_delay >= 2 ? state->input_delay
                                                 : g_lobby_input_delay);
@@ -1067,6 +1091,11 @@ int recomp_netplay_host_init(const RecompNetplayHostHooks *hooks)
     return -1;
   memset(&g_h, 0, sizeof(g_h));
   g_h = *hooks;
+  g_session_variant = g_h.default_session_variant;
+  if (!supports_session_variant(g_session_variant)) return -1;
+#ifndef RNET_HAS_SESSION_VARIANT
+  if (g_h.session_variant_count > 0) return -1;
+#endif
   g_mods = g_h.mods;
   g_hosting_lan = 0;
   g_joined_lan = 0;
@@ -2354,6 +2383,9 @@ static int cb_request_start(void *ctx, const RecompLauncherCSettings *settings)
       return -1;
     g_lan_room.started = 1;
     g_lan_room.session_id = next_lan_session_id();
+#ifdef RNET_HAS_SESSION_VARIANT
+    g_lan_room.session_variant = caps.session_variant;
+#endif
     g_lan_room.input_delay = clamp_input_delay(g_lobby_input_delay);
     (void)publish_lan_room();
     arm_lan_launch(&g_lan_room);
@@ -2551,6 +2583,10 @@ static int cb_fill_launch(void *ctx, RecompLauncherCNetplayLaunch *out)
   if (g_lan_launch.enabled) {
     mod_set_sync_step(); /* START may carry a newer plan than the last CAPS. */
     if (!room_mods_ready()) return 0;
+    if (!supports_session_variant(g_lan_launch.session_variant)) {
+      snprintf(g_runtime_error, sizeof(g_runtime_error), "unsupported_session_variant");
+      return 0;
+    }
     *out = g_lan_launch;
     out->force_input_relay = 0;
     out->max_slots = 2;
@@ -2564,6 +2600,11 @@ static int cb_fill_launch(void *ctx, RecompLauncherCNetplayLaunch *out)
    * delay, the mode or the relay. */
   if (!caps || !caps->valid)
     return 0;
+#ifdef RNET_HAS_SESSION_VARIANT
+  if (!supports_session_variant(caps->session_variant))
+    return refuse_launch(join.session_id, "unsupported_session_variant",
+                         "the host selected a connection type this build cannot run");
+#endif
   /* A vanilla-only build cannot run a room whose host requires mods. The
    * host's own launch gate normally holds such a match (our offer names no
    * packages); this is the second lock, for a host that does not gate. */
@@ -2584,6 +2625,9 @@ static int cb_fill_launch(void *ctx, RecompLauncherCNetplayLaunch *out)
   /* 0 when the host published none: the engine keeps its own default. */
   out->input_prediction = clamp_input_prediction(caps->input_prediction);
   out->rollback = caps->rollback ? 1 : 0;
+#ifdef RNET_HAS_SESSION_VARIANT
+  out->session_variant = caps->session_variant;
+#endif
   out->force_turn = caps->force_turn ? 1 : 0;
   /* The launch's own statement, not the caps copy: the caps field is shared
    * with the host's UI toggle and is overwritten by any lobby_update that
@@ -3381,6 +3425,47 @@ static int cb_mod_xfer_progress(void *ctx)
   return rnet_lobby_mod_progress();
 }
 
+#ifdef RNET_HAS_SESSION_VARIANT
+static int cb_session_variant_count(void *ctx)
+{
+  (void)ctx;
+  return g_h.session_variants ? g_h.session_variant_count : 0;
+}
+static const char *cb_session_variant_label(void *ctx, int index, int *value)
+{
+  (void)ctx;
+  if (index < 0 || index >= cb_session_variant_count(ctx)) return NULL;
+  if (value) *value = g_h.session_variants[index].value;
+  return g_h.session_variants[index].label;
+}
+static int cb_session_variant_get(void *ctx)
+{
+  const RNetLobbyMatchCaps *caps;
+  RNetLanLobby room;
+  (void)ctx;
+  if (g_hosting_lan || g_joined_lan)
+    return use_lan_members(&room) ? room.session_variant : g_lan_room.session_variant;
+  caps = rnet_lobby_match_caps();
+  return rnet_lobby_in_lobby() && caps && caps->valid ? caps->session_variant : g_session_variant;
+}
+static int cb_session_variant_set(void *ctx, int value)
+{
+  RNetLobbyMatchCaps caps;
+  (void)ctx;
+  if (!supports_session_variant(value) || g_joined_lan || g_lan_launch.enabled ||
+      (g_hosting_lan && g_lan_room.started) ||
+      (rnet_lobby_in_lobby() && !rnet_lobby_is_host())) return -1;
+  g_session_variant = value;
+  if (g_hosting_lan) {
+    g_lan_room.session_variant = value;
+    return publish_lan_room() ? 0 : -1;
+  }
+  if (!rnet_lobby_in_lobby()) return 0;
+  caps = default_caps(NULL);
+  return rnet_lobby_set_match_caps(&caps);
+}
+#endif
+
 static RecompLauncherCNetplayCallbacks g_callbacks = {
     NULL,
     cb_default_url,
@@ -3424,6 +3509,12 @@ static RecompLauncherCNetplayCallbacks g_callbacks = {
     /* Designated from here: the struct is append-only, and positional entries
      * past this point would silently shift if a field were ever inserted. */
     .rollback_get = cb_rollback_get,
+#ifdef RNET_HAS_SESSION_VARIANT
+    .session_variant_count = cb_session_variant_count,
+    .session_variant_label = cb_session_variant_label,
+    .session_variant_get = cb_session_variant_get,
+    .session_variant_set = cb_session_variant_set,
+#endif
     .rollback_set = cb_rollback_set,
     .input_prediction_get = cb_input_prediction_get,
     .input_prediction_set = cb_input_prediction_set,

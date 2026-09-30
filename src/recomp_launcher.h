@@ -251,6 +251,7 @@ typedef struct RecompLauncherCNetplayChatMessage {
     uint32_t seq;
 } RecompLauncherCNetplayChatMessage;
 
+#define RECOMP_LAUNCHER_HAS_SESSION_VARIANT 1
 typedef struct RecompLauncherCNetplayLaunch {
     int      enabled;
     int      local_slot;
@@ -320,6 +321,8 @@ typedef struct RecompLauncherCNetplayLaunch {
      * gallery). Without it, session slot == lobby seat == port. */
     int      slot_port_valid;
     int      slot_port[RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS + 1];
+    /* Opaque engine-defined session hardware/rules selection, set by host. */
+    int      session_variant;
 } RecompLauncherCNetplayLaunch;
 
 typedef struct RecompLauncherCNetplayLocalAddress {
@@ -721,6 +724,13 @@ typedef struct RecompLauncherCNetplayCallbacks {
     int         (*automatch_accept)(void* ctx, int accept);
     /* One line for a human when state is FAILED, or after a refused queue. */
     const char* (*automatch_error)(void* ctx);
+    /* Optional (append-only): engine-defined connection types. IDs are stable
+     * wire values, not indices. Guests read the host choice; only the host
+     * may set it. Leave NULL for the existing single-variant behavior. */
+    int  (*session_variant_count)(void* ctx);
+    const char* (*session_variant_label)(void* ctx, int index, int* value);
+    int  (*session_variant_get)(void* ctx);
+    int  (*session_variant_set)(void* ctx, int value);
 } RecompLauncherCNetplayCallbacks;
 
 /* Present since the account callbacks were added. A host guards its wiring
@@ -856,7 +866,9 @@ typedef struct RecompLauncherCModFeature {
     int  camera_controls;
     /* Hidden features are omitted from normal picker lists while disabled.
      * Providers still expose them so an explicitly-enabled hidden feature can
-     * be shown and turned off again. */
+     * be shown and turned off again -- unless the provider sets
+     * hide_hidden_features, which never presents them at all (see
+     * launcher_mod_visibility.h). */
     int  hidden;
     /* RecompLauncherCModChannel. Stable is 0, so zero-init and older providers
      * both mean "stable" and need no special case. Developer-channel features
@@ -1010,6 +1022,12 @@ typedef struct RecompLauncherCModProvider {
     int (*catalog_diagnostic_count)(void* ctx);
     int (*catalog_diagnostic_get)(void* ctx, int index,
                                   RecompLauncherCModDiagnostic* out);
+    /* Title opt-in: non-zero never presents a hidden feature (not even
+     * while enabled), leaves it out of "Enable all" / "Disable all", and
+     * omits a package whose every feature is hidden. The feature still runs
+     * as its package and the saved state say. Zero keeps the default rule
+     * above. Appended for ABI stability. */
+    int hide_hidden_features;
 } RecompLauncherCModProvider;
 
 // Plain-C mirror of the launcher's internal settings (bools as int).
@@ -1036,7 +1054,7 @@ struct RecompLauncherCSettings {
     // has_* flags below — consoles that don't set the flags leave these unused) ----
     int  window_width;        // px window width (height follows aspect)
     int  renderer;            // 0 = software, 1 = OpenGL
-    int  supersampling;       // 1..4
+    int  supersampling;       // 1..4 (legacy cycle; see internal_resolution)
     int  antialiasing;        // MSAA sample count: 0 = off, else 2/4/8 (x). (A
                               // legacy on/off host may still write 0/1.)
     int  texture_filter;      // 0 = nearest, 1 = bilinear
@@ -1338,6 +1356,18 @@ struct RecompLauncherCSettings {
      * effective range is 1..100. Stored as a percent (not 0..1) so the whole
      * settings struct stays plain-int. Appended additively. */
     int  scanline_strength_pct;
+    // Local display choice from GameInfo.netplay_view_labels. Persisted by
+    // the host, separate from single-player aspect and match capabilities.
+    int netplay_view_index;
+    /* Internal resolution chosen from the host's vocabulary
+     * (GameInfo.internal_resolution_labels/_values). The encoding is the
+     * host's, but the convention is: 0 = unset (a host that predates this
+     * field, or none chosen: the legacy `supersampling` stands), 1 = native,
+     * -1 = match the display, N >= 2 = target output lines (720, 1080,
+     * 1440, 2160, 2880, 4320, or a host-synthesized legacy entry).
+     * Only meaningful when the host supplied a vocabulary. Appended
+     * additively; a zero-initialized host reads as unset. */
+    int  internal_resolution;
 };
 
 /* Largest run-ahead depth the launcher will offer for
@@ -1396,6 +1426,11 @@ typedef struct RecompLauncherCBiosVerify {
      * Generate & rebuild (or switch back to a linked BIOS like OpenBIOS).
      * Appended for ABI compatibility; older hosts leave it 0 via memset. */
     int  needs_regen;
+    /* 1 = the selected image needs no BIOS at all (a cartridge in a build that
+     * also runs disk images): the SYSTEM card and the dashboard's "required"
+     * notice hide and PLAY is not gated. Only bios_verify_for_rom, which sees
+     * the image, can know this. Appended; older hosts leave it 0. */
+    int  not_needed;
 } RecompLauncherCBiosVerify;
 
 /* Optional progress callback for prepare_with_progress (worker thread).
@@ -2005,6 +2040,64 @@ typedef struct RecompLauncherCGameInfo {
      * for a console whose runtime implements it (PSX); everything else leaves
      * this 0 and the rows are absent. Appended for ABI stability. */
     int has_scanlines;
+    // Optional local-only netplay display choices. The host must authorize
+    // only rendering that cannot change synchronized game state. Index zero
+    // is the native/default view; omit adaptive for games where it is unsafe.
+    const char* const* netplay_view_labels;
+    int num_netplay_view_labels;
+    /* ---- media picker override (appended for ABI stability) -------------
+     * The file types the ROM picker offers, and its description, when this
+     * game's media are not its console profile's usual ones -- e.g. a
+     * Famicom Disk System title (".fds", ".qd") under the NES profile, whose
+     * own filter is ".nes". NULL/0 keeps the profile's filter. Borrowed. */
+    const char* const* rom_patterns;
+    int  num_rom_patterns;
+    const char* rom_filter_desc;
+    /* ---- a required system file (appended for ABI stability) -------------
+     * For a game whose image needs a system file this build cannot ship and
+     * the player supplies (e.g. the Famicom Disk System's disksys.rom), with
+     * has_bios set:
+     *   bios_name        what to call it ("FDS BIOS") on the
+     *                    SYSTEM card, the picker's title, the dashboard's
+     *                    "required" notice and PLAY's tooltip. NULL keeps the
+     *                    PSX / GBA wording.
+     *   bios_patterns / num_bios_patterns / bios_filter_desc
+     *                    the picker's file types (NULL/0: *.bin, *.rom).
+     *   bios_verify_for_rom (+ bios_verify_ctx)
+     *                    used instead of bios_verify, and also given the image
+     *                    the launcher has selected ("" for none); re-run when
+     *                    it changes. For a host whose lookup depends on the
+     *                    image (a BIOS beside it) or whose images do not all
+     *                    need one (out->not_needed). The empty bios_path asks
+     *                    for the host's own lookup, as with bios_verify; an
+     *                    ok=0 there is the "required" state, and PLAY stays
+     *                    disabled until a pick verifies.
+     *   host_persists_paths
+     *                    1: the host keeps the picks in its own settings file
+     *                    (Settings.bios_path read back on return, and/or
+     *                    persist_setup), so the launcher writes no rom.cfg /
+     *                    disc.cfg / bios.cfg sidecars when the BIOS changes.
+     * Zero / NULL keeps every existing launcher as it is. Borrowed. */
+    const char* bios_name;
+    const char* const* bios_patterns;
+    int  num_bios_patterns;
+    const char* bios_filter_desc;
+    int (*bios_verify_for_rom)(void* ctx, const char* bios_path, const char* rom_path,
+                               RecompLauncherCBiosVerify* out);
+    void* bios_verify_ctx;
+    int  host_persists_paths;
+    /* Host vocabulary for the Internal resolution row (Settings
+     * .internal_resolution). When num_internal_resolutions > 0 and both arrays
+     * are set, the has_supersampling row draws as an "Internal resolution"
+     * dropdown of these labels, storing the parallel value; the host's note,
+     * if any, is drawn under it verbatim (e.g. a GPU clamp). Otherwise the
+     * legacy Supersampling cycle is drawn, unchanged. All borrowed; the host
+     * keeps them alive for the launcher's lifetime. Appended for ABI
+     * stability. */
+    const char* const* internal_resolution_labels;
+    const int*         internal_resolution_values;
+    int                num_internal_resolutions;
+    const char*        internal_resolution_note;
     /* Entering the netplay flow / returning to the offline dashboard.
      * Optional title policy (e.g. stage required co-op mods). The callback
      * remains active through controller/settings subviews and a match launch.
@@ -2012,6 +2105,11 @@ typedef struct RecompLauncherCGameInfo {
      * without a netplay launch. No simulation or network work belongs here. */
     void (*netplay_mode_changed)(int enabled);
 } RecompLauncherCGameInfo;
+#define RECOMP_LAUNCHER_HAS_NETPLAY_VIEW 1
+#define RECOMP_LAUNCHER_HAS_ROM_PATTERNS 1
+/* Hosts #ifdef on this to stay source-compatible with older recomp-ui that
+ * lacks Settings.internal_resolution and the GameInfo vocabulary. */
+#define RECOMP_LAUNCHER_HAS_INTERNAL_RESOLUTION 1
 #define RECOMP_LAUNCHER_HAS_NETPLAY_MODE_POLICY 1
 #define RECOMP_LAUNCHER_HAS_SNES_DISPLAY_ASPECT 1
 #define RECOMP_LAUNCHER_HAS_IN_SESSION 1

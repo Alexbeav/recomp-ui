@@ -235,6 +235,22 @@ if(BUILD_TESTING)
         NAME recomp-ui-launcher-video-pick
         COMMAND $<TARGET_FILE:recomp-ui-launcher-video-pick-test>)
 
+    # Internal resolution as a host-supplied list (PSX presets), with the
+    # legacy Supersampling cycle untouched when no vocabulary is supplied.
+    add_executable(recomp-ui-launcher-internal-resolution-test
+        tests/launcher_internal_resolution_test.c
+        src/common/crc32.c
+        src/common/sha1.c
+        src/common/sha256.c
+        src/common/ips_patch.c
+        src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-launcher-internal-resolution-test PRIVATE
+        src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-launcher-internal-resolution-test PRIVATE ${RUI_SDL_TARGET})
+    add_test(
+        NAME recomp-ui-launcher-internal-resolution
+        COMMAND $<TARGET_FILE:recomp-ui-launcher-internal-resolution-test>)
+
     # First-run wizard: staging a retail BIOS that has no linked backend.
     # Same include-the-TU shape as the discs test above.
     add_executable(recomp-ui-launcher-setup-bios-test
@@ -388,6 +404,17 @@ if(BUILD_TESTING)
     add_test(NAME recomp-ui-launcher-nav-backspace
              COMMAND $<TARGET_FILE:recomp-ui-launcher-nav-backspace-test>)
 
+    # Hidden mod features: the default rule (listed while enabled) and the
+    # title opt-in hide_hidden_features (never presented, package omitted).
+    # Pure logic over a fake provider -- no SDL, no ImGui.
+    add_executable(recomp-ui-launcher-mod-visibility-test
+        tests/launcher_mod_visibility_test.c
+        src/common/launcher_mod_visibility.c)
+    target_include_directories(recomp-ui-launcher-mod-visibility-test PRIVATE
+        src src/common)
+    add_test(NAME recomp-ui-launcher-mod-visibility
+             COMMAND $<TARGET_FILE:recomp-ui-launcher-mod-visibility-test>)
+
     add_executable(recomp-ui-launcher-model-cache-test
         tests/launcher_model_cache_test.c
         src/common/launcher_model.c
@@ -396,6 +423,12 @@ if(BUILD_TESTING)
         src/common/sha256.c
         src/common/ips_patch.c
         src/consoles/psx/memcard_format.c)
+    add_executable(recomp-ui-netplay-view-test
+        tests/netplay_view_test.c src/common/launcher_model.c
+        src/common/crc32.c src/common/sha1.c src/common/sha256.c
+        src/common/ips_patch.c src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-netplay-view-test PRIVATE src src/common src/consoles/psx)
+    add_test(NAME recomp-ui-netplay-view COMMAND $<TARGET_FILE:recomp-ui-netplay-view-test>)
     target_include_directories(recomp-ui-launcher-model-cache-test PRIVATE
         src src/common src/consoles/psx)
     # Readers also probe beside their executable. Keep them out of the setup
@@ -459,6 +492,36 @@ if(BUILD_TESTING)
     add_test(NAME recomp-ui-launcher-settings
         COMMAND $<TARGET_FILE:recomp-ui-launcher-settings-test>
                 "${CMAKE_CURRENT_BINARY_DIR}/settings-fixtures")
+
+    # A host-owned binding store under the NES profile leaves the runner's
+    # keybinds.ini alone (launcher_binds.c nes_native_store).
+    add_executable(recomp-ui-nes-host-bindings-test
+        tests/nes_host_bindings_test.c
+        src/common/launcher_model.c
+        src/common/launcher_binds.c
+        src/common/keybinds.c
+        src/common/pad_binds.c
+        src/consoles/nes/nes_binds.c
+        src/consoles/psx/psx_binds.c
+        src/consoles/psx/psx_pad_binds.c
+        src/consoles/snes/snes_pad_binds.c
+        src/consoles/n64/n64_binds.c
+        src/consoles/n64/n64_pad_binds.c
+        src/consoles/genesis/genesis_binds.c
+        src/consoles/gb/gb_binds.c
+        src/consoles/psx/memcard_format.c
+        src/common/crc32.c
+        src/common/sha1.c
+        src/common/sha256.c
+        src/common/ips_patch.c)
+    target_include_directories(recomp-ui-nes-host-bindings-test PRIVATE
+        src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-nes-host-bindings-test PRIVATE ${RUI_SDL_TARGET})
+    target_compile_definitions(recomp-ui-nes-host-bindings-test PRIVATE ${RUI_SDL_DEFS})
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/nes-host-bindings")
+    add_test(NAME recomp-ui-nes-host-bindings
+        COMMAND $<TARGET_FILE:recomp-ui-nes-host-bindings-test>
+                "${CMAKE_CURRENT_BINARY_DIR}/nes-host-bindings")
 
     add_executable(recomp-runtime-ui-imgui-test
         tests/runtime_ui_imgui_test.cpp

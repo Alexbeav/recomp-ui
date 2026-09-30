@@ -400,6 +400,9 @@ void launcher_model_init(LauncherModel* m,
         m->has_fmv_filter       = game->has_fmv_filter != 0;
         m->has_screen_kind      = game->has_screen_kind != 0;
         m->has_scanlines        = game->has_scanlines != 0;
+        m->rom_patterns         = game->num_rom_patterns > 0 ? game->rom_patterns : NULL;
+        m->num_rom_patterns     = m->rom_patterns ? game->num_rom_patterns : 0;
+        m->rom_filter_desc      = game->rom_filter_desc;
         m->has_frame_interp     = game->has_frame_interp != 0;
         m->has_spu_hq           = game->has_spu_hq != 0;
         m->has_rewind_depth     = game->has_rewind_depth != 0;
@@ -410,6 +413,13 @@ void launcher_model_init(LauncherModel* m,
         // game->has_fullscreen_toggle is deliberately NOT read: the Fullscreen
         // row is universal (drawn for every console) — see recomp_launcher.h.
         m->has_bios             = game->has_bios != 0;
+        m->bios_name            = game->bios_name;
+        m->bios_patterns        = game->num_bios_patterns > 0 ? game->bios_patterns : NULL;
+        m->num_bios_patterns    = m->bios_patterns ? game->num_bios_patterns : 0;
+        m->bios_filter_desc     = game->bios_filter_desc;
+        m->bios_verify_for_rom_cb = game->bios_verify_for_rom;
+        m->bios_verify_ctx      = game->bios_verify_ctx;
+        m->host_persists_paths  = game->host_persists_paths != 0;
         m->has_deadzone_pct     = game->has_deadzone_pct != 0;
         m->has_player_name      = game->has_player_name != 0;
         m->identity_detail      = game->identity_detail;
@@ -522,6 +532,10 @@ void launcher_model_init(LauncherModel* m,
         m->renderer_labels      = game->renderer_labels;
         m->num_renderers        = game->num_renderers;
         m->renderer_ids         = game->renderer_ids;
+        m->internal_resolution_labels = game->internal_resolution_labels;
+        m->internal_resolution_values = game->internal_resolution_values;
+        m->num_internal_resolutions   = game->num_internal_resolutions;
+        m->internal_resolution_note   = game->internal_resolution_note;
         m->renderer_note        = game->renderer_note;
         m->hide_rebind          = game->hide_rebind != 0;
         m->has_mouse_controls   = game->has_mouse_controls != 0;
@@ -534,6 +548,9 @@ void launcher_model_init(LauncherModel* m,
         m->netplay_supported    = game->netplay_supported != 0 && game->netplay != NULL;
         m->netplay              = game->netplay;
         m->netplay_mode_changed = game->netplay_mode_changed;
+        m->netplay_view_labels = game->netplay_view_labels;
+        m->num_netplay_view_labels = m->netplay_supported && game->netplay_view_labels
+            ? clampi(game->num_netplay_view_labels, 0, 16) : 0;
         m->rom_patch_supported  = game->rom_patch_supported != 0;
         m->rom_patch_note       = game->rom_patch_note;
         m->rom_patch_cache_dir  = game->rom_patch_cache_dir;
@@ -554,6 +571,8 @@ void launcher_model_init(LauncherModel* m,
     }
 
     if (io) m->s = *io;
+    if (m->s.netplay_view_index < 0 || m->s.netplay_view_index >= m->num_netplay_view_labels)
+        m->s.netplay_view_index = 0;
     /* Seed the selected disc from the host's persisted setting BEFORE the ROM
      * is read: launcher_model_set_rom() below binds initial_rom to the roster,
      * and when that path is off-roster (the player relocated the image) the
@@ -782,6 +801,7 @@ void launcher_model_init(LauncherModel* m,
         if (!ok) m->s.window_width = kWindowWidths[0];
     }
     if (m->has_supersampling) m->s.supersampling = clampi(m->s.supersampling ? m->s.supersampling : 1, 1, 4);
+    launcher_model_apply_internal_resolution_settings(m);
     if (m->has_screen_kind) {
         // Clamp against the active profile's screen-model vocabulary (GBA has
         // 5 LCD models; the legacy PSX-era set has 4) — see screen_kind_vocab.
@@ -1357,6 +1377,8 @@ void launcher_model_set_rom(LauncherModel* m, const char* path) {
 
     run_verify(m);
     update_msu1_patch_available(m);
+    /* A host whose BIOS lookup sees the image answers again for this one. */
+    if (m->has_bios && m->bios_verify_for_rom_cb) launcher_model_refresh_bios_status(m);
 }
 
 // Disc-verdict (verify.mode==1 systems, e.g. PSX): run the SystemProfile's
@@ -1888,6 +1910,52 @@ void launcher_model_cycle_supersampling(LauncherModel* m) {
     m->s.supersampling = (v % 4) + 1;
 }
 
+bool launcher_model_internal_resolution_offered(const LauncherModel* m) {
+    return m && m->has_supersampling && m->internal_resolution_labels &&
+           m->internal_resolution_values && m->num_internal_resolutions > 0;
+}
+
+int launcher_model_internal_resolution_count(const LauncherModel* m) {
+    return launcher_model_internal_resolution_offered(m) ? m->num_internal_resolutions : 0;
+}
+
+const char* launcher_model_internal_resolution_label_at(const LauncherModel* m, int i) {
+    if (!launcher_model_internal_resolution_offered(m) || i < 0 ||
+        i >= m->num_internal_resolutions)
+        return "";
+    const char* lab = m->internal_resolution_labels[i];
+    return lab ? lab : "";
+}
+
+int launcher_model_internal_resolution_index(const LauncherModel* m) {
+    if (!launcher_model_internal_resolution_offered(m)) return -1;
+    for (int i = 0; i < m->num_internal_resolutions; ++i)
+        if (m->internal_resolution_values[i] == m->s.internal_resolution) return i;
+    return -1;
+}
+
+const char* launcher_model_internal_resolution_label(const LauncherModel* m) {
+    int i = launcher_model_internal_resolution_index(m);
+    return i >= 0 ? launcher_model_internal_resolution_label_at(m, i) : "";
+}
+
+void launcher_model_set_internal_resolution(LauncherModel* m, int i) {
+    if (!launcher_model_internal_resolution_offered(m)) return;
+    if (i < 0 || i >= m->num_internal_resolutions) return;
+    m->s.internal_resolution = m->internal_resolution_values[i];
+}
+
+const char* launcher_model_internal_resolution_note(const LauncherModel* m) {
+    if (!launcher_model_internal_resolution_offered(m)) return NULL;
+    return m->internal_resolution_note;
+}
+
+void launcher_model_apply_internal_resolution_settings(LauncherModel* m) {
+    if (!launcher_model_internal_resolution_offered(m)) return;
+    if (launcher_model_internal_resolution_index(m) < 0)
+        m->s.internal_resolution = m->internal_resolution_values[0];
+}
+
 const char* launcher_model_supersampling_label(const LauncherModel* m) {
     /* Settings SSAA: offline full SW/GL path; netplay dual-raster uses this
      * for OpenGL present quality while SW authority stays 1×. */
@@ -1973,6 +2041,10 @@ void launcher_model_toggle_perspective_texturing(LauncherModel* m) {
  * corrected position rounds back to the pixel it came from. Say so in the UI
  * rather than letting the row look broken when someone ticks it at native res. */
 bool launcher_model_geometry_correction_inert(const LauncherModel* m) {
+    /* With an internal-resolution vocabulary the native entry is value 1
+     * (the documented convention); the legacy cycle keeps its 1x test. */
+    if (launcher_model_internal_resolution_offered(m))
+        return m->s.geometry_correction && m->s.internal_resolution == 1;
     return m->s.geometry_correction && m->s.supersampling < 2;
 }
 
@@ -2167,36 +2239,52 @@ const char* launcher_model_deadzone_pct_label(const LauncherModel* m) {
     return buf;
 }
 
+/* The host's BIOS verdict for `path`: the image-aware callback when there is
+ * one, else bios_verify. -1: no host verifier; 0: it failed; 1: `out` filled. */
+static int lm_bios_verify(const LauncherModel* m, const char* path,
+                          RecompLauncherCBiosVerify* out) {
+    memset(out, 0, sizeof(*out));
+    if (m->bios_verify_for_rom_cb)
+        return m->bios_verify_for_rom_cb(m->bios_verify_ctx, path ? path : "",
+                                         m->rom_present ? m->rom_full : "", out) ? 1 : 0;
+    if (m->bios_verify_cb) return m->bios_verify_cb(path ? path : "", out) ? 1 : 0;
+    return -1;
+}
+
 void launcher_model_refresh_bios_status(LauncherModel* m) {
     if (!m) return;
     m->setup_bios_ok = false;
     m->setup_bios_warn = false;
     m->setup_bios_needs_regen = false;
+    m->bios_not_needed = false;
+    m->bios_pick_rejected = false;
     m->setup_bios_detail[0] = '\0';
     if (!m->has_bios) {
         m->setup_bios_ok = true;
         return;
     }
-    /* Empty path = use the BIOS this build ships with (OpenBIOS / bundled).
-     * Host bios_verify("", ...) may refuse that for titles that require a
-     * retail dump; otherwise empty is OK — matching Settings → BIOS. */
+    RecompLauncherCBiosVerify bv;
+    const int r = lm_bios_verify(m, m->s.bios_path, &bv);
+    /* Empty path = the host's own choice: the BIOS this build ships with
+     * (OpenBIOS / bundled), or a host lookup (a required system file). Host
+     * bios_verify("", ...) may refuse that for titles that require a retail
+     * dump; otherwise empty is OK — matching Settings → BIOS. */
     if (!m->s.bios_path[0]) {
-        if (m->bios_verify_cb) {
-            RecompLauncherCBiosVerify bv;
-            memset(&bv, 0, sizeof(bv));
-            if (!m->bios_verify_cb("", &bv)) {
+        if (r >= 0) {
+            if (r == 0) {
                 safe_copy(m->setup_bios_detail, sizeof(m->setup_bios_detail),
                           "BIOS verification failed.");
                 return;
             }
-            m->setup_bios_ok = bv.ok != 0;
+            m->bios_not_needed = bv.not_needed != 0;
+            m->setup_bios_ok = bv.ok != 0 || m->bios_not_needed;
             m->setup_bios_warn = bv.warn != 0;
             /* Empty path is OpenBIOS — never treat as needing regen. */
             m->setup_bios_needs_regen = false;
             if (bv.detail[0])
                 safe_copy(m->setup_bios_detail, sizeof(m->setup_bios_detail),
                           bv.detail);
-            else if (m->setup_bios_ok)
+            else if (m->setup_bios_ok && !m->bios_name)
                 safe_copy(m->setup_bios_detail, sizeof(m->setup_bios_detail),
                           "Using OpenBIOS.");
             return;
@@ -2207,7 +2295,7 @@ void launcher_model_refresh_bios_status(LauncherModel* m) {
                   "Using OpenBIOS.");
         return;
     }
-    if (!m->bios_verify_cb) {
+    if (r < 0) {
         /* No host verifier: path non-empty is enough. */
         FILE* f = fopen(m->s.bios_path, "rb");
         if (f) { fclose(f); m->setup_bios_ok = true; }
@@ -2215,17 +2303,24 @@ void launcher_model_refresh_bios_status(LauncherModel* m) {
                        "BIOS file not found.");
         return;
     }
-    RecompLauncherCBiosVerify bv;
-    memset(&bv, 0, sizeof(bv));
-    if (!m->bios_verify_cb(m->s.bios_path, &bv)) {
+    if (r == 0) {
         safe_copy(m->setup_bios_detail, sizeof(m->setup_bios_detail),
                   "BIOS verification failed.");
         return;
     }
-    m->setup_bios_ok = bv.ok != 0;
+    m->bios_not_needed = bv.not_needed != 0;
+    m->setup_bios_ok = bv.ok != 0 || m->bios_not_needed;
     m->setup_bios_warn = bv.warn != 0;
     m->setup_bios_needs_regen = bv.needs_regen != 0;
     safe_copy(m->setup_bios_detail, sizeof(m->setup_bios_detail), bv.detail);
+}
+
+bool launcher_model_bios_applies(const LauncherModel* m) {
+    return m && m->has_bios && !m->bios_not_needed;
+}
+
+bool launcher_model_bios_missing(const LauncherModel* m) {
+    return launcher_model_bios_applies(m) && !m->setup_bios_ok;
 }
 
 /* Write/clear a one-line sidecar in dir (dir may be NULL => cwd "."). */
@@ -2367,28 +2462,31 @@ static void lm_persist_setup_sidecars(LauncherModel* m) {
     /* PSX hosts read disc.cfg; cart hosts read rom.cfg — write both names.
      * rom.cfg stays single-path: it is the cart-host contract and has no
      * concept of a set. */
-    lm_write_sidecar_in_dir(NULL, "rom.cfg", rom);
-    lm_write_sidecar_in_dir(NULL, "disc.cfg", disc_value);
-    lm_write_sidecar_in_dir(NULL, "bios.cfg", bios);
-    if (lm_running_exe_dir(exe_dir, sizeof(exe_dir))) {
-        lm_write_sidecar_in_dir(exe_dir, "rom.cfg", rom);
-        lm_write_sidecar_in_dir(exe_dir, "disc.cfg", disc_value);
-        lm_write_sidecar_in_dir(exe_dir, "bios.cfg", bios);
-    }
-    if (m && m->relaunch_exe[0]) {
-        char rdir[1024];
-        char* slash = strrchr(m->relaunch_exe, '/');
-        char* bslash = strrchr(m->relaunch_exe, '\\');
-        char* cut = slash;
-        if (bslash && (!cut || bslash > cut)) cut = bslash;
-        if (cut && cut > m->relaunch_exe) {
-            size_t n = (size_t)(cut - m->relaunch_exe);
-            if (n < sizeof(rdir)) {
-                memcpy(rdir, m->relaunch_exe, n);
-                rdir[n] = '\0';
-                lm_write_sidecar_in_dir(rdir, "rom.cfg", rom);
-                lm_write_sidecar_in_dir(rdir, "disc.cfg", disc_value);
-                lm_write_sidecar_in_dir(rdir, "bios.cfg", bios);
+    /* A host that keeps the picks in its own settings file wants no sidecars. */
+    if (!(m && m->host_persists_paths)) {
+        lm_write_sidecar_in_dir(NULL, "rom.cfg", rom);
+        lm_write_sidecar_in_dir(NULL, "disc.cfg", disc_value);
+        lm_write_sidecar_in_dir(NULL, "bios.cfg", bios);
+        if (lm_running_exe_dir(exe_dir, sizeof(exe_dir))) {
+            lm_write_sidecar_in_dir(exe_dir, "rom.cfg", rom);
+            lm_write_sidecar_in_dir(exe_dir, "disc.cfg", disc_value);
+            lm_write_sidecar_in_dir(exe_dir, "bios.cfg", bios);
+        }
+        if (m && m->relaunch_exe[0]) {
+            char rdir[1024];
+            char* slash = strrchr(m->relaunch_exe, '/');
+            char* bslash = strrchr(m->relaunch_exe, '\\');
+            char* cut = slash;
+            if (bslash && (!cut || bslash > cut)) cut = bslash;
+            if (cut && cut > m->relaunch_exe) {
+                size_t n = (size_t)(cut - m->relaunch_exe);
+                if (n < sizeof(rdir)) {
+                    memcpy(rdir, m->relaunch_exe, n);
+                    rdir[n] = '\0';
+                    lm_write_sidecar_in_dir(rdir, "rom.cfg", rom);
+                    lm_write_sidecar_in_dir(rdir, "disc.cfg", disc_value);
+                    lm_write_sidecar_in_dir(rdir, "bios.cfg", bios);
+                }
             }
         }
     }
@@ -2550,9 +2648,9 @@ void launcher_model_request_bios_path(LauncherModel* m, const char* path) {
     if (lm_bios_paths_equal(m->s.bios_path, normalized))
         return;
 
-    memset(&bv, 0, sizeof(bv));
-    if (m->bios_verify_cb) {
-        if (!m->bios_verify_cb(normalized, &bv)) {
+    const int r = lm_bios_verify(m, normalized, &bv);
+    if (r >= 0) {
+        if (r == 0) {
             safe_copy(bv.detail, sizeof(bv.detail), "BIOS verification failed.");
             /* OpenBIOS never regenerates; retail may still need Generate. */
             bv.needs_regen = normalized[0] ? 1 : 0;
@@ -2568,21 +2666,19 @@ void launcher_model_request_bios_path(LauncherModel* m, const char* path) {
      * Generate & rebuild confirm — Play uses the bundled backend already
      * linked (or the setup host will emit it on first Generate for game C). */
     if (!normalized[0]) {
-        if (bv.ok) {
-            launcher_model_set_bios_path(m, "");
-            return;
-        }
-        if (bv.detail[0])
-            safe_copy(m->setup_bios_detail, sizeof(m->setup_bios_detail),
-                      bv.detail);
+        /* Clearing a pick always applies: with nothing usable left the host's
+         * answer for "" becomes the state shown (a required BIOS is missing,
+         * PLAY disabled) rather than the click silently doing nothing. */
+        launcher_model_set_bios_path(m, "");
         return;
     }
 
-    /* Invalid dump (missing/wrong size) — keep the previous selection. */
+    /* Invalid dump (missing/wrong size) — keep the previous selection, and
+     * say why the pick was refused. */
     if (!bv.ok && !bv.needs_regen) {
-        if (bv.detail[0])
-            safe_copy(m->setup_bios_detail, sizeof(m->setup_bios_detail),
-                      bv.detail);
+        safe_copy(m->setup_bios_detail, sizeof(m->setup_bios_detail),
+                  bv.detail[0] ? bv.detail : "That file is not a usable BIOS.");
+        m->bios_pick_rejected = true;
         return;
     }
 
@@ -2666,6 +2762,10 @@ bool launcher_model_bios_blocks_play(const LauncherModel* m) {
     }
     /* OpenBIOS (empty path) never blocks Play for a BIOS regen. */
     if (!m->s.bios_path[0]) return false;
+    /* A named required system file (GameInfo.bios_name) has no OpenBIOS or
+     * Generate recourse: a pick that is not usable disables PLAY instead
+     * (launcher_model_can_launch), with the SYSTEM card saying why. */
+    if (m->bios_name && !m->setup_bios_needs_regen) return false;
     /* Retail linked-backend mismatch (needs_regen) blocks Play. */
     if (m->setup_bios_needs_regen) return true;
     /* Retail path that isn't Play-ready in this binary. */

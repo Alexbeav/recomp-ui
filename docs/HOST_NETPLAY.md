@@ -477,3 +477,20 @@ The mod text is bounded to the transport's 512-byte room field. Oversized
 plans publish an invalid marker and are rejected instead of advertising a
 valid-looking prefix. LAN does not grant cosmetic exemptions. Older
 recomp-net headers retain LAN timing controls without the new mod field.
+
+## Engine-defined connection types
+
+`RecompNetplayHostHooks.session_variants` optionally lists stable integer IDs
+and labels for the connection types supported by a game. The lobby host chooses
+one in **Lobby Settings → Connection type**; guests see that host-owned setting.
+`default_session_variant` defaults to zero. The shared backend carries the ID
+through online match caps and LAN file/Direct IP join, update and start messages.
+It refuses a launch whose ID is not in this build's list. With no list, only
+the legacy zero variant is accepted and no picker appears.
+
+`RecompLauncherCNetplayLaunch.session_variant` is the settled value. The engine
+must validate it and include it in its simulation/checkpoint compatibility
+identity. It is independent of input seats, local display size, and delay-sync
+versus rollback. The shared libraries never interpret the device's protocol.
+The feature requires recomp-net's `RNET_HAS_SESSION_VARIANT`; older recomp-net
+pins still compile and run engines that do not declare connection types.

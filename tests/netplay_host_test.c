@@ -477,6 +477,42 @@ static void case_lan_rematch_as_guest(void)
     remove(registry);
 }
 
+#ifdef RNET_HAS_SESSION_VARIANT
+static void case_session_variant(void)
+{
+    static const RecompNetplaySessionVariant variants[] = {{0,"Cable"},{7,"Radio"}};
+    RecompNetplayHostHooks h;
+    RecompLauncherCNetplayLaunch launch;
+    RNetLanLobby room;
+    memset(&h, 0, sizeof(h));
+    h.game_name = "Variant Test";
+    h.game_version = "1";
+    h.session_variants = variants;
+    h.session_variant_count = 2;
+    ck(recomp_netplay_host_init(&h) == 0, "variant backend init");
+    ck(cb_session_variant_set(NULL, 7) == 0, "host selects a supported variant");
+    ck(default_caps(NULL).session_variant == 7, "online caps carry the host choice");
+    ck(cb_session_variant_set(NULL, 1) == -1, "wire value is not an array index");
+    g_joined_lan = 1;
+    g_lan_room.session_variant = 0;
+    ck(cb_session_variant_set(NULL, 0) == -1 && g_session_variant == 7,
+       "guest cannot change host choice or mutate pending settings");
+    ck(cb_session_variant_get(NULL) == 0, "guest sees the host's variant");
+    memset(&room, 0, sizeof(room));
+    snprintf(room.endpoint, sizeof(room.endpoint), "127.0.0.1:7777");
+    room.session_variant = 7;
+    arm_lan_launch(&room);
+    ck(cb_fill_launch(NULL, &launch) == 1 && launch.session_variant == 7,
+       "LAN launch inherits the settled host variant");
+    room.session_variant = 9;
+    arm_lan_launch(&room);
+    ck(cb_fill_launch(NULL, &launch) == 0, "unsupported hardware refuses to launch");
+    g_joined_lan = 0;
+    memset(&g_lan_launch, 0, sizeof(g_lan_launch));
+    recomp_netplay_host_shutdown();
+}
+#endif
+
 int main(void)
 {
     case_host_first_standard_and_swapped();
@@ -489,6 +525,9 @@ int main(void)
     case_table_and_names();
     case_lan_rematch_as_host();
     case_lan_rematch_as_guest();
+#ifdef RNET_HAS_SESSION_VARIANT
+    case_session_variant();
+#endif
     printf(fails ? "\n%d failure(s)\n" : "\nall netplay host cases passed\n",
            fails);
     return fails != 0;
