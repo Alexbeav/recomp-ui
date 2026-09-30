@@ -2005,7 +2005,14 @@ typedef struct RecompLauncherCGameInfo {
      * for a console whose runtime implements it (PSX); everything else leaves
      * this 0 and the rows are absent. Appended for ABI stability. */
     int has_scanlines;
+    /* Entering the netplay flow / returning to the offline dashboard.
+     * Optional title policy (e.g. stage required co-op mods). The callback
+     * remains active through controller/settings subviews and a match launch.
+     * Hosts must release their temporary policy if the launcher is dismissed
+     * without a netplay launch. No simulation or network work belongs here. */
+    void (*netplay_mode_changed)(int enabled);
 } RecompLauncherCGameInfo;
+#define RECOMP_LAUNCHER_HAS_NETPLAY_MODE_POLICY 1
 #define RECOMP_LAUNCHER_HAS_SNES_DISPLAY_ASPECT 1
 #define RECOMP_LAUNCHER_HAS_IN_SESSION 1
 

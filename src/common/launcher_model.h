@@ -327,6 +327,8 @@ typedef struct {
     bool has_run_ahead;
     bool has_shader;
     bool netplay_supported;
+    bool netplay_policy_active;
+    void (*netplay_mode_changed)(int enabled);
     /* Host opted into first-run wizard + Generate & rebuild (GameInfo). */
     bool setup_wizard_supported;
     const RecompLauncherCNetplayCallbacks* netplay;

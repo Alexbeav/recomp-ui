@@ -108,7 +108,7 @@ static void case_seat_policy(void)
     ck(p.occupied == 0x5u && p.port[1] == -1, "the hole stays a hole");
 }
 
-/* The LAN room is two seats and carries only a delay. */
+/* The LAN room settles delay, rollback mode and prediction for both seats. */
 static void case_lan_launch(void)
 {
     RNetLanLobby room;
@@ -117,6 +117,8 @@ static void case_lan_launch(void)
     snprintf(room.endpoint, sizeof(room.endpoint), "%s", "192.168.1.5:7777");
     room.host_slot = 1;          /* the host swapped into seat 1 */
     room.input_delay = 5;
+    room.rollback = 1;
+    room.input_prediction = 9;
 
     hooks_with(RECOMP_NETPLAY_SLOTS_HOST_FIRST, 4);
     g_hosting_lan = 1;
@@ -128,8 +130,8 @@ static void case_lan_launch(void)
     ck(g_lan_launch.occupied_mask == 0x3u, "both seats occupied");
     ck(!strcmp(g_lan_launch.bind_hostport, "0.0.0.0:7777"), "host binds its port");
     ck(g_lan_launch.input_delay == 5, "the room's delay");
-    ck(g_lan_launch.rollback == 0 && g_lan_launch.input_prediction == 0,
-       "no mode is invented: the LAN room settles none");
+    ck(g_lan_launch.rollback == 1 && g_lan_launch.input_prediction == 9,
+       "both peers use the room's mode and prediction runway");
     g_hosting_lan = 0;
 
     hooks_with(RECOMP_NETPLAY_SLOTS_SEAT, 2);
