@@ -41,6 +41,11 @@ extern "C" {
  * launcher is never handed a value it would clamp to Gamepad. */
 #define RECOMP_LAUNCHER_HAS_MOUSE_SOURCE 1
 #define RECOMP_LAUNCHER_SRC_MOUSE 3
+/* pad_mode value 3: the port presents a Namco neGcon driven by the seat's pad
+ * or keyboard (PSX only; launcher_model_negcon_mode_available). Hosts #ifdef
+ * the macro so an older launcher is never handed a value it would clamp. */
+#define RECOMP_LAUNCHER_HAS_NEGCON_MODE 1
+#define RECOMP_LAUNCHER_PAD_MODE_NEGCON 3
 /* Host may #ifdef this when reading multitap_enabled from settings. */
 #define RECOMP_LAUNCHER_HAS_MULTITAP_ENABLED 1
 /* Host may #ifdef this when reading multitap_analog (DualShock-on-tap hack). */
@@ -1032,7 +1037,7 @@ struct RecompLauncherCSettings {
     int  skip_launcher;     // bool: boot straight to the game next time
     int  msu1_enabled;      // bool
     char msu1_dir[512];
-    int  pad_mode[RECOMP_LAUNCHER_MAX_PLAYERS];    // per player: 0=Hybrid, 1=Analog(DualShock), 2=D-Pad(digital)
+    int  pad_mode[RECOMP_LAUNCHER_MAX_PLAYERS];    // per player: 0=Hybrid, 1=Analog(DualShock), 2=D-Pad(digital), 3=neGcon (PSX, RECOMP_LAUNCHER_PAD_MODE_NEGCON)
     int  aspect_index;      // 0 = 4:3, 1 = 16:9, 2 = 21:9
 
     // ---- deeper PSX-style settings (capability-gated; see RecompLauncherCGameInfo

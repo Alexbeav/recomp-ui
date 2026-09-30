@@ -2654,6 +2654,9 @@ void pad_mode_selector(LauncherModel* m, const LauncherTheme& th, int p, float w
     } else {
         segs[n++] = { 1, "Analog" };
         segs[n++] = { 2, "D-Pad" };
+        // PSX: the port can present a Namco neGcon instead of a pad (PS1B-304).
+        if (launcher_model_negcon_mode_available(m))
+            segs[n++] = { RECOMP_LAUNCHER_PAD_MODE_NEGCON, "NeGcon" };
     }
 
     // Keyboard has no analog sticks — Analog is unavailable (PSX modes).
@@ -2686,6 +2689,12 @@ void pad_mode_selector(LauncherModel* m, const LauncherTheme& th, int p, float w
             ImGui::PushStyleColor(ImGuiCol_Text, sel ? col(th.accent_text) : col(th.text));
             if (ImGui::Button(segs[i].label, ImVec2(seg_w, px(28))))
                 launcher_model_set_pad_mode(m, p, segs[i].mode);
+            if (segs[i].mode == RECOMP_LAUNCHER_PAD_MODE_NEGCON &&
+                ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", ui_text(
+                    "Namco neGcon for racing games. Twist: left stick. "
+                    "I / II: right / left trigger (or Cross / Square). "
+                    "A: Circle. B: Triangle. R: R1. L: L1."));
             ImGui::PopStyleColor(4);
         }
         ImGui::PopID();

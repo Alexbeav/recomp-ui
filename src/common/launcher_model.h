@@ -955,16 +955,21 @@ void launcher_model_apply_msu1_patch(LauncherModel* m);
 void launcher_model_skip_msu1_patch(LauncherModel* m);
 
 // ---- controllers ----
-// PSX-style pad mode: 1=Analog, 2=D-Pad. Gated: no-op when
-// !pad_mode_selectable (mode is locked). Mode 0 (Hybrid) is NOT selectable —
-// it is a mod-only mode requested at runtime by a trusted game plugin — so a
-// stale persisted 0 snaps to Analog.
+// PSX-style pad mode: 1=Analog, 2=D-Pad, 3=neGcon (PSX only). Gated: no-op
+// when !pad_mode_selectable (mode is locked). Mode 0 (Hybrid) is NOT
+// selectable — it is a mod-only mode requested at runtime by a trusted game
+// plugin — so a stale persisted 0 snaps to Analog. A keyboard seat may pick
+// D-Pad or neGcon, not Analog. A neGcon seat keeps its pad type when its input
+// source changes.
 void launcher_model_set_pad_mode(LauncherModel* m, int player, int mode);
 void launcher_model_cycle_player_src(LauncherModel* m, int player); // None/Kbd/Pad(/Mouse)
 // 1 when this profile offers the mouse source (player_src 3,
 // RECOMP_LAUNCHER_SRC_MOUSE): only PSX, for the PS1 Mouse port device.
 // Elsewhere set_source maps 3 to None and the label reads "None".
 int launcher_model_mouse_source_available(const LauncherModel* m);
+// 1 when this profile offers the neGcon pad type (pad_mode 3,
+// RECOMP_LAUNCHER_PAD_MODE_NEGCON): only PSX. Elsewhere a 3 reads as Analog.
+int launcher_model_negcon_mode_available(const LauncherModel* m);
 void launcher_model_deadzone_delta(LauncherModel* m, int player, int delta);
 // Set the input source explicitly (used by the device dropdown). kind: 0 None,
 // 1 Keyboard, 2 Gamepad, 3 Mouse (PSX only; None elsewhere). For gamepad, pass the SDL id + display name + GUID
