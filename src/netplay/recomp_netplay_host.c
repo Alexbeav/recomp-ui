@@ -2490,6 +2490,15 @@ static int cb_lobby_max_slots(void *ctx)
   return clamp_lobby_max_slots(g_lobby_max_slots);
 }
 
+/* The ceiling cb_create clamps max_slots to, for the Host panel's Max
+ * Players: the title's online seats, or two on LAN / Direct IP. Not the
+ * current room's -- that is cb_lobby_max_slots. */
+static int cb_create_max_slots(void *ctx, int lan_only)
+{
+  (void)ctx;
+  return lan_only ? 2 : title_max_players();
+}
+
 /* Refuse a launch with a reason the waiting room shows, said once per
  * session id so a launcher polling fill_launch every frame does not repeat
  * it. The launch is dropped (launch_pending cleared): the peers that did
@@ -3495,6 +3504,9 @@ static RecompLauncherCNetplayCallbacks g_callbacks = {
     .automatch_found_get = cb_automatch_found_get,
     .automatch_accept = cb_automatch_accept,
     .automatch_error = cb_automatch_error,
+#endif
+#if defined(RECOMP_LAUNCHER_HAS_CREATE_MAX_SLOTS)
+    .create_max_slots = cb_create_max_slots,
 #endif
 };
 

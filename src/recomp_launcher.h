@@ -325,6 +325,41 @@ typedef struct RecompLauncherCNetplayLaunch {
     int      session_variant;
 } RecompLauncherCNetplayLaunch;
 
+/* Dense position of session slot `slot` in LOBBY-SEAT order: the rank of its
+ * seat (slot_port[slot]) among the seats every player slot holds. A lobby
+ * with seats 0, 1 and 3 taken yields positions 0, 1 and 2 for those seats --
+ * what an engine whose players are machines on a bus with no holes (the GBA
+ * link cable: parent = position 0, children 1..n-1) must number them by,
+ * rather than by the sparse seat or by the host-first session slot.
+ *
+ * Slots are 0..player_count-1 (player_count <= 0 falls back to max_slots).
+ * Without slot_port_valid, session slot == seat, and the rank is taken over
+ * the occupied_mask seats instead (0 = all occupied). Returns -1 for a slot
+ * outside the players or one with no seat (a host watching from the gallery,
+ * slot_port -1). Pure; safe on any peer, every peer gets the same answer. */
+#define RECOMP_LAUNCHER_HAS_NETPLAY_DENSE_POSITION 1
+static inline int recomp_launcher_netplay_dense_position(
+    const RecompLauncherCNetplayLaunch* l, int slot) {
+    int n, i, seat, rank = 0;
+    if (!l) return -1;
+    n = l->player_count > 0 ? l->player_count : l->max_slots;
+    if (n > RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS + 1)
+        n = RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS + 1;
+    if (slot < 0 || slot >= n) return -1;
+    if (l->slot_port_valid) {
+        seat = l->slot_port[slot];
+        if (seat < 0) return -1;
+        for (i = 0; i < n; ++i)
+            if (l->slot_port[i] >= 0 && l->slot_port[i] < seat) ++rank;
+        return rank;
+    }
+    if (l->occupied_mask == 0) return slot;
+    if (slot >= 32 || !(l->occupied_mask & (1u << slot))) return -1;
+    for (i = 0; i < slot; ++i)
+        if (l->occupied_mask & (1u << i)) ++rank;
+    return rank;
+}
+
 typedef struct RecompLauncherCNetplayLocalAddress {
     /* Numeric address advertised to clients, currently normally IPv4. */
     char address[64];
@@ -731,7 +766,27 @@ typedef struct RecompLauncherCNetplayCallbacks {
     const char* (*session_variant_label)(void* ctx, int index, int* value);
     int  (*session_variant_get)(void* ctx);
     int  (*session_variant_set)(void* ctx, int value);
+    /* Optional (append-only): the largest max_slots create(lan_only) will
+     * honour for this title -- the player-seat ceiling of a room of that kind,
+     * 2..RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS, or 0 = unknown.
+     *
+     * This is a NETPLAY ceiling, independent of GameInfo.num_players (which
+     * counts LOCAL controller cards). A handheld linked by cable seats more
+     * players online than it draws cards: a GBA title declares num_players 1
+     * and four link seats here. The Host panel's Max Players offers 2..this.
+     *
+     * recomp_netplay_host implements it as the clamp its create applies:
+     * online = RecompNetplayHostHooks.max_players (the one number the engine
+     * sets; also the ceiling the lobby server is configured with), LAN /
+     * Direct IP = 2 (recomp-net's LAN room carries one joiner).
+     *
+     * NULL, or a return < 2, keeps the launcher's older ceiling, derived from
+     * num_players, unchanged. */
+    int  (*create_max_slots)(void* ctx, int lan_only);
 } RecompLauncherCNetplayCallbacks;
+
+/* Present since create_max_slots was appended. */
+#define RECOMP_LAUNCHER_HAS_CREATE_MAX_SLOTS 1
 
 /* Present since the account callbacks were added. A host guards its wiring
  * with `#ifdef RECOMP_LAUNCHER_HAS_ACCOUNT` so it builds against an older

@@ -193,6 +193,23 @@ static void case_seat_ceiling(void)
     ck(clamp_lobby_max_slots(1) == 2, "and never below 2");
     hooks_with(RECOMP_NETPLAY_SLOTS_SEAT, 0);
     ck(clamp_lobby_max_slots(4) == 2, "an unset ceiling is two seats");
+
+    /* create_max_slots: what the Host panel's Max Players offers, which is
+     * exactly the clamp create applies (online hooks.max_players, LAN 2). */
+    hooks_with(RECOMP_NETPLAY_SLOTS_HOST_FIRST, 4);
+    ck(recomp_netplay_host_callbacks()->create_max_slots != NULL,
+       "create_max_slots is wired");
+    ck(recomp_netplay_host_callbacks()->create_max_slots(NULL, 0) == 4,
+       "online ceiling is hooks.max_players (GBA link: 4)");
+    ck(recomp_netplay_host_callbacks()->create_max_slots(NULL, 1) == 2,
+       "LAN / Direct IP ceiling is two");
+    hooks_with(RECOMP_NETPLAY_SLOTS_HOST_FIRST, 0);
+    ck(recomp_netplay_host_callbacks()->create_max_slots(NULL, 0) == 2,
+       "an unset ceiling offers two online");
+    hooks_with(RECOMP_NETPLAY_SLOTS_HOST_FIRST, 99);
+    ck(recomp_netplay_host_callbacks()->create_max_slots(NULL, 0) ==
+           RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS,
+       "and never past the lobby array");
 }
 
 static void case_table_and_names(void)

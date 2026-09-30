@@ -34,7 +34,7 @@ soft-return helper (prepare_rematch + `resume_netplay_room` / endpoint).
 | `game_name`, `game_version` | scoping key and exact release pin (SHIPPING.md §2) | init fails without a name |
 | `content_fingerprint` | 64-hex SHA-256 of the guest image | joins work; automatch refuses to queue |
 | `platform`, `legacy_env_prefix` | moderation tag; older env spelling (`"SNES_NET_"`) | `"unknown"`; `RNET_LOBBY_*` only |
-| `max_players` | online seat ceiling (N64: 4) | 2 |
+| `max_players` | online PLAYER-seat ceiling (N64: 4; a GBA link-cable title: its link size). The one number that sets it: the lobby server's ceiling, `create`'s clamp, and -- through `create_max_slots` -- the Host panel's Max Players. Independent of `GameInfo.num_players` (local controller cards), see "Online seat ceiling" below | 2 |
 | `slot_policy` | `HOST_FIRST` (default, the contract below) or `SEAT` | `HOST_FIRST` |
 | `exe_dir_path` | resolve files beside the executable | LAN registry / account secret cwd-relative |
 | `name_store` / `name_load` | persist the display name | name not remembered across runs |
@@ -244,6 +244,45 @@ hands. snesrecomp still does (`RECOMP_NETPLAY_SLOTS_SEAT`, because its engine
 does not read `slot_port[]` yet): its launch carries identity `slot_port[]`
 and a seat `occupied_mask`, so it is complete, but a moved host is not slot 0
 there -- a known gap, recorded here where the contract is stated.
+
+### Online seat ceiling vs. local controller cards
+
+`GameInfo.num_players` counts LOCAL controller cards (clamped to the system
+profile's `controller.max_players`). A netplay room's seat ceiling is a
+different number: a handheld linked by cable draws ONE card and seats one
+player per console, so a GBA link title has `num_players` 1 and up to four
+link seats online.
+
+The launcher asks the backend: `create_max_slots(ctx, lan_only)` (append-only,
+optional) is the largest `max_slots` `create` will honour for a room of that
+kind. `recomp_netplay_host` answers it from `RecompNetplayHostHooks.max_players`
+online and 2 on LAN / Direct IP -- the same clamp its `create` applies -- so
+the engine sets exactly one field, `hooks.max_players`, and the UI can never
+offer a room the backend would shrink. Behaviour
+(`launcher_model_netplay_room_max_players`):
+
+| Room | Backend has `create_max_slots` (>= 2) | Backend without it |
+| --- | --- | --- |
+| Online | Max Players offers 2..`hooks.max_players` | 2..`num_players` (min 2), as before |
+| LAN / Direct IP | 2, and the Host panel says "LAN / Direct IP rooms are 2-player; host online for up to N" when N > 2 | 2..`num_players` (min 2), as before |
+| Automatch | the ruleset's `max_slots` (server-owned; 2 today) | same |
+
+No controller card is added: `player_count` / `launcher_model_visible_player_count`
+still come from `num_players` only.
+
+A room with fewer players than seats can start (two seated is enough), and
+seats may be sparse (0, 1 and 3 taken). Under `HOST_FIRST` the launch is
+already dense in SESSION slots -- `player_count` = seated players,
+`occupied_mask` = `(1 << player_count) - 1`, `local_slot` in
+`0..player_count-1` -- with `slot_port[slot]` the (sparse) lobby seat. An
+engine whose players are machines on a bus with no holes (the GBA link cable:
+parent = position 0) numbers them by LOBBY-SEAT order, densely:
+`recomp_launcher_netplay_dense_position(&launch, slot)` (recomp_launcher.h)
+returns the rank of that slot's seat among the seated ones -- seats 0, 1, 3
+become positions 0, 1, 2 -- on every peer alike. Do not index machines by
+`slot_port[]` directly (seat 3 of a three-console link has no machine 3), and
+do not use the session slot either if the lobby's seat order should decide who
+is the parent (the host is always session slot 0 wherever it sits).
 
 ### Host in the spectator table
 
