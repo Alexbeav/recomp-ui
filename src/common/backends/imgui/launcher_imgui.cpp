@@ -6958,16 +6958,15 @@ static int np_lobby_max_peer_rtt_ms(LauncherModel* m,
     return max_rtt;
 }
 
-static int np_game_max_players(const LauncherModel* m) {
-    int n = (m && m->player_count > 0) ? m->player_count : 2;
-    if (n < 2) n = 2;
-    if (n > RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS)
-        n = RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS;
-    return n;
+/* Player-seat ceiling for a room of this kind (LAN / Direct IP or online):
+ * the backend's create_max_slots when it states one, else player_count. See
+ * launcher_model_netplay_room_max_players. */
+static int np_game_max_players(const LauncherModel* m, bool lan_only) {
+    return launcher_model_netplay_room_max_players(m, lan_only ? 1 : 0);
 }
 
 static int np_clamp_host_max_players(LauncherModel* m) {
-    const int game_max = np_game_max_players(m);
+    const int game_max = np_game_max_players(m, m->netplay_lan_only);
     /* Lobby/delay-sync ceiling: RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS / RNET_MAX_SLOTS. */
     const int sync_max = game_max < RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS
                              ? game_max : RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS;
@@ -7335,7 +7334,7 @@ void draw_netplay_direct_modal(LauncherModel* m, const LauncherTheme& th) {
                     m->netplay_local_room = true;
                     std::snprintf(m->netplay_host_endpoint, sizeof(m->netplay_host_endpoint),
                                   "%s", lobby_id + 4);
-                    m->netplay_lobby_max_slots = np_game_max_players(m);
+                    m->netplay_lobby_max_slots = np_game_max_players(m, true);
                     m->netplay_status[0] = '\0';
                     m->netplay_direct_modal_open = false;
                     ImGui::CloseCurrentPopup();
@@ -7460,9 +7459,14 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
             ImGui::Spacing();
         }
         {
-            const int game_max = np_game_max_players(m);
+            const int game_max = np_game_max_players(m, m->netplay_lan_only);
             const int sync_max = game_max < RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS
                                      ? game_max : RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS;
+            /* A LAN / Direct IP room that seats fewer players than this title
+             * does online says so, instead of "this game is 2-player". */
+            const int online_max = np_game_max_players(m, false);
+            const bool lan_fewer =
+                m->netplay_lan_only && !link_supported && online_max > sync_max;
             const bool game_locked = sync_max <= 2 || link_supported;
             const int max_players = np_clamp_host_max_players(m);
             ImGui::TextColored(col(th.text_muted), "Max Players");
@@ -7476,13 +7480,29 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
                     std::snprintf(label, sizeof(label), "%d", n);
                     const bool selected = n == max_players;
                     if (ImGui::Selectable(label, selected))
+                    {
                         m->netplay_host_max_players = n;
+                        if (np_cb_host && np_cb_host->create_default_rollback) {
+                            const int preferred = np_cb_host->create_default_rollback(
+                                np_cb_host->ctx, n);
+                            if (preferred >= 0)
+                                m->netplay_rollback = preferred != 0;
+                        }
+                    }
                     if (selected) ImGui::SetItemDefaultFocus();
                 }
                 ImGui::EndCombo();
             }
             ImGui::EndDisabled();
-            if (game_locked) {
+            if (lan_fewer) {
+                ImGui::SameLine();
+                ImGui::TextColored(col(th.text_muted),
+                                   "(LAN / Direct IP rooms are %d-player)",
+                                   sync_max);
+                ImGui::TextColored(col(th.text_muted),
+                                   "Host online for up to %d players.",
+                                   online_max);
+            } else if (game_locked) {
                 ImGui::SameLine();
                 ImGui::TextColored(col(th.text_muted),
                                    link_supported
@@ -7761,7 +7781,10 @@ void draw_netplay_password_modal(LauncherModel* m, const LauncherTheme& th) {
                         m->netplay_host_endpoint[0] = '\0';
                     }
                     m->netplay_lobby_max_slots =
-                        row.max_slots >= 2 ? row.max_slots : np_game_max_players(m);
+                        row.max_slots >= 2
+                            ? row.max_slots
+                            : np_game_max_players(
+                                  m, strncmp(row.lobby_id, "lan:", 4) == 0);
                     m->netplay_password_modal_open = false;
                     m->netplay_status[0] = '\0';
                     ImGui::CloseCurrentPopup();
@@ -8418,7 +8441,7 @@ static void np_lobby_snapshot(LauncherModel* m,
     if (max_slots < 2)
         max_slots = m->netplay_lobby_max_slots > 0
                         ? m->netplay_lobby_max_slots
-                        : np_game_max_players(m);
+                        : np_game_max_players(m, m->netplay_local_room);
     if (max_slots < 2) max_slots = 2;
     if (max_slots > RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS)
         max_slots = RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS;
@@ -9906,7 +9929,10 @@ void np_join_selected(LauncherModel* m) {
                 m->netplay_host_endpoint[0] = '\0';
             }
             m->netplay_lobby_max_slots =
-                row.max_slots >= 2 ? row.max_slots : np_game_max_players(m);
+                row.max_slots >= 2
+                    ? row.max_slots
+                    : np_game_max_players(
+                          m, strncmp(row.lobby_id, "lan:", 4) == 0);
         } else if (rc == -3) {
             std::snprintf(m->netplay_status, sizeof(m->netplay_status),
                           "No LAN/Direct IP lobby at that address. If the host "

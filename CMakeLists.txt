@@ -323,6 +323,25 @@ if(BUILD_TESTING)
         NAME recomp-ui-genesis-seats
         COMMAND $<TARGET_FILE:recomp-ui-genesis-seats-test>)
 
+    # Netplay room seat ceiling (backend create_max_slots) is independent of
+    # the local controller cards: a GBA link title seats four online, two on
+    # LAN, and still draws one card. Plus dense bus positions from sparse
+    # lobby seats (recomp_launcher_netplay_dense_position).
+    add_executable(recomp-ui-netplay-seat-cap-test
+        tests/netplay_seat_cap_test.c
+        src/common/crc32.c
+        src/common/sha1.c
+        src/common/sha256.c
+        src/common/ips_patch.c
+        src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-netplay-seat-cap-test PRIVATE
+        src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-netplay-seat-cap-test PRIVATE
+        ${RUI_SDL_TARGET})
+    add_test(
+        NAME recomp-ui-netplay-seat-cap
+        COMMAND $<TARGET_FILE:recomp-ui-netplay-seat-cap-test>)
+
     # Memory-card slot facts the Save panel paints: block-usage source order
     # (real inspect beats placeholder; a wired inspector never shows a made-up
     # pattern) and the tri-state enabled flag. Includes launcher_model.c like

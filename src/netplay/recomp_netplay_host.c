@@ -113,10 +113,14 @@ static int g_direct_reopen;
 static uint64_t g_direct_reopen_next_ms;
 static uint32_t g_lan_session_last;
 
-/* The title's own ceiling, from the hooks, inside the launcher's array. */
+/* The title's own ceiling, from the hooks, inside the launcher's array: the
+ * per-title netplay_max_players when the engine declares one, else the
+ * engine-wide max_players. */
 static int title_max_players(void)
 {
-  int n = g_h.max_players > 0 ? g_h.max_players : 2;
+  int n = g_h.netplay_max_players > 0 ? g_h.netplay_max_players
+          : g_h.max_players > 0       ? g_h.max_players
+                                      : 2;
   if (n < 2)
     n = 2;
   if (n > RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS)
@@ -2553,6 +2557,28 @@ static int cb_lobby_max_slots(void *ctx)
   return clamp_lobby_max_slots(g_lobby_max_slots);
 }
 
+/* For the Host panel's Max Players (not the current room's ceiling -- that
+ * is cb_lobby_max_slots). LAN / Direct IP: the two seats cb_create gives.
+ * Online: the title's declared seats when the engine set
+ * netplay_max_players; otherwise 0 ("unknown"), so the launcher keeps its
+ * num_players rule -- max_players alone is an ENGINE-wide ceiling (SNES: 4
+ * for every title) and was never what the combo offered. */
+static int cb_create_max_slots(void *ctx, int lan_only)
+{
+  (void)ctx;
+  if (lan_only)
+    return 2;
+  return g_h.netplay_max_players > 0 ? title_max_players() : 0;
+}
+
+static int cb_create_default_rollback(void *ctx, int max_slots)
+{
+  (void)ctx;
+  if (g_h.netplay_delay_sync_from_players <= 0)
+    return -1;
+  return max_slots >= g_h.netplay_delay_sync_from_players ? 0 : 1;
+}
+
 /* Refuse a launch with a reason the waiting room shows, said once per
  * session id so a launcher polling fill_launch every frame does not repeat
  * it. The launch is dropped (launch_pending cleared): the peers that did
@@ -3594,6 +3620,12 @@ static RecompLauncherCNetplayCallbacks g_callbacks = {
     .automatch_found_get = cb_automatch_found_get,
     .automatch_accept = cb_automatch_accept,
     .automatch_error = cb_automatch_error,
+#endif
+#if defined(RECOMP_LAUNCHER_HAS_CREATE_MAX_SLOTS)
+    .create_max_slots = cb_create_max_slots,
+#endif
+#if defined(RECOMP_LAUNCHER_HAS_CREATE_DEFAULT_ROLLBACK)
+    .create_default_rollback = cb_create_default_rollback,
 #endif
 };
 

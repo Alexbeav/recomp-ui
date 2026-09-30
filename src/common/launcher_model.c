@@ -674,7 +674,8 @@ void launcher_model_init(LauncherModel* m,
      * Online start is always lobby SFU (§108). */
     m->netplay_force_input_relay = false;
     m->netplay_force_turn = false;
-    /* Rollback on by default; Lobby Settings “Disable Rollback” opts out. */
+    /* Rollback is the legacy default; a title may choose delay-sync for the
+     * initial room size through create_default_rollback below. */
     m->netplay_rollback = true;
     /* netplay_host_max_players is set below, after the profile clamp. */
     m->netplay_lobby_max_slots = 0;
@@ -709,13 +710,15 @@ void launcher_model_init(LauncherModel* m,
     /* The lobby seat ceiling follows the CLAMPED player count: set before the
      * clamp, a game declaring more players than its console routes (Genesis
      * num_players 8, profile 4) opened a lobby with seats that have no pad.
-     * Same rule as the Host panel's np_game_max_players. */
-    {
-        int max_p = m->player_count > 0 ? m->player_count : 2;
-        if (max_p < 2) max_p = 2;
-        if (max_p > RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS)
-            max_p = RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS;
-        m->netplay_host_max_players = max_p;
+     * A backend that states its own online ceiling (create_max_slots) is
+     * asked instead -- see launcher_model_netplay_room_max_players. */
+    m->netplay_host_max_players =
+        launcher_model_netplay_room_max_players(m, /*lan_only=*/0);
+    if (m->netplay && m->netplay->create_default_rollback) {
+        int preferred = m->netplay->create_default_rollback(
+            m->netplay->ctx, m->netplay_host_max_players);
+        if (preferred >= 0)
+            m->netplay_rollback = preferred != 0;
     }
 
     // ---- gate pad_mode per player ----
@@ -3483,6 +3486,21 @@ void launcher_model_toggle_multitap(LauncherModel* m) {
         const int vis = launcher_model_visible_player_count(m);
         if (m->cfg_player >= vis) m->cfg_player = vis > 0 ? vis - 1 : 0;
     }
+}
+
+int launcher_model_netplay_room_max_players(const LauncherModel* m,
+                                            int lan_only) {
+    int n = (m && m->player_count > 0) ? m->player_count : 2;
+    const RecompLauncherCNetplayCallbacks* np =
+        (m && m->netplay_supported) ? m->netplay : NULL;
+    if (np && np->create_max_slots) {
+        const int backend = np->create_max_slots(np->ctx, lan_only ? 1 : 0);
+        if (backend >= 2) n = backend;
+    }
+    if (n < 2) n = 2;
+    if (n > RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS)
+        n = RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS;
+    return n;
 }
 
 int launcher_model_visible_player_count(const LauncherModel* m) {

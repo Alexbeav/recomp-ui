@@ -23,7 +23,8 @@ static void ck(int cond, const char *what)
     if (!cond) { printf("    FAIL %s\n", what); fails++; }
 }
 
-static void hooks_with(int policy, int max_players)
+static void hooks_with_title(int policy, int max_players,
+                             int netplay_max_players)
 {
     RecompNetplayHostHooks h;
     memset(&h, 0, sizeof(h));
@@ -31,8 +32,14 @@ static void hooks_with(int policy, int max_players)
     h.game_version = "1.2.3";
     h.platform = "test";
     h.max_players = max_players;
+    h.netplay_max_players = netplay_max_players;
     h.slot_policy = policy;
     ck(recomp_netplay_host_init(&h) == 0, "init");
+}
+
+static void hooks_with(int policy, int max_players)
+{
+    hooks_with_title(policy, max_players, 0);
 }
 
 /* The contract case: host is session slot 0 whatever seat it holds. */
@@ -195,6 +202,40 @@ static void case_seat_ceiling(void)
     ck(clamp_lobby_max_slots(1) == 2, "and never below 2");
     hooks_with(RECOMP_NETPLAY_SLOTS_SEAT, 0);
     ck(clamp_lobby_max_slots(4) == 2, "an unset ceiling is two seats");
+
+    /* create_max_slots: what the Host panel's Max Players offers. An
+     * engine-wide max_players alone (SNES: 4 for a two-player title) answers
+     * "unknown" online so the launcher keeps its num_players rule. */
+    hooks_with(RECOMP_NETPLAY_SLOTS_HOST_FIRST, 4);
+    ck(recomp_netplay_host_callbacks()->create_max_slots != NULL,
+       "create_max_slots is wired");
+    ck(recomp_netplay_host_callbacks()->create_max_slots(NULL, 0) == 0,
+       "max_players alone is not a per-title offer (online: unknown)");
+    ck(recomp_netplay_host_callbacks()->create_max_slots(NULL, 1) == 2,
+       "LAN / Direct IP ceiling is two");
+    ck(recomp_netplay_host_callbacks()->create_default_rollback(NULL, 4) == -1,
+       "legacy titles keep the rollback default");
+    ck(clamp_lobby_max_slots(8) == 4, "max_players still clamps create");
+
+    /* netplay_max_players: the title declares its link size. */
+    hooks_with_title(RECOMP_NETPLAY_SLOTS_HOST_FIRST, 2, 4);
+    ck(recomp_netplay_host_callbacks()->create_max_slots(NULL, 0) == 4,
+       "a GBA link title offers four online");
+    ck(recomp_netplay_host_callbacks()->create_max_slots(NULL, 1) == 2,
+       "and two on LAN");
+    ck(clamp_lobby_max_slots(4) == 4,
+       "netplay_max_players replaces max_players as create's clamp");
+    ck(clamp_lobby_max_slots(8) == 4, "and still caps create");
+    g_h.netplay_delay_sync_from_players = 3;
+    ck(recomp_netplay_host_callbacks()->create_default_rollback(NULL, 2) == 1,
+       "two-seat rooms default to rollback");
+    ck(recomp_netplay_host_callbacks()->create_default_rollback(NULL, 3) == 0 &&
+       recomp_netplay_host_callbacks()->create_default_rollback(NULL, 4) == 0,
+       "three and four-seat rooms default to delay-sync");
+    hooks_with_title(RECOMP_NETPLAY_SLOTS_HOST_FIRST, 0, 99);
+    ck(recomp_netplay_host_callbacks()->create_max_slots(NULL, 0) ==
+           RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS,
+       "never past the lobby array");
 }
 
 static void case_table_and_names(void)

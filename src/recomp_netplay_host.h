@@ -174,7 +174,27 @@ typedef struct RecompNetplayHostHooks {
     const RecompNetplaySessionVariant *session_variants;
     int session_variant_count;
     int default_session_variant;
+    /* Optional (append-only): this TITLE's online player seats, for a game
+     * whose netplay seats differ from its local controller cards
+     * (GameInfo.num_players) -- a GBA link-cable title draws one card and
+     * links up to four consoles. 2..RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS.
+     *
+     * When set it is the whole story: the lobby server's ceiling, create's
+     * clamp, and (through create_max_slots) the Host panel's Max Players
+     * offer 2..this online. LAN / Direct IP rooms stay two seats.
+     *
+     * 0 = unset: max_players above stays the engine-wide ceiling it always
+     * was (SNES passes 4 for every title) and the Max Players combo keeps
+     * following num_players, exactly as before this field existed. */
+    int netplay_max_players;
+    /* Opt-in: new rooms with this many seats or more default to delay-sync.
+     * Zero leaves the historical rollback default for every room size. */
+    int netplay_delay_sync_from_players;
 } RecompNetplayHostHooks;
+
+/* Present since RecompNetplayHostHooks.netplay_max_players was appended. */
+#define RECOMP_NETPLAY_HOST_HAS_NETPLAY_MAX_PLAYERS 1
+#define RECOMP_NETPLAY_HOST_HAS_DELAY_SYNC_FROM_PLAYERS 1
 
 /* Init once before the launcher first opens. `hooks` is copied (the strings
  * and hook tables it points to must outlive the process's netplay use).

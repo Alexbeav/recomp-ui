@@ -625,11 +625,12 @@ typedef struct {
     /* Lobby UDP SFU (online default). Not exposed in Lobby Settings; LAN clears. */
     bool      netplay_force_input_relay;
     bool      netplay_force_turn;
-    /* True = rollback invent path (lobby default). UI exposes “Disable Rollback”. */
+    /* True = rollback invent path. The title may set the initial room mode. */
     bool      netplay_rollback;
-    /* Host Lobby: desired max seats (2..min(8, game player_count)). */
+    /* Host Lobby: desired max seats, 2..launcher_model_netplay_room_max_players. */
     int       netplay_host_max_players;
-    /* Active room seat ceiling after create/join (0 = use game player_count). */
+    /* Active room seat ceiling after create/join (0 = use
+     * launcher_model_netplay_room_max_players). */
     int       netplay_lobby_max_slots;
     /* Lobby chat: the line being typed, and the seq of the newest line the
      * chat panel has scrolled to (so a new line scrolls the list once). */
@@ -973,6 +974,13 @@ int  launcher_model_multitap_available(const LauncherModel* m);
 int  launcher_model_multitap_enabled(const LauncherModel* m);
 void launcher_model_toggle_multitap(LauncherModel* m);
 int  launcher_model_visible_player_count(const LauncherModel* m);
+/* Player-seat ceiling for a netplay room this title hosts, 2..
+ * RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS. lan_only != 0 asks for a LAN / Direct
+ * IP room. The backend's create_max_slots answers when it has one (>= 2);
+ * otherwise it is player_count (min 2) -- the older rule, unchanged. It is a
+ * NETPLAY ceiling only: it never adds controller cards (player_count / the
+ * visible count above stay the local-pad numbers). */
+int  launcher_model_netplay_room_max_players(const LauncherModel* m, int lan_only);
 /* DualShock-on-tap hack UI (PSX, player_count >= 3). */
 int  launcher_model_multitap_analog_available(const LauncherModel* m);
 int  launcher_model_multitap_analog_enabled(const LauncherModel* m);
