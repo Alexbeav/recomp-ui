@@ -323,4 +323,15 @@ if(BUILD_TESTING)
     target_include_directories(recomp-runtime-ui-imgui-test PRIVATE
         src src/common src/third_party/imgui)
     add_test(NAME recomp-runtime-ui-imgui COMMAND $<TARGET_FILE:recomp-runtime-ui-imgui-test>)
+
+    # PS1B-299: pad buttons held when pad nav turns on must be released first.
+    add_executable(recomp-ui-launcher-pad-nav-test
+        tests/launcher_pad_nav_test.cpp
+        src/third_party/imgui/imgui.cpp
+        src/third_party/imgui/imgui_draw.cpp
+        src/third_party/imgui/imgui_tables.cpp
+        src/third_party/imgui/imgui_widgets.cpp)
+    target_include_directories(recomp-ui-launcher-pad-nav-test PRIVATE
+        src/common/backends/imgui src/third_party/imgui)
+    add_test(NAME recomp-ui-launcher-pad-nav COMMAND $<TARGET_FILE:recomp-ui-launcher-pad-nav-test>)
 endif()
