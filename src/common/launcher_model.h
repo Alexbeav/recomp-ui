@@ -1050,12 +1050,17 @@ void launcher_model_apply_msu1_patch(LauncherModel* m);
 void launcher_model_skip_msu1_patch(LauncherModel* m);
 
 // ---- controllers ----
-// PSX-style pad mode: 1=Analog, 2=D-Pad. Gated: no-op when
-// !pad_mode_selectable (mode is locked). Mode 0 (Hybrid) is NOT selectable —
-// it is a mod-only mode requested at runtime by a trusted game plugin — so a
-// stale persisted 0 snaps to Analog.
+// PSX-style pad mode: 1=Analog, 2=D-Pad, 3=neGcon (PSX only). Gated: no-op
+// when !pad_mode_selectable (mode is locked). Mode 0 (Hybrid) is NOT
+// selectable — it is a mod-only mode requested at runtime by a trusted game
+// plugin — so a stale persisted 0 snaps to Analog. A keyboard seat may pick
+// D-Pad or neGcon, not Analog. A neGcon seat keeps its pad type when its input
+// source changes.
 void launcher_model_set_pad_mode(LauncherModel* m, int player, int mode);
 void launcher_model_cycle_player_src(LauncherModel* m, int player); // None/Kbd/Pad
+// 1 when this profile offers the neGcon pad type (pad_mode 3,
+// RECOMP_LAUNCHER_PAD_MODE_NEGCON): only PSX. Elsewhere a 3 reads as Analog.
+int launcher_model_negcon_mode_available(const LauncherModel* m);
 void launcher_model_deadzone_delta(LauncherModel* m, int player, int delta);
 /* Absolute set, for a drag slider rather than a +/- stepper. Clamped 0..100,
  * and to whole percent: the value the runner consumes is a raw stick radius
