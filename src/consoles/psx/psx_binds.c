@@ -12,6 +12,7 @@
 
 #include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* Keep in sync with RECOMP_LAUNCHER_MAX_PLAYERS / PSXKB_MAX_PLAYERS. */
@@ -106,9 +107,45 @@ static const char* psx_kb_scancode_to_name(SDL_Scancode sc) {
     return (n && n[0]) ? n : "None";
 }
 
+// The sections of `path` this writer does not own (anything but [playerN]),
+// verbatim, or NULL. The runtime keeps its GunCon controls in [guncon]
+// (PS1B-305); rewriting the player sections must not drop it or a section a
+// newer runtime adds. Lines before the first section header are the header
+// comment, which the writer regenerates.
+static char* psx_kb_other_sections(const char* path) {
+    FILE* f = fopen(path, "r");
+    if (!f) return NULL;
+    size_t cap = 1024, n = 0;
+    char* out = (char*)malloc(cap);
+    if (!out) { fclose(f); return NULL; }
+    out[0] = '\0';
+    int keep = 0;
+    char line[512];
+    while (fgets(line, sizeof(line), f)) {
+        const char* s = line;
+        while (*s == ' ' || *s == '\t') ++s;
+        if (*s == '[') keep = strncmp(s + 1, "player", 6) != 0;
+        if (!keep) continue;
+        size_t l = strlen(line);
+        if (n + l + 2 > cap) {
+            size_t ncap = (n + l + 2) * 2;
+            char* grown = (char*)realloc(out, ncap);
+            if (!grown) break;
+            out = grown; cap = ncap;
+        }
+        memcpy(out + n, line, l + 1);
+        n += l;
+    }
+    fclose(f);
+    if (!n) { free(out); return NULL; }
+    if (out[n - 1] != '\n') { out[n++] = '\n'; out[n] = '\0'; }
+    return out;
+}
+
 static void psx_kb_write_ini(const char* path) {
+    char* other = psx_kb_other_sections(path);
     FILE* f = fopen(path, "w");
-    if (!f) return;
+    if (!f) { free(other); return; }
     fprintf(f,
         "# PSXRecomp Keyboard Keybinds (keyboard -> DualShock).\n"
         "# Written by recomp-ui's launcher (psx_keybinds.c-compatible format);\n"
@@ -128,6 +165,7 @@ static void psx_kb_write_ini(const char* path) {
         }
         fprintf(f, "\n");
     }
+    if (other) { fputs(other, f); free(other); }
     fclose(f);
 }
 

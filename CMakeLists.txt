@@ -172,6 +172,19 @@ if(BUILD_TESTING)
         COMMAND $<TARGET_FILE:recomp-ui-psx-binds-test>
                 "${CMAKE_CURRENT_BINARY_DIR}/psx-binds-test.ini")
 
+    # PS1B-305: a rebind keeps the runtime's [guncon] and other sections.
+    add_executable(recomp-ui-psx-binds-sections-test
+        tests/psx_binds_sections_test.c
+        src/consoles/psx/psx_binds.c)
+    target_include_directories(recomp-ui-psx-binds-sections-test PRIVATE
+        src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-psx-binds-sections-test PRIVATE ${RUI_SDL_TARGET})
+    target_compile_definitions(recomp-ui-psx-binds-sections-test PRIVATE ${RUI_SDL_DEFS})
+    add_test(
+        NAME recomp-ui-psx-binds-sections
+        COMMAND $<TARGET_FILE:recomp-ui-psx-binds-sections-test>
+                "${CMAKE_CURRENT_BINARY_DIR}/psx-binds-sections-test.ini")
+
     # Multi-disc roster: sibling autofill + per-slot binding. Includes
     # launcher_model.c (not links it) to reach the static path rewriter, so the
     # model's own deps are compiled in alongside.
