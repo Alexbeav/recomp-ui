@@ -46,6 +46,12 @@ extern "C" {
  * the macro so an older launcher is never handed a value it would clamp. */
 #define RECOMP_LAUNCHER_HAS_NEGCON_MODE 1
 #define RECOMP_LAUNCHER_PAD_MODE_NEGCON 3
+/* player_src value 4: the port holds a light gun aimed by the host pointer
+ * (PSX: the Namco GunCon). Offered only by profiles that support it
+ * (launcher_model_guncon_source_available); hosts #ifdef the macro so an older
+ * launcher is never handed a value it would clamp. */
+#define RECOMP_LAUNCHER_HAS_GUNCON_SOURCE 1
+#define RECOMP_LAUNCHER_SRC_GUNCON 4
 /* Host may #ifdef this when reading multitap_enabled from settings. */
 #define RECOMP_LAUNCHER_HAS_MULTITAP_ENABLED 1
 /* Host may #ifdef this when reading multitap_analog (DualShock-on-tap hack). */
@@ -1032,7 +1038,7 @@ struct RecompLauncherCSettings {
     int  enable_audio;      // bool
     int  audio_freq;        // Hz
     int  volume;            // 0..100
-    int  player_src[RECOMP_LAUNCHER_MAX_PLAYERS];  // 0 none, 1 keyboard, 2 gamepad, 3 mouse (RECOMP_LAUNCHER_SRC_MOUSE)
+    int  player_src[RECOMP_LAUNCHER_MAX_PLAYERS];  // 0 none, 1 keyboard, 2 gamepad, 3 mouse (RECOMP_LAUNCHER_SRC_MOUSE), 4 light gun (RECOMP_LAUNCHER_SRC_GUNCON)
     int  deadzone[RECOMP_LAUNCHER_MAX_PLAYERS];    // 0..100
     int  skip_launcher;     // bool: boot straight to the game next time
     int  msu1_enabled;      // bool

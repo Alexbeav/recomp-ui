@@ -58,9 +58,9 @@ static const char* kViewNames[8] = {
     "Dashboard", "Settings", "Controller", "Netplay", "Mods",
     "Assist Tools", "Credits", "Lobby"
 };
-/* Index 3 (RECOMP_LAUNCHER_SRC_MOUSE) exists only where
- * launcher_model_mouse_source_available() says so. */
-static const char* kSrcNames[4]  = { "None", "Keyboard", "Gamepad", "PS1 Mouse" };
+/* Index 3 (RECOMP_LAUNCHER_SRC_MOUSE) and 4 (RECOMP_LAUNCHER_SRC_GUNCON) exist
+ * only where launcher_model_mouse/guncon_source_available() say so. */
+static const char* kSrcNames[5]  = { "None", "Keyboard", "Gamepad", "PS1 Mouse", "GunCon" };
 
 static void safe_copy(char* dst, size_t cap, const char* src) {
     if (!dst || cap == 0) return;
@@ -3723,10 +3723,20 @@ int launcher_model_mouse_source_available(const LauncherModel* m) {
     return (prof && prof->id && strcmp(prof->id, "psx") == 0) ? 1 : 0;
 }
 
+int launcher_model_guncon_source_available(const LauncherModel* m) {
+    /* The GunCon is a PSX port device, like the PS1 Mouse. */
+    return launcher_model_mouse_source_available(m);
+}
+
+int launcher_model_source_is_pointer(int kind) {
+    return kind == RECOMP_LAUNCHER_SRC_MOUSE || kind == RECOMP_LAUNCHER_SRC_GUNCON;
+}
+
 void launcher_model_cycle_player_src(LauncherModel* m, int player) {
     player = clampi(player, 0, LNG_MAX_PLAYERS - 1);
-    /* None/Kbd/Pad, plus Mouse where the profile has one. */
-    const int n = launcher_model_mouse_source_available(m) ? 4 : 3;
+    /* None/Kbd/Pad, plus Mouse and GunCon where the profile has them. */
+    const int n = launcher_model_guncon_source_available(m) ? 5
+                : launcher_model_mouse_source_available(m) ? 4 : 3;
     m->s.player_src[player] = (m->s.player_src[player] + 1) % n;
     apply_default_pad_mode_for_source(m, player);
 }
@@ -3742,7 +3752,9 @@ void launcher_model_set_source(LauncherModel* m, int player, int kind,
     player = clampi(player, 0, LNG_MAX_PLAYERS - 1);
     if (kind == RECOMP_LAUNCHER_SRC_MOUSE && !launcher_model_mouse_source_available(m))
         kind = 0;
-    kind = clampi(kind, 0, RECOMP_LAUNCHER_SRC_MOUSE);
+    if (kind == RECOMP_LAUNCHER_SRC_GUNCON && !launcher_model_guncon_source_available(m))
+        kind = 0;
+    kind = clampi(kind, 0, RECOMP_LAUNCHER_SRC_GUNCON);
     m->s.player_src[player] = kind;
     if (kind == 2) {
         m->player_pad_id[player] = pad_id;
@@ -4050,8 +4062,10 @@ const char* launcher_model_freq_label(const LauncherModel* m) {
 
 const char* launcher_model_player_src_label(const LauncherModel* m, int player) {
     player = clampi(player, 0, LNG_MAX_PLAYERS - 1);
-    int src = clampi(m->s.player_src[player], 0, RECOMP_LAUNCHER_SRC_MOUSE);
+    int src = clampi(m->s.player_src[player], 0, RECOMP_LAUNCHER_SRC_GUNCON);
     if (src == RECOMP_LAUNCHER_SRC_MOUSE && !launcher_model_mouse_source_available(m))
+        src = 0;
+    if (src == RECOMP_LAUNCHER_SRC_GUNCON && !launcher_model_guncon_source_available(m))
         src = 0;
     if (src == 2) {
         // Never show the generic "Gamepad" placeholder when we have a concrete

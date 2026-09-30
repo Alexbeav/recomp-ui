@@ -967,6 +967,13 @@ void launcher_model_cycle_player_src(LauncherModel* m, int player); // None/Kbd/
 // RECOMP_LAUNCHER_SRC_MOUSE): only PSX, for the PS1 Mouse port device.
 // Elsewhere set_source maps 3 to None and the label reads "None".
 int launcher_model_mouse_source_available(const LauncherModel* m);
+// 1 when this profile offers the light-gun source (player_src 4,
+// RECOMP_LAUNCHER_SRC_GUNCON): only PSX, for the Namco GunCon aimed by the
+// host pointer. Elsewhere set_source maps 4 to None and the label reads "None".
+int launcher_model_guncon_source_available(const LauncherModel* m);
+// 1 for the sources that take the host pointer (PS1 Mouse, GunCon). Only one
+// seat at a time may hold one: they would share the same pointer.
+int launcher_model_source_is_pointer(int kind);
 // 1 when this profile offers the neGcon pad type (pad_mode 3,
 // RECOMP_LAUNCHER_PAD_MODE_NEGCON): only PSX. Elsewhere a 3 reads as Analog.
 int launcher_model_negcon_mode_available(const LauncherModel* m);
