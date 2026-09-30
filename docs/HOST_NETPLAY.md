@@ -34,7 +34,8 @@ soft-return helper (prepare_rematch + `resume_netplay_room` / endpoint).
 | `game_name`, `game_version` | scoping key and exact release pin (SHIPPING.md §2) | init fails without a name |
 | `content_fingerprint` | 64-hex SHA-256 of the guest image | joins work; automatch refuses to queue |
 | `platform`, `legacy_env_prefix` | moderation tag; older env spelling (`"SNES_NET_"`) | `"unknown"`; `RNET_LOBBY_*` only |
-| `max_players` | online PLAYER-seat ceiling (N64: 4; a GBA link-cable title: its link size). The one number that sets it: the lobby server's ceiling, `create`'s clamp, and -- through `create_max_slots` -- the Host panel's Max Players. Independent of `GameInfo.num_players` (local controller cards), see "Online seat ceiling" below | 2 |
+| `max_players` | engine-wide online PLAYER-seat ceiling (N64: 4; SNES: 4 for every title): the lobby server's ceiling and `create`'s clamp. The Host panel does not offer it -- Max Players follows `GameInfo.num_players` | 2 |
+| `netplay_max_players` | this TITLE's online seats when they differ from its local controller cards (a GBA link-cable title: its link size, with `num_players` 1). Set, it replaces `max_players` everywhere above AND is what Max Players offers online (through `create_max_slots`); see "Online seat ceiling" below | unset: `max_players` / `num_players` exactly as before |
 | `slot_policy` | `HOST_FIRST` (default, the contract below) or `SEAT` | `HOST_FIRST` |
 | `exe_dir_path` | resolve files beside the executable | LAN registry / account secret cwd-relative |
 | `name_store` / `name_load` | persist the display name | name not remembered across runs |
@@ -255,17 +256,21 @@ link seats online.
 
 The launcher asks the backend: `create_max_slots(ctx, lan_only)` (append-only,
 optional) is the largest `max_slots` `create` will honour for a room of that
-kind. `recomp_netplay_host` answers it from `RecompNetplayHostHooks.max_players`
-online and 2 on LAN / Direct IP -- the same clamp its `create` applies -- so
-the engine sets exactly one field, `hooks.max_players`, and the UI can never
-offer a room the backend would shrink. Behaviour
+kind; an answer < 2 means "unknown" and the launcher keeps its `num_players`
+rule. `recomp_netplay_host` answers 2 for LAN / Direct IP (the two seats its
+`create` gives) and, online, `RecompNetplayHostHooks.netplay_max_players` --
+the ONE field an engine sets to declare a title's link size; it then also
+becomes the server ceiling and `create`'s clamp, so the UI never offers a
+room the backend would shrink. Left unset (0), online answers 0: the engine's
+`max_players` is an engine-wide ceiling (SNES passes 4 for two-player titles)
+and was never what Max Players offered, so it still is not. Behaviour
 (`launcher_model_netplay_room_max_players`):
 
-| Room | Backend has `create_max_slots` (>= 2) | Backend without it |
-| --- | --- | --- |
-| Online | Max Players offers 2..`hooks.max_players` | 2..`num_players` (min 2), as before |
-| LAN / Direct IP | 2, and the Host panel says "LAN / Direct IP rooms are 2-player; host online for up to N" when N > 2 | 2..`num_players` (min 2), as before |
-| Automatch | the ruleset's `max_slots` (server-owned; 2 today) | same |
+| Room | `recomp_netplay_host`, `netplay_max_players` = N | `recomp_netplay_host`, unset | Backend without `create_max_slots` |
+| --- | --- | --- | --- |
+| Online | 2..N | 2..`num_players` (min 2), as before | 2..`num_players` (min 2), as before |
+| LAN / Direct IP | 2, and the Host panel says "LAN / Direct IP rooms are 2-player / Host online for up to N players" | 2 (the room `create` always gave; no current engine on this backend has `num_players` > 2) | 2..`num_players` (min 2), as before |
+| Automatch | the ruleset's `max_slots` (server-owned; 2 today) | same | same |
 
 No controller card is added: `player_count` / `launcher_model_visible_player_count`
 still come from `num_players` only.

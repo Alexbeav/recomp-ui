@@ -775,10 +775,12 @@ typedef struct RecompLauncherCNetplayCallbacks {
      * players online than it draws cards: a GBA title declares num_players 1
      * and four link seats here. The Host panel's Max Players offers 2..this.
      *
-     * recomp_netplay_host implements it as the clamp its create applies:
-     * online = RecompNetplayHostHooks.max_players (the one number the engine
-     * sets; also the ceiling the lobby server is configured with), LAN /
-     * Direct IP = 2 (recomp-net's LAN room carries one joiner).
+     * recomp_netplay_host answers LAN / Direct IP = 2 (recomp-net's LAN room
+     * carries one joiner) and online = RecompNetplayHostHooks.
+     * netplay_max_players -- the one number the engine sets, which is then
+     * also the lobby server's ceiling and create's clamp -- or 0 when the
+     * engine left it unset (its engine-wide max_players is not a per-title
+     * seat count: SNES passes 4 for two-player games).
      *
      * NULL, or a return < 2, keeps the launcher's older ceiling, derived from
      * num_players, unchanged. */

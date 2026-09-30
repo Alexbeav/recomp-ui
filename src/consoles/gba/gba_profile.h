@@ -124,7 +124,7 @@ static inline void launcher_profile_apply_gba(RecompLauncherCGameInfo* gi) {
     gi->theme    = "gba";              // indigo LCD theme, no CRT scanlines
     gi->platform = "GAME BOY ADVANCE";
     gi->rom_noun = "ROM";
-    gi->num_players = 1;               // one pad card; link seats online = hooks.max_players (create_max_slots)
+    gi->num_players = 1;               // one pad card; link seats online = hooks.netplay_max_players (create_max_slots)
     // GBA settings surface: integer window scale + linear filter (base rows),
     // LCD screen-model cycle, fullscreen-on-launch, and the BIOS path picker
     // (gbarecomp is LLE-BIOS by default — a real BIOS image is required).

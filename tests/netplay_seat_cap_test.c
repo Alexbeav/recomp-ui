@@ -3,7 +3,8 @@
  * A GBA link title draws ONE controller card (num_players 1, profile
  * max_players 1) and seats up to four players online. The launcher learns the
  * online ceiling from the backend's create_max_slots(ctx, lan_only) -- which
- * recomp_netplay_host answers from hooks.max_players, and 2 on LAN -- and must
+ * recomp_netplay_host answers from hooks.netplay_max_players, 2 on LAN, and
+ * 0 ("unknown") online when the engine left that unset -- and must
  *   - offer 2..that ceiling for an online room, 2 for a LAN / Direct IP one;
  *   - never add a controller card for it;
  *   - keep every backend without the callback on the old num_players rule.
@@ -28,7 +29,8 @@ static void expect_int(int got, int want, const char* what) {
     ++fails;
 }
 
-/* recomp_netplay_host's answer shape: online = hooks.max_players, LAN = 2. */
+/* recomp_netplay_host's answer shape: online = hooks.netplay_max_players
+ * (0 when unset), LAN = 2. */
 static int g_online_cap;
 static int g_calls;
 static int fake_create_max_slots(void* ctx, int lan_only) {
@@ -90,7 +92,7 @@ static void case_gba_legacy(void) {
 }
 
 static void case_gba_backend_two(void) {
-    /* gbarecomp today: hooks.max_players = 2 -> nothing changes. */
+    /* A title that declares a two-console link. */
     Seats s = seats_for(SYS_GBA, 0, 1, 2);
     expect_int(s.online, 2, "gba cap 2: online two seats");
     expect_int(s.lan, 2, "gba cap 2: LAN two seats");
@@ -124,11 +126,24 @@ static void case_n64(void) {
     expect_int(s.online, 4, "n64 legacy: online four seats");
     expect_int(s.lan, 4, "n64 legacy: LAN four (backend clamps; unchanged)");
     expect_int(s.host_default, 4, "n64 legacy: host default four");
-    /* Same title on recomp_netplay_host with hooks.max_players 4. */
+    /* Same title on recomp_netplay_host declaring netplay_max_players 4. */
     s = seats_for(SYS_N64, 4, 1, 4);
     expect_int(s.online, 4, "n64 backend: online four seats");
     expect_int(s.lan, 2, "n64 backend: LAN is the two seats create gives");
     expect_int(s.player_count, 4, "n64 backend: cards unchanged");
+}
+
+static void case_snes_engine_wide_ceiling(void) {
+    /* snesrecomp on recomp_netplay_host: hooks.max_players = 4 for every
+     * title, netplay_max_players unset -> online answers 0. A two-player
+     * SNES title must keep offering two, and GBA today (unset) too. */
+    Seats s = seats_for(SYS_GBA, 0, 1, 0);
+    expect_int(s.online, 2, "unset netplay_max_players: GBA online stays two");
+    expect_int(s.lan, 2, "unset netplay_max_players: GBA LAN two");
+    expect_int(s.host_default, 2, "unset netplay_max_players: GBA host default two");
+    s = seats_for(SYS_N64, 2, 1, 0);
+    expect_int(s.online, 2, "engine-wide ceiling only: two-player title offers two");
+    expect_int(s.lan, 2, "engine-wide ceiling only: LAN two");
 }
 
 static void case_no_netplay(void) {
@@ -242,6 +257,7 @@ int main(void) {
     case_gba_four_link();
     case_backend_bounds();
     case_n64();
+    case_snes_engine_wide_ceiling();
     case_no_netplay();
     case_dense_positions();
     if (fails) fprintf(stderr, "%d failure(s)\n", fails);

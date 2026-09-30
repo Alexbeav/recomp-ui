@@ -113,10 +113,14 @@ static int g_direct_reopen;
 static uint64_t g_direct_reopen_next_ms;
 static uint32_t g_lan_session_last;
 
-/* The title's own ceiling, from the hooks, inside the launcher's array. */
+/* The title's own ceiling, from the hooks, inside the launcher's array: the
+ * per-title netplay_max_players when the engine declares one, else the
+ * engine-wide max_players. */
 static int title_max_players(void)
 {
-  int n = g_h.max_players > 0 ? g_h.max_players : 2;
+  int n = g_h.netplay_max_players > 0 ? g_h.netplay_max_players
+          : g_h.max_players > 0       ? g_h.max_players
+                                      : 2;
   if (n < 2)
     n = 2;
   if (n > RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS)
@@ -2490,13 +2494,18 @@ static int cb_lobby_max_slots(void *ctx)
   return clamp_lobby_max_slots(g_lobby_max_slots);
 }
 
-/* The ceiling cb_create clamps max_slots to, for the Host panel's Max
- * Players: the title's online seats, or two on LAN / Direct IP. Not the
- * current room's -- that is cb_lobby_max_slots. */
+/* For the Host panel's Max Players (not the current room's ceiling -- that
+ * is cb_lobby_max_slots). LAN / Direct IP: the two seats cb_create gives.
+ * Online: the title's declared seats when the engine set
+ * netplay_max_players; otherwise 0 ("unknown"), so the launcher keeps its
+ * num_players rule -- max_players alone is an ENGINE-wide ceiling (SNES: 4
+ * for every title) and was never what the combo offered. */
 static int cb_create_max_slots(void *ctx, int lan_only)
 {
   (void)ctx;
-  return lan_only ? 2 : title_max_players();
+  if (lan_only)
+    return 2;
+  return g_h.netplay_max_players > 0 ? title_max_players() : 0;
 }
 
 /* Refuse a launch with a reason the waiting room shows, said once per
