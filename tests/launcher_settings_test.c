@@ -21,9 +21,12 @@
 static int window_available = 1, edit = 0;
 static LngAction action = LNG_ACTION_QUIT;
 static RecompLauncherCSettings observed;
+static int opened_width, opened_height, resized_width, resized_height;
 
 bool launcher_platform_open(LauncherPlatform* p, const char* title, int w, int h) {
-    (void)p; (void)title; (void)w; (void)h;
+    (void)title;
+    opened_width = p->logical_w = w;
+    opened_height = p->logical_h = h;
     return window_available != 0;
 }
 void launcher_platform_close(LauncherPlatform* p) { (void)p; }
@@ -37,7 +40,11 @@ void launcher_binds_load(LauncherModel* m, const char* config, const char* binds
 void launcher_binds_set_zapper(int a, int b) { (void)a; (void)b; }
 LngAction launcher_backend_run(LauncherPlatform* p, LauncherModel* m,
                                const LauncherTheme* theme) {
-    (void)p; (void)theme;
+    (void)theme;
+    if (resized_width && resized_height) {
+        p->logical_w = resized_width;
+        p->logical_h = resized_height;
+    }
     observed = m->s;
     if (edit) {
         launcher_model_set_fullscreen(m, edit);
@@ -221,6 +228,27 @@ int main(int argc, char** argv) {
     s = defaults(); edit = 0; run(&game, &s);
     require(observed.fullscreen == 1 && observed.linear_filter == 1,
             "fresh file/default path round trip");
+    /* A real C-ABI exit/reopen must retain launcher dimensions independently
+     * of the host's game-window options and profile-specific settings. */
+    game.config_path = "window host.ini";
+    game.platform = "PLAYSTATION";
+    write_text("launcher-window.ini", "logical_width=1100\nlogical_height=880\n");
+    write_text(game.config_path, "[video]\nwindow_width=960\n");
+    edit = 0; resized_width = 1280; resized_height = 960;
+    s = defaults(); run(&game, &s);
+    resized_width = resized_height = 0;
+    run(&game, &s);
+    require(opened_width == 1280 && opened_height == 960, "launcher resize survives Quit and reopen");
+    read_text(game.config_path, result, sizeof(result));
+    require(!strcmp(result, "[video]\nwindow_width=960\n"), "launcher size never edits host game-window settings");
+    write_text("launcher-window.ini", "logical_width=99999999999999999999999\nlogical_height=-1\n");
+    run(&game, &s);
+    require(opened_width == 1100 && opened_height == 880, "invalid geometry keeps fitted startup defaults");
+    window_available = 0;
+    write_text("launcher-window.ini", "logical_width=1200\nlogical_height=900\n");
+    run(&game, &s);
+    read_text("launcher-window.ini", result, sizeof(result));
+    require(!strcmp(result, "logical_width=1200\nlogical_height=900\n"), "unavailable window never overwrites geometry");
     puts("launcher settings persistence: PASS");
     return 0;
 }

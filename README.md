@@ -133,6 +133,12 @@ are gated by the host's capability flags. Widescreen mod state, keybindings,
 ROM selection, and transient netplay launch data retain their existing owners.
 Other console profiles keep their host-owned configuration formats.
 
+When the host supplies `gi.config_path`, the launcher also remembers its own
+resized width and height in `launcher-window.ini` beside that config. These are
+logical UI dimensions, fitted to the current display's DPI and work area on
+reopen; they do not change the game's window-size setting. Missing or invalid
+dimensions use the normal 1100 by 880 startup size. Window position is not saved.
+
 Hosts must still apply returned preferences to the running game. A UI pin
 cannot implement a renderer/audio feature the host does not consume, or load
 preferences on a boot path that never calls the launcher. Hosts that already
