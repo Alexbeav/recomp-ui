@@ -189,8 +189,82 @@ static void test_dashboard_still_confirms(const char* dir) {
     free(m);
 }
 
+/* Host that prepares the BIOS itself (bundled psxrecomp build: the dump is
+ * compiled into a loadable backend on this machine). After the job the host
+ * reports the pick as linked. */
+static int g_bios_prepare_calls;
+static char g_bios_prepared[512];
+static int fake_bios_verify_preparing(const char* path, RecompLauncherCBiosVerify* out) {
+    if (path && path[0] && g_bios_prepared[0] && strstr(path, "setupbios_retail.bin")
+        && g_bios_prepare_calls > 0) {
+        memset(out, 0, sizeof(*out));
+        out->ok = 1;
+        snprintf(out->detail, sizeof(out->detail), "SCPH-1001 (CRC OK, ready).");
+        return 1;
+    }
+    return fake_bios_verify(path, out);
+}
+static int fake_bios_prepare(const char* bios_path, char* err, size_t err_cap,
+                             RecompLauncherCPrepareProgressFn progress, void* ctx) {
+    (void)err; (void)err_cap;
+    g_bios_prepare_calls++;
+    snprintf(g_bios_prepared, sizeof(g_bios_prepared), "%s", bios_path ? bios_path : "");
+    if (progress) progress(ctx, 0.5f, "Compiling…");
+    return 1;
+}
+
+static void test_host_prepares_bios_without_disc(const char* dir) {
+    char disc[512];
+    char bios[512];
+    LauncherModel* m = make_model(dir, disc, sizeof(disc));
+    if (!m) { fprintf(stderr, "FAIL: out of memory\n"); ++fails; return; }
+    snprintf(bios, sizeof(bios), "%s/setupbios_retail.bin", dir);
+    m->bios_verify_cb = fake_bios_verify_preparing;
+    m->prepare_with_progress_cb = NULL;          /* no Generate in a shipped build */
+    m->bios_prepare_with_progress_cb = fake_bios_prepare;
+    g_bios_prepare_calls = 0;
+    g_bios_prepared[0] = '\0';
+
+    launcher_model_request_bios_path(m, bios);
+    expect(launcher_model_setup_needs_bios_regen(m), "staged pick needs preparing");
+    expect(launcher_model_bios_prepare_available(m), "the host offers Prepare BIOS");
+    expect(launcher_model_setup_bios_regen_blocker(m) == NULL,
+           "no disc, no toolchain, nothing blocks Prepare BIOS");
+    expect(!strcmp(launcher_model_bios_prepare_button(m), "Prepare BIOS"),
+           "default button copy");
+
+    launcher_model_setup_start_bios_regen(m);
+    expect(m->setup_preparing, "the progress job started");
+    expect(!m->setup_wizard_open && m->setup_wizard_suspended_for_bios,
+           "wizard yields to the progress modal and remembers to come back");
+    /* Let the worker finish, then poll like the UI loop does. */
+    for (int i = 0; i < 500 && m->setup_preparing; ++i) {
+        launcher_model_poll_prepare_disc(m);
+#if defined(_WIN32)
+        Sleep(10);
+#else
+        usleep(10000);
+#endif
+    }
+    expect(!m->setup_preparing, "job completed");
+    expect(g_bios_prepare_calls == 1 && same_path(g_bios_prepared, bios),
+           "the host was asked to prepare exactly the staged BIOS");
+    expect(m->setup_wizard_open && m->setup_page == 1,
+           "the wizard resumed on the BIOS/disc page");
+    expect(same_path(m->s.bios_path, bios) && !m->bios_switch_uncommitted,
+           "the pick is committed");
+    expect(m->setup_bios_ok && !m->setup_bios_needs_regen,
+           "re-verified as ready: Continue to launcher is reachable");
+    expect(!launcher_model_setup_needs_bios_regen(m), "no regen button any more");
+    expect(m->setup_error[0] == '\0' && strstr(m->setup_status, "ready") != NULL,
+           "success status shown");
+
+    free(m);
+}
+
 int main(int argc, char** argv) {
     const char* dir = (argc > 1) ? argv[1] : ".";
+    test_host_prepares_bios_without_disc(dir);
     test_staged_in_wizard(dir);
     test_second_pick_keeps_revert_target(dir);
     test_openbios_clears_staging(dir);

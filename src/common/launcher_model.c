@@ -455,6 +455,12 @@ void launcher_model_init(LauncherModel* m,
         if (m->setup_wizard_supported) {
             m->prepare_disc_cb      = game->prepare_disc;
             m->prepare_with_progress_cb = game->prepare_with_progress;
+            m->bios_prepare_with_progress_cb = game->bios_prepare_with_progress;
+            m->bios_prepare_title   = game->bios_prepare_title;
+            m->bios_prepare_note    = game->bios_prepare_note;
+            m->bios_prepare_button  = game->bios_prepare_button;
+            m->bios_prepare_busy_status = game->bios_prepare_busy_status;
+            m->bios_prepare_success_status = game->bios_prepare_success_status;
             m->rebuild_with_progress_cb = game->rebuild_with_progress;
             m->prepare_disc_label   = game->prepare_disc_label;
             m->prepare_disc_note    = game->prepare_disc_note;
@@ -476,6 +482,12 @@ void launcher_model_init(LauncherModel* m,
         } else {
             m->prepare_disc_cb = NULL;
             m->prepare_with_progress_cb = NULL;
+            m->bios_prepare_with_progress_cb = NULL;
+            m->bios_prepare_title = NULL;
+            m->bios_prepare_note = NULL;
+            m->bios_prepare_button = NULL;
+            m->bios_prepare_busy_status = NULL;
+            m->bios_prepare_success_status = NULL;
             m->rebuild_with_progress_cb = NULL;
             m->prepare_disc_label = NULL;
             m->prepare_disc_note = NULL;
@@ -2567,6 +2579,7 @@ static int lm_bios_paths_equal(const char* a, const char* b) {
 }
 
 void launcher_model_start_prepare_disc(LauncherModel* m, const char* source_path);
+void launcher_model_begin_bios_prepare(LauncherModel* m);
 
 static void lm_bios_revert_uncommitted(LauncherModel* m) {
     if (!m || !m->bios_switch_uncommitted) return;
@@ -2611,6 +2624,13 @@ static void lm_bios_kick_generate(LauncherModel* m) {
     m->setup_wizard_open = false;
     m->bios_confirm_open = false;
     m->bios_play_modal_open = false;
+    /* A host that adds the BIOS backend itself (bundled psxrecomp build:
+     * the retail dump is compiled into a loadable module) needs no disc,
+     * no toolchain page and no rebuild: run that job and come back. */
+    if (m->bios_prepare_with_progress_cb && m->s.bios_path[0]) {
+        launcher_model_begin_bios_prepare(m);
+        return;
+    }
     /* Re-probe: setup_tc_ready may still be false if the wizard never opened. */
     if (m->setup_needs_toolchain) {
         if (m->toolchain_is_ready_cb && m->toolchain_is_ready_cb())
@@ -2818,9 +2838,31 @@ bool launcher_model_setup_needs_bios_regen(const LauncherModel* m) {
     return m->setup_bios_needs_regen;
 }
 
+bool launcher_model_bios_prepare_available(const LauncherModel* m) {
+    return m && m->setup_wizard_supported && m->bios_prepare_with_progress_cb;
+}
+
+const char* launcher_model_bios_prepare_title(const LauncherModel* m) {
+    return (m && m->bios_prepare_title && m->bios_prepare_title[0])
+        ? m->bios_prepare_title : "Prepare this BIOS";
+}
+const char* launcher_model_bios_prepare_note(const LauncherModel* m) {
+    return (m && m->bios_prepare_note && m->bios_prepare_note[0])
+        ? m->bios_prepare_note
+        : "This BIOS is not part of the build yet. Preparing it compiles a "
+          "backend from your own image on this machine, once; no disc or "
+          "rebuild is needed. Or switch back to OpenBIOS to play now.";
+}
+const char* launcher_model_bios_prepare_button(const LauncherModel* m) {
+    return (m && m->bios_prepare_button && m->bios_prepare_button[0])
+        ? m->bios_prepare_button : "Prepare BIOS";
+}
+
 const char* launcher_model_setup_bios_regen_blocker(const LauncherModel* m) {
     if (!m || !launcher_model_setup_needs_bios_regen(m)) return NULL;
     if (m->setup_preparing) return "Wait for the current job to finish";
+    /* The host prepares the BIOS itself: nothing else is required. */
+    if (m->bios_prepare_with_progress_cb) return NULL;
     if (!m->prepare_with_progress_cb && !m->prepare_disc_cb)
         return "Generate is unavailable (project/SDK not found)";
     if (!m->rom_present || !m->rom_full[0] || strcmp(m->rom_size, "--") == 0)
@@ -2930,7 +2972,8 @@ enum {
     PREP_JOB_REBUILD = 1,
     PREP_JOB_TOOLCHAIN = 2,
     PREP_JOB_PGO = 3,
-    PREP_JOB_FMV_TIMING = 4
+    PREP_JOB_FMV_TIMING = 4,
+    PREP_JOB_BIOS = 5
 };
 
 typedef struct {
@@ -3045,6 +3088,16 @@ static void* prep_thread_main(void* arg) {
         } else {
             safe_copy(j->err, sizeof(j->err), "No PGO optimize callback.");
         }
+    } else if (j->kind == PREP_JOB_BIOS) {
+        if (j->m && j->m->bios_prepare_with_progress_cb) {
+            j->result = j->m->bios_prepare_with_progress_cb(
+                            j->source, j->err, sizeof(j->err),
+                            prep_progress_cb, j) ? 1 : 0;
+            if (j->result)
+                safe_copy(j->out_path, sizeof(j->out_path), "ok");
+        } else {
+            safe_copy(j->err, sizeof(j->err), "No BIOS prepare callback.");
+        }
     } else if (j->kind == PREP_JOB_FMV_TIMING) {
         if (j->m && j->m->fmv_timing_optimize_with_progress_cb) {
             j->result = j->m->fmv_timing_optimize_with_progress_cb(
@@ -3088,6 +3141,28 @@ static void launcher_model_begin_rebuild_locked(LauncherModel* m) {
               (m->rebuild_busy_status && m->rebuild_busy_status[0])
                   ? m->rebuild_busy_status
                   : "Building game…");
+    if (!prep_spawn_thread(m))
+        return;
+}
+
+void launcher_model_begin_bios_prepare(LauncherModel* m) {
+    if (!m || m->setup_preparing || !m->bios_prepare_with_progress_cb) return;
+    if (!m->s.bios_path[0]) return;   /* OpenBIOS never needs preparing */
+    memset(&g_prep_job, 0, sizeof(g_prep_job));
+    g_prep_job.m = m;
+    g_prep_job.kind = PREP_JOB_BIOS;
+    g_prep_job.progress_pct = -1.0f;
+    safe_copy(g_prep_job.source, sizeof(g_prep_job.source), m->s.bios_path);
+    m->setup_preparing = true;
+    m->setup_prepare_pulse = 0.0f;
+    m->setup_prepare_fraction = -1.0f;
+    m->setup_error[0] = '\0';
+    safe_copy(m->setup_progress_title, sizeof(m->setup_progress_title),
+              launcher_model_bios_prepare_title(m));
+    safe_copy(m->setup_status, sizeof(m->setup_status),
+              (m->bios_prepare_busy_status && m->bios_prepare_busy_status[0])
+                  ? m->bios_prepare_busy_status
+                  : "Compiling your BIOS for this build…");
     if (!prep_spawn_thread(m))
         return;
 }
@@ -3330,6 +3405,30 @@ void launcher_model_poll_prepare_disc(LauncherModel* m) {
             m->setup_status[0] = '\0';
             safe_copy(m->setup_error, sizeof(m->setup_error),
                       err[0] ? err : "Toolchain install failed.");
+        }
+        return;
+    }
+
+    if (kind == PREP_JOB_BIOS) {
+        m->setup_progress_title[0] = '\0';
+        if (result) {
+            /* The host now has the backend: the pick sticks, the row
+             * re-verifies as ready, and the wizard (if it was open) resumes
+             * so the player continues to the launcher from where they were. */
+            lm_bios_commit_uncommitted(m);
+            launcher_model_refresh_bios_status(m);
+            m->setup_error[0] = '\0';
+            safe_copy(m->setup_status, sizeof(m->setup_status),
+                      (m->bios_prepare_success_status && m->bios_prepare_success_status[0])
+                          ? m->bios_prepare_success_status
+                          : "BIOS ready.");
+            lm_restore_setup_wizard_after_bios(m, 1);
+        } else {
+            lm_bios_revert_uncommitted(m);
+            m->setup_status[0] = '\0';
+            safe_copy(m->setup_error, sizeof(m->setup_error),
+                      err[0] ? err : "BIOS prepare failed.");
+            lm_restore_setup_wizard_after_bios(m, 1);
         }
         return;
     }

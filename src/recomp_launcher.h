@@ -2165,6 +2165,28 @@ typedef struct RecompLauncherCGameInfo {
      * Hosts must release their temporary policy if the launcher is dismissed
      * without a netplay launch. No simulation or network work belongs here. */
     void (*netplay_mode_changed)(int enabled);
+
+    /* ---- BIOS prepare: add a backend for the staged BIOS without Generate --
+     * A shipped (bundled) psxrecomp build links only OpenBIOS and compiles a
+     * player's retail BIOS into a loadable backend on their machine. When
+     * bios_prepare_with_progress is set, a bios_verify that reports
+     * needs_regen for a pick is resolved by THIS job instead of Generate &
+     * rebuild: no disc, no toolchain page, no rebuild, no relaunch. It runs
+     * on the worker thread with the staged bios_path, may report progress,
+     * and returns 1 when the BIOS is ready; the launcher then re-verifies
+     * (the host now reports ok) and continues the wizard / the Play click.
+     * The strings replace the Generate & rebuild wording wherever the BIOS
+     * row is concerned; NULL keeps a default. Appended for ABI stability;
+     * older hosts leave everything 0 via memset and keep Generate. */
+    int (*bios_prepare_with_progress)(const char* bios_path,
+                                      char* err_msg, size_t err_cap,
+                                      RecompLauncherCPrepareProgressFn on_progress,
+                                      void* progress_ctx);
+    const char* bios_prepare_title;          /* "Prepare this BIOS" */
+    const char* bios_prepare_note;           /* one line under the title */
+    const char* bios_prepare_button;         /* "Prepare BIOS" */
+    const char* bios_prepare_busy_status;    /* "Compiling your BIOS…" */
+    const char* bios_prepare_success_status; /* "BIOS ready." */
 } RecompLauncherCGameInfo;
 #define RECOMP_LAUNCHER_HAS_NETPLAY_VIEW 1
 #define RECOMP_LAUNCHER_HAS_ROM_PATTERNS 1

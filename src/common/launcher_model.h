@@ -246,6 +246,17 @@ typedef struct {
                                     char* err_msg, size_t err_cap,
                                     RecompLauncherCPrepareProgressFn on_progress,
                                     void* progress_ctx);
+    /* Host BIOS prepare (RecompLauncherCGameInfo.bios_prepare_with_progress):
+     * resolves a needs_regen pick without Generate & rebuild. */
+    int (*bios_prepare_with_progress_cb)(const char* bios_path,
+                                         char* err_msg, size_t err_cap,
+                                         RecompLauncherCPrepareProgressFn on_progress,
+                                         void* progress_ctx);
+    const char* bios_prepare_title;
+    const char* bios_prepare_note;
+    const char* bios_prepare_button;
+    const char* bios_prepare_busy_status;
+    const char* bios_prepare_success_status;
     int (*rebuild_with_progress_cb)(const char* rom_path,
                                     char* out_exe_path, size_t out_cap,
                                     char* err_msg, size_t err_cap,
@@ -946,6 +957,13 @@ void launcher_model_bios_play_generate(LauncherModel* m);
 void launcher_model_bios_play_cancel(LauncherModel* m);
 /* True when ROM/disc looks ready but BIOS needs Generate & rebuild. */
 bool launcher_model_bios_blocks_play(const LauncherModel* m);
+/* True when the host resolves a needs_regen BIOS itself (bios_prepare job):
+ * the UI says "Prepare BIOS" and needs no disc / toolchain / rebuild. */
+bool launcher_model_bios_prepare_available(const LauncherModel* m);
+/* Copy for the BIOS prepare UI, with defaults when the host set none. */
+const char* launcher_model_bios_prepare_title(const LauncherModel* m);
+const char* launcher_model_bios_prepare_note(const LauncherModel* m);
+const char* launcher_model_bios_prepare_button(const LauncherModel* m);
 
 // ---- SRAM save management (Import/Clear; both back up to "<sram>.bak" first) ----
 void launcher_model_import_sram(LauncherModel* m, const char* src);
@@ -1133,6 +1151,9 @@ bool launcher_model_bios_missing(const LauncherModel* m);
 // or a job is already running. On success adopts the resulting disc path.
 // When rebuild_after_prepare is set, automatically chains into rebuild.
 void launcher_model_start_prepare_disc(LauncherModel* m, const char* source_path);
+/* Run the host's bios_prepare_with_progress for the staged BIOS (progress
+ * modal only; wizard resumes after). No-op without the callback. */
+void launcher_model_begin_bios_prepare(LauncherModel* m);
 // Kick rebuild_with_progress alone (same busy UI as prepare).
 void launcher_model_start_rebuild(LauncherModel* m);
 // Confirm + kick pgo_optimize_with_progress (instrument → train → use rebuild).

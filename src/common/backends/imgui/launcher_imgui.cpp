@@ -12585,7 +12585,12 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
     const bool prep_section_shown =
         !media_confirm && (m->prepare_disc_cb || m->prepare_with_progress_cb);
 
-    if (bios_regen) {
+    if (bios_regen && launcher_model_bios_prepare_available(m)) {
+        ImGui::TextColored(col(th.accent), "%s", launcher_model_bios_prepare_title(m));
+        ImGui::PushTextWrapPos(wrap_x);
+        ImGui::TextColored(col(th.text_muted), "%s", launcher_model_bios_prepare_note(m));
+        ImGui::PopTextWrapPos();
+    } else if (bios_regen) {
         ImGui::TextColored(col(th.accent), "Rebuild required for this BIOS");
         ImGui::PushTextWrapPos(wrap_x);
         ImGui::TextColored(col(th.text_muted),
@@ -12944,8 +12949,10 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
          * never succeed. Same button, same place — it just does the thing the
          * player was told they need. */
         const char* blocker = launcher_model_setup_bios_regen_blocker(m);
+        const char* regen_lbl = launcher_model_bios_prepare_available(m)
+            ? launcher_model_bios_prepare_button(m) : "Generate & rebuild";
         if (blocker) ImGui::BeginDisabled();
-        if (ImGui::Button("Generate & rebuild", ImVec2(px(220), px(34))))
+        if (ImGui::Button(regen_lbl, ImVec2(px(220), px(34))))
             launcher_model_setup_start_bios_regen(m);
         if (blocker) {
             ImGui::EndDisabled();
@@ -12980,8 +12987,10 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                 else if (m->setup_preparing)
                     ImGui::SetTooltip("Wait for the current job to finish");
                 else if (m->has_bios && m->setup_bios_needs_regen)
-                    ImGui::SetTooltip("Generate & rebuild with this BIOS "
-                                      "first, or switch to OpenBIOS");
+                    ImGui::SetTooltip(launcher_model_bios_prepare_available(m)
+                                      ? "Prepare this BIOS first, or switch to OpenBIOS"
+                                      : "Generate & rebuild with this BIOS "
+                                        "first, or switch to OpenBIOS");
                 else if (m->has_bios && !m->setup_bios_ok)
                     ImGui::SetTooltip("BIOS check required");
                 else if (m->netplay_supported &&
@@ -13026,12 +13035,16 @@ void draw_bios_confirm_modal(LauncherModel* m, const LauncherTheme& th) {
     if (!ImGui::BeginPopupModal("Switch BIOS?", nullptr,
                                 ImGuiWindowFlags_AlwaysAutoResize))
         return;
+    const bool bios_prep = launcher_model_bios_prepare_available(m);
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(420));
-    ImGui::TextWrapped(
-        "This retail BIOS is not compiled into the current build yet. "
-        "Generate & rebuild will emit its BIOS C and rebuild the game binary "
-        "with your current disc and toolchain. OpenBIOS switches never need "
-        "this — use Use OpenBIOS instead.");
+    if (bios_prep)
+        ImGui::TextWrapped("%s", launcher_model_bios_prepare_note(m));
+    else
+        ImGui::TextWrapped(
+            "This retail BIOS is not compiled into the current build yet. "
+            "Generate & rebuild will emit its BIOS C and rebuild the game binary "
+            "with your current disc and toolchain. OpenBIOS switches never need "
+            "this — use Use OpenBIOS instead.");
     if (m->bios_pending_path[0]) {
         ImGui::Dummy(ImVec2(0, px(8)));
         ImGui::TextColored(col(th.text_muted), "Selected:");
@@ -13046,10 +13059,12 @@ void draw_bios_confirm_modal(LauncherModel* m, const LauncherTheme& th) {
     }
     ImGui::PopTextWrapPos();
     ImGui::Dummy(ImVec2(0, px(12)));
-    const bool can_gen = m->rom_present && m->rom_full[0] &&
-                         (m->prepare_with_progress_cb || m->prepare_disc_cb);
+    const bool can_gen = bios_prep ||
+                         (m->rom_present && m->rom_full[0] &&
+                          (m->prepare_with_progress_cb || m->prepare_disc_cb));
     if (!can_gen) ImGui::BeginDisabled();
-    if (ImGui::Button("Generate & rebuild…", ImVec2(px(200), px(32))))
+    if (ImGui::Button(bios_prep ? launcher_model_bios_prepare_button(m)
+                                : "Generate & rebuild…", ImVec2(px(200), px(32))))
         launcher_model_bios_confirm_accept(m);
     if (!can_gen) {
         ImGui::EndDisabled();
@@ -13075,11 +13090,15 @@ void draw_bios_play_modal(LauncherModel* m, const LauncherTheme& th) {
     if (!ImGui::BeginPopupModal("BIOS not ready to Play", nullptr,
                                 ImGuiWindowFlags_AlwaysAutoResize))
         return;
+    const bool bios_prep = launcher_model_bios_prepare_available(m);
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(440));
-    ImGui::TextWrapped(
-        "The selected retail BIOS is not compiled into this build. Generate & "
-        "rebuild with it (same disc and toolchain), switch to OpenBIOS to Play "
-        "without rebuilding, or cancel and keep the current selection.");
+    if (bios_prep)
+        ImGui::TextWrapped("%s", launcher_model_bios_prepare_note(m));
+    else
+        ImGui::TextWrapped(
+            "The selected retail BIOS is not compiled into this build. Generate & "
+            "rebuild with it (same disc and toolchain), switch to OpenBIOS to Play "
+            "without rebuilding, or cancel and keep the current selection.");
     if (m->s.bios_path[0]) {
         ImGui::Dummy(ImVec2(0, px(8)));
         ImGui::TextColored(col(th.text_muted), "Current selection:");
@@ -13094,10 +13113,12 @@ void draw_bios_play_modal(LauncherModel* m, const LauncherTheme& th) {
     }
     ImGui::PopTextWrapPos();
     ImGui::Dummy(ImVec2(0, px(12)));
-    const bool can_gen = m->rom_present && m->rom_full[0] &&
-                         (m->prepare_with_progress_cb || m->prepare_disc_cb);
+    const bool can_gen = bios_prep ||
+                         (m->rom_present && m->rom_full[0] &&
+                          (m->prepare_with_progress_cb || m->prepare_disc_cb));
     if (!can_gen) ImGui::BeginDisabled();
-    if (ImGui::Button("Generate & rebuild…", ImVec2(px(200), px(32))))
+    if (ImGui::Button(bios_prep ? launcher_model_bios_prepare_button(m)
+                                : "Generate & rebuild…", ImVec2(px(200), px(32))))
         launcher_model_bios_play_generate(m);
     if (!can_gen) {
         ImGui::EndDisabled();
