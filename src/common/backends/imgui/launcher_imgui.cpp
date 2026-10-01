@@ -11947,6 +11947,9 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
                     "Not recorded: Player 2 (port 2 gets no input while\n"
                     "recording). A mouse, neGcon or GunCon stops the recording\n"
                     "from starting.\n\n"
+                    "The replay plays on this build for Windows, Linux and\n"
+                    "macOS, with the same disc file and BIOS. A later build may\n"
+                    "not stay in sync with it: record again on that build.\n\n"
                     "While it records, save states and rewind are off, and\n"
                     "overlays run interpreted, so some games run slower.");
         }
