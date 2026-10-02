@@ -306,6 +306,25 @@ if(BUILD_TESTING)
                 "${CMAKE_CURRENT_BINARY_DIR}/setup-confirm-test")
     file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/setup-confirm-test")
 
+    # Setup window: the disc panel follows a file that setup refused. After a
+    # failed prepare the disc check runs again, so "Disc verified" does not
+    # stand above setup's refusal of the same file. Same include-the-TU shape.
+    add_executable(recomp-ui-launcher-setup-refusal-verdict-test
+        tests/launcher_setup_refusal_verdict_test.c
+        src/common/crc32.c
+        src/common/sha1.c
+        src/common/sha256.c
+        src/common/ips_patch.c
+        src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-launcher-setup-refusal-verdict-test PRIVATE
+        src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-launcher-setup-refusal-verdict-test PRIVATE ${RUI_SDL_TARGET})
+    add_test(
+        NAME recomp-ui-launcher-setup-refusal-verdict
+        COMMAND $<TARGET_FILE:recomp-ui-launcher-setup-refusal-verdict-test>
+                "${CMAKE_CURRENT_BINARY_DIR}/setup-refusal-verdict-test")
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/setup-refusal-verdict-test")
+
     # Per-seat pad_mode resolution: a locked mode (game.toml lock_mode) must
     # survive the keyboard-has-no-sticks presentation default, because the
     # selector that could undo it is hidden. Same include-the-TU shape as the
