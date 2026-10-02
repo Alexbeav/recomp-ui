@@ -113,6 +113,13 @@ if(BUILD_TESTING)
             COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_no_raw_pickers.py"
                 "${CMAKE_CURRENT_SOURCE_DIR}")
+        # The disc panel's "Disc image" row: only for a file setup refused,
+        # with the accepted words and a red cross.
+        add_test(
+            NAME recomp-ui-disc-image-row
+            COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_disc_image_row.py"
+                "${CMAKE_CURRENT_SOURCE_DIR}")
     else()
         message(WARNING
             "Python3 not found: recomp-ui-no-raw-pickers picker-API guard is "
