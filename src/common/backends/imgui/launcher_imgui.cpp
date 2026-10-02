@@ -1668,11 +1668,15 @@ bool neon_cta(const char* id, const char* label, ImVec2 size, bool enabled = tru
     ImDrawList* dl = ImGui::GetWindowDrawList();
     float r = px(th.radius_sm);
 
-    glow_rect(dl, mn, mx, r, th.accent, hov ? 1.6f : 1.0f, 6);
-    LngColor top = hov ? th.accent : th.accent;
-    LngColor bot = act ? th.accent_dim : th.accent_dim;
+    // A button that is off is drawn off: the panel's own fill, no glow, a
+    // muted label. With the accent fill and only its label faded, a PLAY that
+    // refused the disc read as active at a glance (Alex, 2026-10-02, A15).
+    if (enabled) glow_rect(dl, mn, mx, r, th.accent, hov ? 1.6f : 1.0f, 6);
+    LngColor top = enabled ? th.accent : th.panel_hovered;
+    LngColor bot = enabled ? th.accent_dim : th.panel;
     grad_rect(dl, mn, mx, r, top, bot);
-    dl->AddRect(mn, mx, imcol(th.accent, hov ? 0.9f : 0.5f), r, 0, px(1.0f));  // crisp edge
+    dl->AddRect(mn, mx, enabled ? imcol(th.accent, hov ? 0.9f : 0.5f) : imcol(th.border),
+                r, 0, px(1.0f));  // crisp edge
     // InvisibleButton draws no nav highlight itself — paint the cyan focus ring
     // when nav-focused so the CTA reads as selectable via controller/keyboard.
     if (foc) {
@@ -1686,7 +1690,7 @@ bool neon_cta(const char* id, const char* label, ImVec2 size, bool enabled = tru
     float tri = arrow ? px(11.0f) : 0.0f, gap = arrow ? px(10.0f) : 0.0f;
     float total = tri + gap + tw;
     float cx = p.x + (size.x - total) * 0.5f, cy = p.y + size.y * 0.5f;
-    ImU32 fg = imcol(th.accent_text);
+    ImU32 fg = imcol(enabled ? th.accent_text : th.text_muted);
     if (arrow)
         dl->AddTriangleFilled(ImVec2(cx, cy - tri*0.55f), ImVec2(cx, cy + tri*0.55f),
                               ImVec2(cx + tri, cy), fg);
@@ -1773,14 +1777,14 @@ bool begin_container(const char* id, ImVec2 size, ImGuiChildFlags flags = ImGuiC
 }
 void end_container() { ImGui::EndChild(); ImGui::PopStyleColor(); }
 
-void state_mark(bool ok, const LauncherTheme& th);   // fwd
+void state_mark(bool ok, const LauncherTheme& th, const LngColor* cross = nullptr);   // fwd
 void draw_save_row(LauncherModel* m, const LauncherTheme& th);   // fwd (Save module row-drawer)
 
 // One metadata row inside a 3-column table: label | value | optional check.
 // `show_mark` puts a mint check / amber cross in its own column instead of a
 // text badge, so it can never crowd the panel edge.
 void kv_row(const char* k, const char* v, const LauncherTheme& th,
-            bool show_mark, bool ok) {
+            bool show_mark, bool ok, const LngColor* cross = nullptr) {
     ImGui::TableNextRow();
     ImGui::TableNextColumn();
     ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
@@ -1789,7 +1793,7 @@ void kv_row(const char* k, const char* v, const LauncherTheme& th,
     ImGui::TableNextColumn();
     ImGui::TextUnformatted(v);
     ImGui::TableNextColumn();
-    if (show_mark) state_mark(ok, th);
+    if (show_mark) state_mark(ok, th, cross);
 }
 
 // Key/value row, drawn full width: muted label column, value, and an optional
@@ -2034,11 +2038,13 @@ void hero_boxart_centered(const LauncherTexture& t, float box_h, float avail_w) 
 
 // A verified/failed state marker: mint check or amber cross. Replaces the
 // [MATCH] badge that crowded the panel edge.
-void state_mark(bool ok, const LauncherTheme& th) {
+// `cross`: the colour of the cross, for a row that is the reason of a refusal.
+// Every other cross is the theme's amber.
+void state_mark(bool ok, const LauncherTheme& th, const LngColor* cross) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p = ImGui::GetCursorScreenPos();
     float s = ImGui::GetTextLineHeight();
-    ImU32 c = imcol(ok ? th.good : th.warn);
+    ImU32 c = imcol(ok ? th.good : (cross ? *cross : th.warn));
     float y = p.y + s * 0.5f;
     if (ok) {
         dl->AddLine(ImVec2(p.x + s*0.16f, y), ImVec2(p.x + s*0.40f, y + s*0.26f), c, px(2.0f));
@@ -2165,8 +2171,12 @@ void draw_verdict_block(LauncherModel* m, const LauncherTheme& th, float availw,
         const char* dash = "\xE2\x80\x94";
         // A tick only for a serial the build lists: a disc of another release
         // has a serial too, and a tick beside it told the player it was right.
+        // Its cross is the headline's red when the serial is why the disc is
+        // refused; the Tracks cross and every other one stay amber (A15).
+        const LngColor refused_red = lng_rgba(0.945f, 0.322f, 0.322f, 1.0f);
         kv_row("Serial",     pending ? dash : (v.serial[0] ? v.serial : dash),
-               th, !pending, launcher_model_disc_serial_ok(m));
+               th, !pending, launcher_model_disc_serial_ok(m),
+               launcher_model_disc_serial_refused(m) ? &refused_red : nullptr);
         kv_row("Region",     pending ? dash : (v.region[0] ? v.region : dash),
                th, !pending, v.region[0] != '\0');
         kv_row("ISO header", pending ? dash : (v.iso_ok ? "OK" : "Mismatch"),

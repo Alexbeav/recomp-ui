@@ -196,6 +196,35 @@ int main(void) {
     expect(launcher_model_disc_note(m, buf, sizeof(buf), NULL)[0] != '\0', "the flag is optional");
     expect(!launcher_model_disc_serial_ok(NULL), "no model: no tick");
 
+    /* The colour of the Serial row's cross (Alex, 2026-10-02, A15): the
+     * headline's red when the disc is refused and the serial is the reason;
+     * every other cross keeps the amber. */
+    answer("SLES-02913", RECOMP_SERIAL_NOT_LISTED, "SLES-01156", 3, 0, TOC_NOTE);
+    run_verify(m);
+    expect(launcher_model_disc_serial_refused(m), "another game's disc, refused: the Serial cross is red");
+    answer("", RECOMP_SERIAL_NOT_LISTED, "SLES-01156", 3, 1, "");
+    run_verify(m);
+    expect(launcher_model_disc_serial_refused(m), "no serial found, refused: the Serial cross is red");
+    answer("SLES-01156", RECOMP_SERIAL_LISTED, "SLES-01156", 1, 1, "");
+    run_verify(m);
+    expect(!launcher_model_disc_serial_refused(m), "the right disc: no cross at all");
+    answer("SLES-01156", RECOMP_SERIAL_LISTED, "SLES-01156", 2, 0, TOC_NOTE);
+    run_verify(m);
+    expect(!launcher_model_disc_serial_refused(m),
+           "the right serial with the online-play warning: the Tracks cross is not the Serial row's");
+    answer("", RECOMP_SERIAL_UNSAID, "", 3, 1, "");
+    run_verify(m);
+    expect(!launcher_model_disc_serial_ok(m) && !launcher_model_disc_serial_refused(m),
+           "a file that did not open: the Serial row has a cross, and it stays amber (the header is the reason)");
+    answer("SLES-02913", RECOMP_SERIAL_NOT_LISTED, "SLES-01156", 1, 1, "");
+    run_verify(m);
+    expect(!launcher_model_disc_serial_refused(m), "not listed but not refused by the host: amber");
+    m->rom_present = false;
+    answer("SLES-02913", RECOMP_SERIAL_NOT_LISTED, "SLES-01156", 3, 0, "");
+    expect(!launcher_model_disc_serial_refused(m), "no disc selected: nothing is refused");
+    m->rom_present = true;
+    expect(!launcher_model_disc_serial_refused(NULL), "no model: nothing is refused");
+
     /* The wrong-disc sentence is brought into view. The disc card hugs its
      * content and the dashboard's body scrolls, so on a window smaller than
      * the launcher's own the sentence ended below the window's edge (Pegasus,

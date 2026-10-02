@@ -1502,6 +1502,11 @@ bool launcher_model_disc_serial_ok(const LauncherModel* m) {
     return m->verify.serial_status != RECOMP_SERIAL_NOT_LISTED;
 }
 
+bool launcher_model_disc_serial_refused(const LauncherModel* m) {
+    return m && m->rom_present && m->verify.verdict == 3 &&
+           m->verify.serial_status == RECOMP_SERIAL_NOT_LISTED;
+}
+
 const char* launcher_model_disc_note(const LauncherModel* m, char* buf, size_t cap,
                                      bool* wrong_disc) {
     if (wrong_disc) *wrong_disc = false;

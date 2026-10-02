@@ -1219,6 +1219,11 @@ bool launcher_model_netplay_disc_ok(const LauncherModel* m);
 // does not say whether the serial is listed keeps the old rule (any serial
 // read is a tick).
 bool launcher_model_disc_serial_ok(const LauncherModel* m);
+// True when the disc is refused and its serial is the reason: the verdict is
+// "bad" and the host called the serial unlisted. The Serial row's cross is
+// then drawn in the headline's red; a cross on a row that is not the reason
+// (the online-play Tracks row, a file that did not open) keeps the amber.
+bool launcher_model_disc_serial_refused(const LauncherModel* m);
 // The line under the disc panel's checklist, or "" when there is nothing to
 // say. For a disc whose serial the build does not list it names the disc's
 // serial and what the build needs, and *wrong_disc is set: that is why the
