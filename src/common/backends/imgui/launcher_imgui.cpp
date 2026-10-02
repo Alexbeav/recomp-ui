@@ -10779,6 +10779,33 @@ static bool mod_commit_launch(LauncherModel* m) {
     return false;
 }
 
+/* The launch work of the PLAY button: prepare the effective image, commit the
+ * mod plan, ask the host to launch. It blocks until done; the mod commit of a
+ * host can read a whole disc image. Returns true when the launch was asked. */
+static bool launch_play_now(LauncherModel* m) {
+    if (!launcher_model_prepare_rom_patch(m)) {
+        /* The effective image could not be prepared. Send the user to
+         * the page that owns the patch selection instead of launching
+         * an image the runtime's identity gate would reject. */
+        if (m->rom_patch_supported && m->s.rom_patch_enabled)
+            launcher_model_set_view(m, LNG_VIEW_MODS);
+        return false;
+    }
+    if (!mod_commit_launch(m)) return false;
+    m->action = LNG_ACTION_LAUNCH;
+    return true;
+}
+
+/* Once per frame, before the frame is drawn. A PLAY click is answered two
+ * frames later: the frame between them has drawn the button greyed as
+ * "Launching...", and that picture is on screen while the work runs. Done in
+ * the frame of the click, the window stood still showing PLAY for the whole
+ * wait and Windows could mark it "Not responding" (PS1B-340). */
+static void launch_play_if_due(LauncherModel* m) {
+    if (!launcher_model_launch_due(m)) return;
+    launcher_model_launch_finish(m, launch_play_now(m));
+}
+
 struct ModIntegerEditState {
     int64_t value = 0;
     std::string provider_value;
@@ -12218,20 +12245,27 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
     ImGui::SetCursorScreenPos(ImVec2(play_x, cta_y));
     const bool can_play = launcher_model_can_launch(m);
     const bool bios_block = launcher_model_bios_blocks_play(m);
-    const bool play_enabled = can_play || bios_block;
-    if (neon_cta("##play", ui_text(m->in_session ? "RESUME" : "PLAY"),
+    /* From the click until the window closes the button is greyed and reads
+     * "Launching...": the launch work runs two frames later, in the frame
+     * loop (launch_play_if_due), and can take seconds. A greyed button takes
+     * no second click. */
+    const bool launching = launcher_model_launch_announced(m);
+    const bool play_enabled = (can_play || bios_block) && !launching;
+    const char* play_label = launching ? "Launching..."
+                           : m->in_session ? "RESUME" : "PLAY";
+    if (neon_cta("##play", ui_text(play_label),
                  ImVec2(play_w, play_h), play_enabled)) {
         /* Prefer mismatch prompt over launch even if can_play races true. */
         if (bios_block)
             launcher_model_bios_play_prompt(m);
-        else if (!launcher_model_prepare_rom_patch(m)) {
-            /* The effective image could not be prepared. Send the user to
-             * the page that owns the patch selection instead of launching
-             * an image the runtime's identity gate would reject. */
-            if (m->rom_patch_supported && m->s.rom_patch_enabled)
-                launcher_model_set_view(m, LNG_VIEW_MODS);
-        } else if (mod_commit_launch(m))
-            m->action = LNG_ACTION_LAUNCH;
+        else if (m->in_session)
+            /* RESUME returns to a game that is already running: nothing is
+             * prepared that could take long, so it stays in this frame. */
+            launch_play_now(m);
+        else
+            launcher_model_launch_request(m);
+    } else if (launching) {
+        /* No tooltip and no setup wizard while the launch is under way. */
     } else if (!play_enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         const char* noun = m->rom_noun ? m->rom_noun : "ROM";
         if (m->bios_name && launcher_model_bios_missing(m)) {
@@ -12251,7 +12285,8 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
             ImGui::SetTooltip("Select a valid %s first", noun);
         }
     }
-    if (!play_enabled && ImGui::IsItemClicked() && m->setup_wizard_supported)
+    if (!play_enabled && !launching && ImGui::IsItemClicked() &&
+        m->setup_wizard_supported)
         m->setup_wizard_open = true;
     ImGui::SetItemDefaultFocus();   // gamepad/keyboard start on the primary action
     (void)win;
@@ -14350,6 +14385,7 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
                 launcher_pad_nav_lock_held_keys();
             s_pad_nav_was_on = pad_nav;
         }
+        launch_play_if_due(m);
         LNG_ImplSDL_NewFrame();
         apply_logical_display(p);   // logical DisplaySize + pixel-density frame
         ImGui::NewFrame();
