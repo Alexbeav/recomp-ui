@@ -3445,6 +3445,24 @@ void launcher_model_start_prepare_disc(LauncherModel* m, const char* source_path
     prep_spawn_thread(m);
 }
 
+bool launcher_model_setup_error_reveal(LauncherModel* m) {
+    if (!m) return false;
+    if (!m->setup_error[0]) {
+        m->setup_error_revealed[0] = '\0';
+        m->setup_error_reveal_frames = 0;
+        return false;
+    }
+    if (strcmp(m->setup_error, m->setup_error_revealed) != 0) {
+        safe_copy(m->setup_error_revealed, sizeof(m->setup_error_revealed), m->setup_error);
+        m->setup_error_reveal_frames = LNG_SETUP_ERROR_REVEAL_FRAMES;
+    }
+    if (m->setup_error_reveal_frames > 0) {
+        m->setup_error_reveal_frames--;
+        return true;
+    }
+    return false;
+}
+
 void launcher_model_poll_prepare_disc(LauncherModel* m) {
     if (!m || !m->setup_preparing) return;
     m->setup_prepare_pulse += 0.02f;

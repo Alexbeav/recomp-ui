@@ -113,6 +113,10 @@ typedef enum {
 // 256: a host sentence that names the disc image a kit needs and the file
 // that was selected runs to about 480 bytes, and its last sentence was cut.
 #define LNG_SETUP_ERROR_CAP 640
+// Frames for which a new setup error asks the wizard to scroll to its end. Two:
+// a window that has just reopened does not know its content height in its first
+// frame.
+#define LNG_SETUP_ERROR_REVEAL_FRAMES 2
 
 // System hotkeys — mirrors the engine's config.ini [KeyMap] keys exactly, so
 // editing them here surgically rewrites the same lines config.c parses.
@@ -577,6 +581,10 @@ typedef struct {
     char      setup_progress_title[128]; // progress modal title override
     char      setup_status[256];     // busy / result line under the wizard
     char      setup_error[LNG_SETUP_ERROR_CAP];
+    // The error text the wizard last scrolled into view, and the frames it
+    // still has to do so (launcher_model_setup_error_reveal).
+    char      setup_error_revealed[LNG_SETUP_ERROR_CAP];
+    int       setup_error_reveal_frames;
     bool      netplay_name_modal_open;
     bool      netplay_name_prompted;
     /* Why the last name was refused, shown inside the Player Name modal and
@@ -1250,6 +1258,12 @@ bool launcher_model_can_advance_toolchain(const LauncherModel* m);
 void launcher_model_skip_toolchain_update(LauncherModel* m);
 // Poll prepare/rebuild/toolchain job; call once per frame while setup_preparing.
 void launcher_model_poll_prepare_disc(LauncherModel* m);
+// The wizard's error text is drawn under its last step, and the wizard can be
+// taller than its window. True for LNG_SETUP_ERROR_REVEAL_FRAMES calls after
+// the error text becomes a new one: the wizard, which calls this once per
+// frame it draws, then scrolls its end into view. An error that was cleared
+// and comes back counts as new. False while there is no error.
+bool launcher_model_setup_error_reveal(LauncherModel* m);
 // Dismiss the wizard once can_finish_setup is true (keeps dashboard).
 void launcher_model_finish_setup(LauncherModel* m);
 

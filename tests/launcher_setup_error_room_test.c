@@ -78,6 +78,25 @@ int main(void) {
     expect(strstr(m->setup_error, "a damaged copy, or the right disc in a form setup cannot read.") != NULL,
            "the last sentence is there");
 
+    /* The wizard is taller than its window at the launcher's own size, and
+     * the error is drawn under its last step: the player had to scroll to
+     * read it. A new error asks the wizard to scroll its end into view, for
+     * the two frames a reopened window needs, and then leaves the scroll to
+     * the player. */
+    expect(launcher_model_setup_error_reveal(m), "a new error is brought into view");
+    expect(launcher_model_setup_error_reveal(m), "and once more: the reopened window's second frame");
+    expect(!launcher_model_setup_error_reveal(m), "then the scroll is the player's again");
+    expect(!launcher_model_setup_error_reveal(m), "and stays so while the error is the same");
+    safe_copy(m->setup_error, sizeof(m->setup_error), "Rebuild failed (exit 1): another reason");
+    expect(launcher_model_setup_error_reveal(m) && launcher_model_setup_error_reveal(m) &&
+           !launcher_model_setup_error_reveal(m), "another error text is new again");
+    m->setup_error[0] = '\0';
+    expect(!launcher_model_setup_error_reveal(m), "no error: nothing to bring into view");
+    safe_copy(m->setup_error, sizeof(m->setup_error), "Rebuild failed (exit 1): another reason");
+    expect(launcher_model_setup_error_reveal(m), "the same error after it was cleared is new again");
+    expect(!launcher_model_setup_error_reveal(NULL), "no model: nothing to do");
+    safe_copy(m->setup_error, sizeof(m->setup_error), kSentence);
+
     /* A host that writes more than the room is cut at the room, and ended. */
     {
         static char big[2 * LNG_SETUP_ERROR_CAP];
