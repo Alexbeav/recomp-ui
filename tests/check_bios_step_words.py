@@ -84,6 +84,57 @@ check(re.search(r'strcmp\(m->rom_size, "--"\) != 0 && !needs_bios;', view) is no
 check(re.search(r'if \(needs_bios\)\s*ImGui::SetTooltip\("Select a PlayStation BIOS first"\);', view) is not None,
       "the greyed Generate must say that a BIOS is missing")
 
+# Six more sentences offered OpenBIOS. Each keeps its full form for a build
+# that takes an empty BIOS, and has a form without the clause (or the
+# launcher's own label) for one that does not. Adjacent string literals are
+# joined first, so that a sentence reads as the player reads it.
+flat = re.sub(r'"\s*"', "", view)
+PAIRS = [
+    # (what it is, the full form, the form for a build with no BIOS of its own)
+    ("the Settings row with nothing chosen",
+     '? "OpenBIOS" : "(none selected)"));', None),
+    ("the setup note when the chosen BIOS still has to be built",
+     "(you need a disc image for that), or switch back to OpenBIOS to play now.\"",
+     "(you need a disc image for that).\""),
+    ("the setup note on a build that is already generated",
+     "Select a PlayStation BIOS (or keep OpenBIOS) and a Redump-style .cue with sibling .bin tracks so %s can launch.",
+     "Select a PlayStation BIOS and a Redump-style .cue with sibling .bin tracks so %s can launch."),
+    ("the tooltip of a greyed Confirm, a BIOS that is prepared",
+     '"Prepare this BIOS first, or switch to OpenBIOS"', '"Prepare this BIOS first"'),
+    ("the tooltip of a greyed Confirm, a BIOS that is generated",
+     '"Generate & rebuild with this BIOS first, or switch to OpenBIOS"',
+     '"Generate & rebuild with this BIOS first"'),
+    ("the box shown at PLAY",
+     "rebuild with it (same disc and toolchain), switch to OpenBIOS to Play without rebuilding, "
+     "or cancel and keep the current selection.",
+     "rebuild with it (same disc and toolchain), or cancel and keep the current selection."),
+    ("the tooltip of a greyed PLAY",
+     '"Select a valid BIOS first (or Use OpenBIOS when this build allows it)."',
+     '"Select a valid BIOS first."'),
+]
+for what, full, short in PAIRS:
+    check(flat.count(full) == 1, f"{what}: the full form must stand once (found {flat.count(full)})")
+    if flat.count(full) != 1:
+        continue
+    at = flat.index(full)
+    check("launcher_model_bundled_bios_offered(m)" in flat[max(0, at - 420):at + len(full)],
+          f"{what}: the full form must be inside the condition on the build holding a BIOS")
+    if short is not None:
+        check(flat.count(short) == 1, f"{what}: the short form must stand once (found {flat.count(short)})")
+        if flat.count(short) == 1:
+            check(at < flat.index(short) < at + 900,
+                  f"{what}: the short form must be the other branch of the same choice")
+
+# Two labels are left as they were: their boxes open only with a chosen file.
+for label in ('"Selected: OpenBIOS"', '"Current selection: OpenBIOS"'):
+    check(view.count(label) == 1, f"{label} must be left in place")
+    if view.count(label) == 1:
+        check("Not reached:" in view[view.index(label) - 400:view.index(label)],
+              f"{label} must carry the note that says why it cannot be reached")
+
+# Not checked here: the online-play notices that name OpenBIOS. They say which
+# BIOS a match uses, not what this build offers.
+
 if failures:
     for f in failures:
         print("FAIL:", f, file=sys.stderr)

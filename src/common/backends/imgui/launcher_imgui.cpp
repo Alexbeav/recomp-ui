@@ -4644,9 +4644,12 @@ void draw_system_controls(LauncherModel* m, const LauncherTheme& th) {
     row_label("BIOS", th);
     float avail = ImGui::GetContentRegionAvail().x - browse_w - px(th.spacing_sm);
     if (avail < px(50)) avail = px(50);
+    // With nothing chosen a PlayStation build runs its own OpenBIOS, when it
+    // holds one. A build that holds none has nothing selected (A16).
     const char* bp = has_pick ? m->s.bios_path
                               : (is_gba ? ui_text("Retail GBA BIOS required")
-                                        : "OpenBIOS");
+                                        : (launcher_model_bundled_bios_offered(m)
+                                               ? "OpenBIOS" : "(none selected)"));
     char elided[192]; elide_left(bp, avail, elided, sizeof(elided));
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(col(has_pick ? th.text : th.text_muted), "%s", elided);
@@ -12273,10 +12276,13 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
         const char* noun = m->rom_noun ? m->rom_noun : "ROM";
         if (m->bios_name && launcher_model_bios_missing(m)) {
             ImGui::SetTooltip("Select the %s first", m->bios_name);
-        } else if (m->has_bios && !m->setup_bios_ok) {
+        } else if (m->has_bios && !m->setup_bios_ok &&
+                   launcher_model_bundled_bios_offered(m)) {
             ImGui::SetTooltip(
                 "Select a valid BIOS first (or Use OpenBIOS when this build "
                 "allows it).");
+        } else if (m->has_bios && !m->setup_bios_ok) {
+            ImGui::SetTooltip("Select a valid BIOS first.");
         } else if (!m->rom_present || strcmp(m->rom_size, "--") == 0) {
             ImGui::SetTooltip("Select a valid %s first", noun);
         } else if (m->profile && m->profile->verify.mode == 1 &&
@@ -12836,11 +12842,18 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
     } else if (bios_regen) {
         ImGui::TextColored(col(th.accent), "Rebuild required for this BIOS");
         ImGui::PushTextWrapPos(wrap_x);
-        ImGui::TextColored(col(th.text_muted),
-            "%s was built against a different BIOS. Keep your selection below "
-            "and choose Generate & rebuild to compile this one in (you need a "
-            "disc image for that), or switch back to OpenBIOS to play now.",
-            game);
+        if (launcher_model_bundled_bios_offered(m))
+            ImGui::TextColored(col(th.text_muted),
+                "%s was built against a different BIOS. Keep your selection below "
+                "and choose Generate & rebuild to compile this one in (you need a "
+                "disc image for that), or switch back to OpenBIOS to play now.",
+                game);
+        else
+            ImGui::TextColored(col(th.text_muted),
+                "%s was built against a different BIOS. Keep your selection below "
+                "and choose Generate & rebuild to compile this one in (you need a "
+                "disc image for that).",
+                game);
         ImGui::PopTextWrapPos();
     } else if (media_confirm) {
         // "Confirm disc" on a cartridge console asked a SNES player to confirm
@@ -12851,12 +12864,20 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                            medium);
         ImGui::PushTextWrapPos(wrap_x);
         if (plat == SETUP_PLAT_PSX && m->has_bios) {
-            ImGui::TextColored(col(th.text_muted),
-                "This build is already generated. Select a PlayStation BIOS "
-                "(or keep OpenBIOS) and a Redump-style .cue with sibling .bin "
-                "tracks so %s can launch. Your previous disc/BIOS picks were "
-                "cleared from settings.",
-                game);
+            if (launcher_model_bundled_bios_offered(m))
+                ImGui::TextColored(col(th.text_muted),
+                    "This build is already generated. Select a PlayStation BIOS "
+                    "(or keep OpenBIOS) and a Redump-style .cue with sibling .bin "
+                    "tracks so %s can launch. Your previous disc/BIOS picks were "
+                    "cleared from settings.",
+                    game);
+            else
+                ImGui::TextColored(col(th.text_muted),
+                    "This build is already generated. Select a PlayStation BIOS "
+                    "and a Redump-style .cue with sibling .bin "
+                    "tracks so %s can launch. Your previous disc/BIOS picks were "
+                    "cleared from settings.",
+                    game);
         } else if (m->has_bios) {
             ImGui::TextColored(col(th.text_muted),
                 "This build is already ready. Confirm a BIOS image and a "
@@ -13248,11 +13269,17 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                     ImGui::SetTooltip("Select a %s first", noun);
                 else if (m->setup_preparing)
                     ImGui::SetTooltip("Wait for the current job to finish");
-                else if (m->has_bios && m->setup_bios_needs_regen)
+                else if (m->has_bios && m->setup_bios_needs_regen &&
+                         launcher_model_bundled_bios_offered(m))
                     ImGui::SetTooltip(launcher_model_bios_prepare_available(m)
                                       ? "Prepare this BIOS first, or switch to OpenBIOS"
                                       : "Generate & rebuild with this BIOS "
                                         "first, or switch to OpenBIOS");
+                else if (m->has_bios && m->setup_bios_needs_regen)
+                    ImGui::SetTooltip(launcher_model_bios_prepare_available(m)
+                                      ? "Prepare this BIOS first"
+                                      : "Generate & rebuild with this BIOS "
+                                        "first");
                 else if (m->has_bios && !m->setup_bios_ok)
                     ImGui::SetTooltip("BIOS check required");
                 else if (m->netplay_supported &&
@@ -13318,6 +13345,9 @@ void draw_bios_confirm_modal(LauncherModel* m, const LauncherTheme& th) {
         ImGui::TextWrapped("%s", m->bios_pending_path);
     } else {
         ImGui::Dummy(ImVec2(0, px(8)));
+        /* Not reached: this box opens only for a chosen file that still has
+         * to be built in (launcher_model_request_bios_path), and an empty
+         * choice is applied without it. Left as it was. */
         ImGui::TextColored(col(th.text_muted), "Selected: OpenBIOS");
     }
     if (m->setup_bios_detail[0]) {
@@ -13363,17 +13393,25 @@ void draw_bios_play_modal(LauncherModel* m, const LauncherTheme& th) {
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(440));
     if (bios_prep)
         ImGui::TextWrapped("%s", launcher_model_bios_prepare_note(m));
-    else
+    else if (launcher_model_bundled_bios_offered(m))
         ImGui::TextWrapped(
             "The selected retail BIOS is not compiled into this build. Generate & "
             "rebuild with it (same disc and toolchain), switch to OpenBIOS to Play "
             "without rebuilding, or cancel and keep the current selection.");
+    else
+        ImGui::TextWrapped(
+            "The selected retail BIOS is not compiled into this build. Generate & "
+            "rebuild with it (same disc and toolchain), "
+            "or cancel and keep the current selection.");
     if (m->s.bios_path[0]) {
         ImGui::Dummy(ImVec2(0, px(8)));
         ImGui::TextColored(col(th.text_muted), "Current selection:");
         ImGui::TextWrapped("%s", m->s.bios_path);
     } else {
         ImGui::Dummy(ImVec2(0, px(8)));
+        /* Not reached: an empty choice never blocks PLAY
+         * (launcher_model_bios_blocks_play), so this box opens only with a
+         * chosen file. Left as it was. */
         ImGui::TextColored(col(th.text_muted), "Current selection: OpenBIOS");
     }
     if (m->setup_bios_detail[0]) {
