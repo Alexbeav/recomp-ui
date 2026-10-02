@@ -196,6 +196,93 @@ int main(void) {
     expect(launcher_model_disc_note(m, buf, sizeof(buf), NULL)[0] != '\0', "the flag is optional");
     expect(!launcher_model_disc_serial_ok(NULL), "no model: no tick");
 
+    /* The wrong-disc sentence is brought into view. The disc card hugs its
+     * content and the dashboard's body scrolls, so on a window smaller than
+     * the launcher's own the sentence ended below the window's edge (Pegasus,
+     * 1102 x 606 units). The dashboard asks once per frame it draws the card
+     * and scrolls the sentence into view while the answer is yes. Each call
+     * below is one drawn frame; a disc is chosen through launcher_model_set_rom,
+     * as Browse and the disc list do. */
+#define FRAME() launcher_model_disc_note_reveal(m)
+    answer("SLES-03396", RECOMP_SERIAL_LISTED, "SLES-03396", 1, 1, "");
+    launcher_model_set_rom(m, "right.chd");
+    expect(!FRAME() && !FRAME(), "the right disc: nothing to bring into view");
+
+    answer("SLES-03398", RECOMP_SERIAL_NOT_LISTED, "SLES-03396", 3, 0, TOC_NOTE);
+    launcher_model_set_rom(m, "wrong.chd");
+    expect(FRAME(), "a new wrong-disc sentence is brought into view");
+    expect(FRAME(), "and for a second frame: the card has grown by the sentence");
+    expect(!FRAME() && !FRAME(), "then the scroll is the player's");
+
+    /* Another file in between, then the same wrong disc: the same words are new again. */
+    answer("SLES-03396", RECOMP_SERIAL_LISTED, "SLES-03396", 1, 1, "");
+    launcher_model_set_rom(m, "right.chd");
+    expect(!FRAME(), "the sentence went away with the wrong disc");
+    answer("SLES-03398", RECOMP_SERIAL_NOT_LISTED, "SLES-03396", 3, 0, TOC_NOTE);
+    launcher_model_set_rom(m, "wrong.chd");
+    expect(FRAME() && FRAME() && !FRAME(), "the same sentence after another file was chosen is new again");
+
+    /* The same wrong disc chosen again: no frame is drawn in between without
+     * the sentence, and its words are the same. Choosing a disc makes it new. */
+    launcher_model_set_rom(m, "wrong.chd");
+    expect(FRAME() && FRAME() && !FRAME(), "the same wrong disc chosen again is brought into view again");
+    /* Another wrong disc with other words, with no right disc in between. */
+    answer("SLES-02913", RECOMP_SERIAL_NOT_LISTED, "SLES-03396", 3, 0, TOC_NOTE);
+    launcher_model_set_rom(m, "other-game.chd");
+    expect(FRAME() && FRAME() && !FRAME(), "another wrong disc is a new sentence");
+
+    /* A sentence that goes away while it is still being brought into view. */
+    answer("SLES-03398", RECOMP_SERIAL_NOT_LISTED, "SLES-03396", 3, 0, TOC_NOTE);
+    launcher_model_set_rom(m, "wrong.chd");
+    expect(FRAME(), "first frame of a new sentence");
+    answer("SLES-03396", RECOMP_SERIAL_LISTED, "SLES-03396", 1, 1, "");
+    launcher_model_set_rom(m, "right.chd");
+    expect(!FRAME() && !FRAME(), "the right disc ends it at once: nothing is scrolled for a sentence that is gone");
+
+    /* The verdict can change without a disc being chosen (the host is asked
+     * again): a sentence that appears is new, the same one is not. */
+    answer("SLES-03398", RECOMP_SERIAL_NOT_LISTED, "SLES-03396", 3, 0, TOC_NOTE);
+    run_verify(m);
+    expect(FRAME() && FRAME() && !FRAME(), "a sentence that appears without a new disc is brought into view");
+    run_verify(m);
+    expect(!FRAME(), "the same sentence, the same disc, asked again: nothing moves");
+    answer("SLES-03396", RECOMP_SERIAL_LISTED, "SLES-03396", 1, 1, "");
+    run_verify(m);
+    expect(!FRAME(), "the sentence went away without a new disc");
+    answer("SLES-03398", RECOMP_SERIAL_NOT_LISTED, "SLES-03396", 3, 0, TOC_NOTE);
+    run_verify(m);
+    expect(FRAME() && FRAME() && !FRAME(), "and when it comes back with the same words it is new");
+
+    /* The online-play note alone is not the wrong-disc sentence. */
+    answer("SLES-03396", RECOMP_SERIAL_LISTED, "SLES-03396", 2, 0, TOC_NOTE);
+    launcher_model_set_rom(m, "other-dump.chd");
+    note = launcher_model_disc_note(m, buf, sizeof(buf), &wrong);
+    expect(note[0] != '\0' && !wrong, "the online-play note is shown for the right serial");
+    expect(!FRAME() && !FRAME(), "and is not brought into view");
+    /* No disc, no model. */
+    launcher_model_set_rom(m, "");
+    expect(!FRAME(), "no disc selected: nothing to bring into view");
+    expect(!launcher_model_disc_note_reveal(NULL), "no model: nothing to do");
+#undef FRAME
+
+    /* How far the body moves. Pegasus's default window, in its pixels: the
+     * body shows about 1,100 of them from y = 366, and the sentence sits
+     * about 1,450 to 1,560 below the body's top. Alex's window shows it. */
+    expect(launcher_model_scroll_into_view(1816.0f, 1926.0f, 366.0f, 1466.0f, 30.0f) == 490.0f,
+           "a sentence below the window's edge: the body moves down until its lower edge plus the margin is in view");
+    expect(launcher_model_scroll_into_view(627.0f, 665.0f, 122.0f, 772.0f, 10.0f) == 0.0f,
+           "a sentence in view: nothing moves");
+    expect(launcher_model_scroll_into_view(627.0f, 665.0f, 122.0f, 675.0f, 10.0f) == 0.0f,
+           "a sentence that just fits with its margin: nothing moves");
+    expect(launcher_model_scroll_into_view(627.0f, 665.0f, 122.0f, 674.0f, 10.0f) == 1.0f,
+           "one unit short: one unit");
+    expect(launcher_model_scroll_into_view(100.0f, 140.0f, 122.0f, 772.0f, 10.0f) == -32.0f,
+           "a sentence above the view (the player scrolled past it): the body moves up");
+    expect(launcher_model_scroll_into_view(400.0f, 900.0f, 122.0f, 422.0f, 10.0f) == 268.0f,
+           "a sentence taller than the view: only as far as keeps its top in view");
+    expect(launcher_model_scroll_into_view(100.0f, 900.0f, 122.0f, 422.0f, 10.0f) == 0.0f,
+           "a sentence that covers the view: nothing moves");
+
     free(m);
     if (fails) {
         fprintf(stderr, "launcher disc serial: %d check(s) failed\n", fails);

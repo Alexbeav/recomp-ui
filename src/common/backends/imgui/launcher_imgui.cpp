@@ -2092,7 +2092,24 @@ void draw_disc_selector(LauncherModel* m, const LauncherTheme& th, float availw)
 // m->verify, populated by launcher_model_set_rom()/run_verify() in
 // launcher_model.c (real probe when the SystemProfile has one, a synthesized
 // placeholder verdict otherwise).
-void draw_verdict_block(LauncherModel* m, const LauncherTheme& th, float availw) {
+// The wrong-disc sentence the disc card drew this frame and that has to be
+// in view (draw_verdict_block notes it; the body, which scrolls, acts on it).
+static bool  g_disc_note_reveal = false;
+static float g_disc_note_top = 0.0f, g_disc_note_bottom = 0.0f;
+
+// Called inside the dashboard's scrolling body, after its content is drawn.
+static void reveal_disc_note_in_body() {
+    if (!g_disc_note_reveal) return;
+    g_disc_note_reveal = false;
+    const float view_top = ImGui::GetWindowPos().y;
+    const float move = launcher_model_scroll_into_view(
+        g_disc_note_top, g_disc_note_bottom, view_top,
+        view_top + ImGui::GetWindowHeight(), px(10.0f));
+    if (move != 0.0f) ImGui::SetScrollY(ImGui::GetScrollY() + move);
+}
+
+void draw_verdict_block(LauncherModel* m, const LauncherTheme& th, float availw,
+                        bool reveal_note = false) {
     const VerifyResult& v = m->verify;
     // Keep the Serial/Region/ISO checklist mounted even before a disc is
     // picked (setup wizard) so AutoResize modals don't jump when verify runs.
@@ -2179,12 +2196,28 @@ void draw_verdict_block(LauncherModel* m, const LauncherTheme& th, float availw)
     char note_buf[256];
     bool wrong_disc = false;
     const char* note = launcher_model_disc_note(m, note_buf, sizeof(note_buf), &wrong_disc);
+    // Asked once per frame the dashboard's card is drawn, also when there is
+    // no sentence: that is how a sentence that went away is forgotten.
+    const bool reveal = reveal_note && launcher_model_disc_note_reveal(m);
     if (note[0]) {
         ImGui::Dummy(ImVec2(0, px(4)));
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + availw);
         ImGui::TextColored(col(wrong_disc ? lng_rgba(0.945f, 0.322f, 0.322f, 1.0f) : th.warn),
                            "%s", note);
         ImGui::PopTextWrapPos();
+        // The card hugs its content and the dashboard's body scrolls, so on a
+        // window made smaller than the launcher's own size the sentence that
+        // says why the disc is refused ended below the window's edge, under a
+        // red headline with no reason in view. A new sentence is scrolled
+        // into view; nothing moves when it is in view already. The window
+        // that scrolls is the body, two levels above this card, and a child
+        // cannot set its parent's scroll: the sentence's place is noted here
+        // and the body moves itself (reveal_disc_note_in_body).
+        if (reveal) {
+            g_disc_note_reveal = true;
+            g_disc_note_top = ImGui::GetItemRectMin().y;
+            g_disc_note_bottom = ImGui::GetItemRectMax().y;
+        }
     }
 }
 
@@ -2206,13 +2239,6 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         // + Change ROM, plus the SAVES block when this game has battery SRAM.
         float reserve = px(198.0f);
         if (disc_verdict) reserve += px(120.0f);          // taller: icon+headline + tracks row
-        if (disc_verdict) {
-            // The wrong-disc reason under the checklist (wraps to two lines).
-            char note_buf[256];
-            bool wrong_disc = false;
-            launcher_model_disc_note(m, note_buf, sizeof(note_buf), &wrong_disc);
-            if (wrong_disc) reserve += px(48.0f);
-        }
         // Disc Selection label + combo + spacing, for a multi-image title.
         if (launcher_model_disc_count(m) > 1) reserve += px(62.0f);
         if (m->saves_supported) reserve += px(96.0f);    // compact SAVES row below Change ROM
@@ -2230,7 +2256,7 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
     // Region + verification state, centered under the art.
     const char* noun = (m->rom_noun && m->rom_noun[0]) ? m->rom_noun : "ROM";
     if (disc_verdict) {
-        draw_verdict_block(m, th, availw);
+        draw_verdict_block(m, th, availw, /*reveal_note=*/true);
     } else {
         const bool verified = launcher_model_rom_verified(m);
         char line[64];
@@ -13693,6 +13719,7 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
         case LNG_VIEW_CREDITS:      draw_credits(m, th);             break;
         case LNG_VIEW_LOBBY:        draw_lobby(m, th);               break;
     }
+    reveal_disc_note_in_body();
     end_container();
 
     draw_footer(m, th, footer_h);

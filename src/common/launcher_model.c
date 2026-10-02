@@ -1342,6 +1342,13 @@ void launcher_model_set_rom(LauncherModel* m, const char* path) {
         return;
     }
     m->setup_error[0] = '\0';
+    /* A disc was chosen: the wrong-disc sentence it gets is a new one for the
+     * dashboard, also when the same wrong disc was chosen again and the words
+     * are the same. No frame is drawn between the two in which the sentence
+     * was absent, so the text that was shown is forgotten here
+     * (launcher_model_disc_note_reveal). */
+    m->disc_note_revealed[0] = '\0';
+    m->disc_note_reveal_frames = 0;
     m->rom_present = path && path[0] != '\0';
     safe_copy(m->rom_full, sizeof(m->rom_full), m->rom_present ? path : "");
     m->rom_sha1_hex[0] = '\0';
@@ -1522,6 +1529,40 @@ const char* launcher_model_disc_note(const LauncherModel* m, char* buf, size_t c
     if (m->netplay_supported && v->netplay_detail[0] && !v->netplay_ok)
         safe_copy(buf, cap, v->netplay_detail);
     return buf;
+}
+
+bool launcher_model_disc_note_reveal(LauncherModel* m) {
+    char note[sizeof(m->disc_note_revealed)];
+    bool wrong_disc = false;
+    if (!m) return false;
+    launcher_model_disc_note(m, note, sizeof(note), &wrong_disc);
+    if (!wrong_disc || !note[0]) {
+        m->disc_note_revealed[0] = '\0';
+        m->disc_note_reveal_frames = 0;
+        return false;
+    }
+    if (strcmp(note, m->disc_note_revealed) != 0) {
+        safe_copy(m->disc_note_revealed, sizeof(m->disc_note_revealed), note);
+        m->disc_note_reveal_frames = LNG_DISC_NOTE_REVEAL_FRAMES;
+    }
+    if (m->disc_note_reveal_frames > 0) {
+        m->disc_note_reveal_frames--;
+        return true;
+    }
+    return false;
+}
+
+float launcher_model_scroll_into_view(float item_top, float item_bottom,
+                                      float view_top, float view_bottom, float margin) {
+    if (item_bottom + margin > view_bottom) {
+        const float down = item_bottom + margin - view_bottom;
+        const float room = item_top - margin - view_top;   /* before the top leaves */
+        if (room <= 0.0f) return 0.0f;
+        return down < room ? down : room;
+    }
+    if (item_top - margin < view_top)
+        return item_top - margin - view_top;
+    return 0.0f;
 }
 
 const char* launcher_model_rom_path(const LauncherModel* m) {
