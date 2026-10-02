@@ -4659,8 +4659,11 @@ void draw_system_controls(LauncherModel* m, const LauncherTheme& th) {
                             false);
     }
 
-    // Line 2: secondary action under the path (PSX OpenBIOS / GBA Clear).
-    if (is_psx || has_pick) {
+    // Line 2: secondary action under the path (PSX OpenBIOS / GBA Clear). A
+    // PlayStation build that holds no BIOS of its own offers none: "Use
+    // OpenBIOS" would clear the player's BIOS and switch to nothing (A16).
+    const bool psx_bundled = is_psx && launcher_model_bundled_bios_offered(m);
+    if (psx_bundled || (!is_psx && has_pick)) {
         const float indent = ImGui::CalcTextSize("BIOS").x + px(th.spacing_md);
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + indent);
         if (is_psx) {
@@ -12904,10 +12907,16 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
 
     if (m->has_bios) {
         const bool has_pick = m->s.bios_path[0] != 0;
-        const bool offers_bundled = (plat == SETUP_PLAT_PSX);
+        /* A PlayStation build that holds no BIOS of its own (every pin H
+         * kit) needs the player's image: the BIOS is not optional there, and
+         * there is no OpenBIOS to use (Alex, 2026-10-02, A16). The host says
+         * which it is by its answer for an empty BIOS path. */
+        const bool offers_bundled = (plat == SETUP_PLAT_PSX) &&
+                                    launcher_model_bundled_bios_offered(m);
         const char* bios_section =
             (plat == SETUP_PLAT_GBA) ? "1. GBA BIOS (required)"
-            : (plat == SETUP_PLAT_PSX) ? "1. PlayStation BIOS (optional)"
+            : (plat == SETUP_PLAT_PSX) ? (offers_bundled ? "1. PlayStation BIOS (optional)"
+                                                         : "1. PlayStation BIOS")
                                       : "1. BIOS";
         const char* bios_help =
             (plat == SETUP_PLAT_GBA)
@@ -12915,14 +12924,17 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                   "300c20df… — dumped from a Game Boy Advance). Setup packages "
                   "do not ship a redistributable GBA BIOS."
             : (plat == SETUP_PLAT_PSX)
-                ? "Optional \u2014 OpenBIOS is used unless you browse for a "
-                  "retail dump (exactly 512 KB)."
+                ? (offers_bundled
+                       ? "Optional \u2014 OpenBIOS is used unless you browse for a "
+                         "retail dump (exactly 512 KB)."
+                       : "This build needs a PlayStation BIOS image (exactly 512 KB). "
+                         "Select your own dump.")
                 : "Browse for a BIOS image required by this console.";
         const char* empty_bios_label =
             offers_bundled ? "OpenBIOS" : "(none selected)";
         const char* bios_picker =
             (plat == SETUP_PLAT_GBA) ? "Select GBA BIOS (gba_bios.bin)"
-            : (plat == SETUP_PLAT_PSX) ? "Select PlayStation BIOS (SCPH1001.BIN)"
+            : (plat == SETUP_PLAT_PSX) ? "Select PlayStation BIOS"
                                       : "Select BIOS file";
 
         ImGui::TextUnformatted(bios_section);
@@ -13116,9 +13128,13 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                                                  ? "Prepare disc…"
                                                  : "Convert raw dump…"));
         const bool use_selected = m->prepare_use_selected_rom;
+        /* In a build that holds no BIOS of its own, Generate with no BIOS
+         * chosen ran the disc check and then stopped with the command line's
+         * hint ("... Pass --bios <dump> ..."). It waits for a BIOS instead. */
+        const bool needs_bios = launcher_model_setup_bios_blocks_generate(m);
         const bool can_prep_selected = use_selected && m->rom_present &&
                                        m->rom_full[0] &&
-                                       strcmp(m->rom_size, "--") != 0;
+                                       strcmp(m->rom_size, "--") != 0 && !needs_bios;
         if (use_selected && !can_prep_selected) ImGui::BeginDisabled();
         if (ImGui::Button(prep_lbl, ImVec2(px(240), px(32)))) {
             if (use_selected) {
@@ -13149,8 +13165,12 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
         }
         if (use_selected && !can_prep_selected) {
             ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("Select a verified %s first", noun);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                if (needs_bios)
+                    ImGui::SetTooltip("Select a PlayStation BIOS first");
+                else
+                    ImGui::SetTooltip("Select a verified %s first", noun);
+            }
         }
         if (m->setup_preparing) {
             ImGui::CloseCurrentPopup();
@@ -13200,11 +13220,13 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                 ImGui::SetTooltip("%s", blocker);
         }
         ImGui::SameLine();
-        if (ImGui::Button("Use OpenBIOS", ImVec2(px(130), px(34))))
-            launcher_model_request_bios_path(m, "");
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Play now with the bundled OpenBIOS (no rebuild).");
-        ImGui::SameLine();
+        if (launcher_model_bundled_bios_offered(m)) {
+            if (ImGui::Button("Use OpenBIOS", ImVec2(px(130), px(34))))
+                launcher_model_request_bios_path(m, "");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Play now with the bundled OpenBIOS (no rebuild).");
+            ImGui::SameLine();
+        }
     } else if (!m->prepare_required_before_continue) {
         const bool ready = launcher_model_can_finish_setup(m);
         char confirm_lbl[64];
@@ -13279,12 +13301,17 @@ void draw_bios_confirm_modal(LauncherModel* m, const LauncherTheme& th) {
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(420));
     if (bios_prep)
         ImGui::TextWrapped("%s", launcher_model_bios_prepare_note(m));
-    else
+    else if (launcher_model_bundled_bios_offered(m))
         ImGui::TextWrapped(
             "This retail BIOS is not compiled into the current build yet. "
             "Generate & rebuild will emit its BIOS C and rebuild the game binary "
             "with your current disc and toolchain. OpenBIOS switches never need "
             "this — use Use OpenBIOS instead.");
+    else
+        ImGui::TextWrapped(
+            "This retail BIOS is not compiled into the current build yet. "
+            "Generate & rebuild will emit its BIOS C and rebuild the game binary "
+            "with your current disc and toolchain.");
     if (m->bios_pending_path[0]) {
         ImGui::Dummy(ImVec2(0, px(8)));
         ImGui::TextColored(col(th.text_muted), "Selected:");
@@ -13312,11 +13339,13 @@ void draw_bios_confirm_modal(LauncherModel* m, const LauncherTheme& th) {
             ImGui::SetTooltip("%s", generate_disabled_reason(m));
     }
     ImGui::SameLine();
-    if (ImGui::Button("Use OpenBIOS", ImVec2(px(130), px(32)))) {
-        launcher_model_bios_confirm_cancel(m);
-        launcher_model_request_bios_path(m, "");
+    if (launcher_model_bundled_bios_offered(m)) {
+        if (ImGui::Button("Use OpenBIOS", ImVec2(px(130), px(32)))) {
+            launcher_model_bios_confirm_cancel(m);
+            launcher_model_request_bios_path(m, "");
+        }
+        ImGui::SameLine();
     }
-    ImGui::SameLine();
     if (ImGui::Button("Cancel", ImVec2(px(100), px(32))))
         launcher_model_bios_confirm_cancel(m);
     if (!m->bios_confirm_open) ImGui::CloseCurrentPopup();
@@ -13366,9 +13395,11 @@ void draw_bios_play_modal(LauncherModel* m, const LauncherTheme& th) {
             ImGui::SetTooltip("%s", generate_disabled_reason(m));
     }
     ImGui::SameLine();
-    if (ImGui::Button("Use OpenBIOS", ImVec2(px(130), px(32))))
-        launcher_model_bios_play_use_openbios(m);
-    ImGui::SameLine();
+    if (launcher_model_bundled_bios_offered(m)) {
+        if (ImGui::Button("Use OpenBIOS", ImVec2(px(130), px(32))))
+            launcher_model_bios_play_use_openbios(m);
+        ImGui::SameLine();
+    }
     if (ImGui::Button("Cancel", ImVec2(px(100), px(32))))
         launcher_model_bios_play_cancel(m);
     if (!m->bios_play_modal_open) ImGui::CloseCurrentPopup();
