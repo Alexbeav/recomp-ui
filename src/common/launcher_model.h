@@ -107,6 +107,13 @@ typedef enum {
 // player-array width, recomp_launcher.h): N64 exposes 4 controller ports.
 #define LNG_MAX_PLAYERS RECOMP_LAUNCHER_MAX_PLAYERS
 
+// Bytes of the setup wizard's error text (setup_error), and of the buffer a
+// host's prepare, rebuild or toolchain callback writes its reason into. The
+// wizard draws the text wrapped, so its length costs lines, not width. It was
+// 256: a host sentence that names the disc image a kit needs and the file
+// that was selected runs to about 480 bytes, and its last sentence was cut.
+#define LNG_SETUP_ERROR_CAP 640
+
 // System hotkeys — mirrors the engine's config.ini [KeyMap] keys exactly, so
 // editing them here surgically rewrites the same lines config.c parses.
 typedef enum {
@@ -569,7 +576,7 @@ typedef struct {
     float     setup_prepare_fraction; // 0..1 real progress, or <0 for pulse-only
     char      setup_progress_title[128]; // progress modal title override
     char      setup_status[256];     // busy / result line under the wizard
-    char      setup_error[256];
+    char      setup_error[LNG_SETUP_ERROR_CAP];
     bool      netplay_name_modal_open;
     bool      netplay_name_prompted;
     /* Why the last name was refused, shown inside the Player Name modal and

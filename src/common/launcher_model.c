@@ -3064,7 +3064,7 @@ typedef struct {
     LauncherModel* m;
     char source[512];
     char out_path[512];
-    char err[256];
+    char err[LNG_SETUP_ERROR_CAP];   /* as much as the wizard can show (setup_error) */
     char progress_msg[256];
     char zip_path[512];
     float progress_pct; /* <0 indeterminate; else 0..1 */
@@ -3461,7 +3461,7 @@ void launcher_model_poll_prepare_disc(LauncherModel* m) {
     const int done = g_prep_job.done && g_prep_job.m == m;
     const int kind = g_prep_job.kind;
     char out_path[512];
-    char err[256];
+    char err[LNG_SETUP_ERROR_CAP];   /* as much as the wizard can show (setup_error) */
     int result = 0;
     if (done) {
         result = g_prep_job.result;
