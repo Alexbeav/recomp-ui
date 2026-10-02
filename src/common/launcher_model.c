@@ -3109,6 +3109,13 @@ static void* prep_thread_main(void* arg);
 #endif
 
 static int prep_spawn_thread(LauncherModel* m) {
+    /* Every job starts here. Whatever error it ends with is a new one for the
+     * wizard, also when its words are the same as the last one's: while a job
+     * runs the wizard draws only the progress window, so it never sees the
+     * cleared text, and the same refusal twice in a row was scrolled into
+     * view the first time only (launcher_model_setup_error_reveal). */
+    m->setup_error_revealed[0] = '\0';
+    m->setup_error_reveal_frames = 0;
 #if defined(_WIN32)
     HANDLE th = CreateThread(NULL, 0, prep_thread_main, &g_prep_job, 0, NULL);
     if (!th) {

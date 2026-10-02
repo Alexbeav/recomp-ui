@@ -16,6 +16,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(_WIN32)
+#include <direct.h>
+#include <windows.h>
+#define chdir _chdir
+static void nap(void) { Sleep(2); }
+#else
+#include <unistd.h>
+static void nap(void) { usleep(2000); }
+#endif
 
 /* Pulled in by the model TU; unrelated to setup. */
 void launcher_binds_set_zapper(int a, int b);
@@ -49,9 +58,15 @@ static int host_prepare(const char* source, char* out_path, size_t out_cap,
     return 0;   /* refused */
 }
 
-int main(void) {
+int main(int argc, char** argv) {
     LauncherModel* m = (LauncherModel*)calloc(1, sizeof(LauncherModel));
     if (!m) { fprintf(stderr, "FAIL: out of memory\n"); return 1; }
+    /* Generate writes the setup's small record files beside the launcher: keep
+     * them in the folder the caller names. */
+    if (argc > 1 && chdir(argv[1]) != 0) {
+        fprintf(stderr, "FAIL: cannot chdir to %s\n", argv[1]);
+        return 1;
+    }
 
     expect(strlen(kSentence) > 255, "the sentence is longer than the old 255 bytes");
     expect(strlen(kSentence) < LNG_SETUP_ERROR_CAP, "the sentence fits the wizard's text");
@@ -96,6 +111,34 @@ int main(void) {
     expect(launcher_model_setup_error_reveal(m), "the same error after it was cleared is new again");
     expect(!launcher_model_setup_error_reveal(NULL), "no model: nothing to do");
     safe_copy(m->setup_error, sizeof(m->setup_error), kSentence);
+
+    /* The same refusal twice in a row, as the wizard meets it. The player
+     * reads the error, scrolls back up, and presses Generate again on the same
+     * disc. While the job runs the wizard draws only the progress window and
+     * returns before it asks for the reveal, so it never draws a frame with
+     * the error cleared. The second refusal has the same words as the first
+     * and must be brought into view again. */
+    while (launcher_model_setup_error_reveal(m)) { }
+    expect(!launcher_model_setup_error_reveal(m), "the first refusal has been shown; the scroll is the player's");
+    safe_copy(m->rom_full, sizeof(m->rom_full), "wrong.cue");
+    m->rom_present = true;
+    launcher_model_start_prepare_disc(m, m->rom_full);   /* the Generate button */
+    expect(m->setup_preparing, "Generate started a job");
+    expect(m->setup_error[0] == '\0', "the job's start clears the error text");
+    {
+        int frames = 0;
+        while (m->setup_preparing && frames < 5000) {
+            /* A frame of the busy wizard: the poll, the progress window, no reveal. */
+            launcher_model_poll_prepare_disc(m);
+            if (m->setup_preparing) nap();
+            ++frames;
+        }
+    }
+    expect(!m->setup_preparing, "the job ended");
+    expect(strcmp(m->setup_error, kSentence) == 0, "with the same sentence as before");
+    expect(launcher_model_setup_error_reveal(m), "the same refusal a second time is brought into view again");
+    expect(launcher_model_setup_error_reveal(m), "for the second frame too");
+    expect(!launcher_model_setup_error_reveal(m), "and then the scroll is the player's again");
 
     /* A host that writes more than the room is cut at the room, and ended. */
     {
