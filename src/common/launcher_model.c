@@ -1502,21 +1502,21 @@ const char* launcher_model_disc_note(const LauncherModel* m, char* buf, size_t c
     buf[0] = '\0';
     if (!m || !m->rom_present) return buf;
     const VerifyResult* v = &m->verify;
-    if (v->serial_status == RECOMP_SERIAL_NOT_LISTED) {
+    const bool read = v->serial[0] != '\0';
+    const bool known = v->expected_serials[0] != '\0';
+    /* A host that says "not listed" and gives neither a serial nor what the
+     * build needs leaves nothing to print: the old note below stands. */
+    if (v->serial_status == RECOMP_SERIAL_NOT_LISTED && (read || known)) {
         if (wrong_disc) *wrong_disc = true;
-        const bool read = v->serial[0] != '\0';
-        const bool known = v->expected_serials[0] != '\0';
         if (read && known)
             snprintf(buf, cap, "This disc is %s. This build needs %s.",
                      v->serial, v->expected_serials);
         else if (read)
             snprintf(buf, cap, "This disc is %s. This build is made for another disc.",
                      v->serial);
-        else if (known)
+        else
             snprintf(buf, cap, "No serial was found on this disc. This build needs %s.",
                      v->expected_serials);
-        else
-            snprintf(buf, cap, "No serial was found on this disc.");
         return buf;
     }
     if (m->netplay_supported && v->netplay_detail[0] && !v->netplay_ok)

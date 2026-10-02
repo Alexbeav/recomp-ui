@@ -128,12 +128,33 @@ int main(void) {
     expect(wrong && !strcmp(note, "This disc is SLES-03398. This build is made for another disc."),
            "without the build's list the reason still names the disc");
 
-    /* A set: the build lists more than one serial. */
-    answer("SLES-03398", RECOMP_SERIAL_NOT_LISTED, "SLES-01234, SLES-11234", 3, 1, "");
+    /* The host says "not listed" with no serial and no list: there is nothing
+     * to print about the serial, so the old note stands. */
+    answer("", RECOMP_SERIAL_NOT_LISTED, "", 3, 0, TOC_NOTE);
     run_verify(m);
+    expect(!launcher_model_disc_serial_ok(m), "nothing read and nothing listed: not a tick");
     note = launcher_model_disc_note(m, buf, sizeof(buf), &wrong);
-    expect(!strcmp(note, "This disc is SLES-03398. This build needs SLES-01234, SLES-11234."),
-           "the reason carries every serial the host lists");
+    expect(!strcmp(note, TOC_NOTE) && !wrong, "nothing read and nothing listed: the old note, no sentence of its own");
+    m->netplay_supported = false;
+    note = launcher_model_disc_note(m, buf, sizeof(buf), &wrong);
+    expect(!note[0] && !wrong, "the same in a title without netplay: no line");
+    m->netplay_supported = true;
+
+    /* A set, and an image its disc list does not know (another file name,
+     * another folder). The host compares the image's serial with every serial
+     * of the set and gives the whole list. Another game's disc: */
+    answer("SLES-03398", RECOMP_SERIAL_NOT_LISTED, "SLES-01234, SLES-11234", 1, 1, "");
+    run_verify(m);
+    expect(!launcher_model_disc_serial_ok(m), "a set: a serial outside the set is not a tick");
+    note = launcher_model_disc_note(m, buf, sizeof(buf), &wrong);
+    expect(wrong && !strcmp(note, "This disc is SLES-03398. This build needs SLES-01234, SLES-11234."),
+           "a set: the reason carries every serial of the set");
+    /* A copy of one of the set's discs under another name: */
+    answer("SLES-11234", RECOMP_SERIAL_LISTED, "SLES-01234, SLES-11234", 1, 1, "");
+    run_verify(m);
+    expect(launcher_model_disc_serial_ok(m), "a set: a serial of the set is a tick, whatever the file is called");
+    note = launcher_model_disc_note(m, buf, sizeof(buf), &wrong);
+    expect(!note[0] && !wrong, "a set: a disc of the set has no reason line");
 
     /* A host built before these fields existed says nothing: the old rows. */
     answer("SLES-03398", RECOMP_SERIAL_UNSAID, "", 3, 0, TOC_NOTE);
