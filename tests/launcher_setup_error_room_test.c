@@ -11,6 +11,12 @@
  * thread function that calls the host, and the poll that moves the host's
  * reason into the wizard.
  */
+/* usleep, realpath and readlink are not declared under a strict -std=c11
+ * unless this is set before the first system header. The product build uses
+ * the compiler's default (GNU) mode, where they are. */
+#if !defined(_WIN32) && !defined(_DEFAULT_SOURCE)
+#define _DEFAULT_SOURCE 1
+#endif
 #include "launcher_model.c"
 
 #include <stdio.h>
