@@ -2385,6 +2385,21 @@ bool launcher_model_bios_applies(const LauncherModel* m) {
     return m && m->has_bios && !m->bios_not_needed;
 }
 
+bool launcher_model_bundled_bios_offered(const LauncherModel* m) {
+    RecompLauncherCBiosVerify bv;
+    if (!m) return false;
+    /* The host's answer for an empty path does not depend on the BIOS that
+     * is chosen: it says whether the build can run with none. */
+    if (lm_bios_verify(m, "", &bv) <= 0) return true;
+    return bv.ok != 0 || bv.not_needed != 0;
+}
+
+bool launcher_model_setup_bios_blocks_generate(const LauncherModel* m) {
+    if (!m || !m->has_bios) return false;
+    if (launcher_model_bundled_bios_offered(m)) return false;
+    return !(m->setup_bios_ok || m->setup_bios_needs_regen);
+}
+
 bool launcher_model_bios_missing(const LauncherModel* m) {
     return launcher_model_bios_applies(m) && !m->setup_bios_ok;
 }
