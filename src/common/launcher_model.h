@@ -543,6 +543,7 @@ typedef struct {
     bool      setup_bios_ok;         // last bios_verify_cb result (or path-only ok)
     bool      setup_bios_warn;
     bool      setup_bios_needs_regen; // valid dump but not linked in this binary
+    bool      bundled_bios_offered;  // empty-path verdict cached before the chosen BIOS
     char      setup_bios_detail[256];
     bool      bios_not_needed;       // host: the selected image needs no BIOS
     bool      bios_pick_rejected;    // the last pick failed verification (detail says why)
@@ -1208,8 +1209,9 @@ void launcher_model_launch_finish(LauncherModel* m, bool launched);
 // True when the mounted disc is OK for online (TOC/cue policy + content).
 // Non-disc games (verify.mode!=1) always return true when netplay is supported.
 bool launcher_model_netplay_disc_ok(const LauncherModel* m);
-// Re-run bios_verify_cb against m->s.bios_path. Empty path means "bundled
-// BIOS" — OK unless the host verifier refuses "".
+// Refresh the empty-path offer, then re-run bios_verify_cb against m->s.bios_path.
+// Draw-time queries use the cached offer and do not call the host verifier.
+// Empty path means "bundled BIOS" — OK unless the host verifier refuses "".
 void launcher_model_refresh_bios_status(LauncherModel* m);
 // True when this build runs with no BIOS file chosen: it holds a BIOS of its
 // own (OpenBIOS on the PlayStation). The host says so by accepting an empty

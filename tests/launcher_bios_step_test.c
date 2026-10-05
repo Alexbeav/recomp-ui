@@ -42,9 +42,11 @@ static void expect(int cond, const char* what) {
 /* ---- stand-in hosts ------------------------------------------------------ */
 
 static int empty_calls;
+static char last_verified_path[512];
 
 /* A build that holds OpenBIOS: the empty path is fine. */
 static int host_with_openbios(const char* path, RecompLauncherCBiosVerify* out) {
+    safe_copy(last_verified_path, sizeof(last_verified_path), path);
     memset(out, 0, sizeof(*out));
     if (!path[0]) {
         ++empty_calls;
@@ -60,6 +62,7 @@ static int host_with_openbios(const char* path, RecompLauncherCBiosVerify* out) 
 
 /* A pin H kit: no OpenBIOS, the empty path is refused. */
 static int host_without_openbios(const char* path, RecompLauncherCBiosVerify* out) {
+    safe_copy(last_verified_path, sizeof(last_verified_path), path);
     memset(out, 0, sizeof(*out));
     if (!path[0]) {
         ++empty_calls;
@@ -126,6 +129,18 @@ int main(void) {
     expect(m->setup_bios_ok, "the kit's BIOS chosen: OK");
     expect(!launcher_model_bundled_bios_offered(m), "the answer does not depend on the BIOS that is chosen");
     expect(!launcher_model_setup_bios_blocks_generate(m), "Generate may be pressed");
+    {
+        const int before = empty_calls;
+        for (int frame = 0; frame < 120; ++frame) {
+            (void)launcher_model_bundled_bios_offered(m);
+            (void)launcher_model_setup_bios_blocks_generate(m);
+        }
+        expect(empty_calls == before, "drawing does not recheck the empty BIOS path");
+        expect(strcmp(last_verified_path, "D:/bios/good.bin") == 0,
+               "refresh and drawing leave the host report on the chosen BIOS");
+        expect(strstr(m->setup_bios_detail, "CRC OK") != NULL,
+               "the chosen BIOS detail survives the empty-path offer check");
+    }
     choose(m, "D:/bios/other.bin");
     expect(!m->setup_bios_ok && m->setup_bios_needs_regen, "another real BIOS: it has to be built in");
     expect(!launcher_model_setup_bios_blocks_generate(m), "Generate may be pressed: it is what builds it in");
@@ -137,7 +152,7 @@ int main(void) {
     {
         const int before = empty_calls;
         (void)launcher_model_bundled_bios_offered(m);
-        expect(empty_calls == before + 1, "the question is the host's answer for the empty path");
+        expect(empty_calls == before, "the offer query uses the refreshed empty-path answer");
     }
     free(m);
 
