@@ -25,7 +25,8 @@
 //
 // LNG_TEST_HIDDEN=1 (with LNG_SCRIPT) creates the window hidden on both the
 // SDL2 and SDL3 backends, so automated runs never appear on the desktop or
-// take focus; shot: still captures the rendered frame.
+// take focus; shot: still captures the rendered frame, and click: reaches the
+// window as events without moving the desktop's pointer.
 
 #ifndef LAUNCHER_NG_DEBUG_H
 #define LAUNCHER_NG_DEBUG_H

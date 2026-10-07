@@ -82,14 +82,17 @@ bool launcher_capture_png(const char* path, int w, int h) {
 // that sample SDL_GetMouseState see it) and push button events (so backends
 // that consume the event queue see it). Covers both ImGui and Clay.
 static void synth_click(LauncherPlatform* p, float x, float y) {
+    // A hidden window (LNG_TEST_HIDDEN) gets the click as events only. The warp
+    // moves the desktop's real pointer, also for a window that nobody sees.
+    const bool warp = !(SDL_GetWindowFlags(p->window) & SDL_WINDOW_HIDDEN);
 #if defined(LNG_SDL3)
-    SDL_WarpMouseInWindow(p->window, x, y);
+    if (warp) SDL_WarpMouseInWindow(p->window, x, y);
 #else
     // SDL2 stores mouse coordinates as integers. Make its existing truncation
     // behavior explicit while preserving SDL3's subpixel coordinates.
     const int event_x = (int)x;
     const int event_y = (int)y;
-    SDL_WarpMouseInWindow(p->window, event_x, event_y);
+    if (warp) SDL_WarpMouseInWindow(p->window, event_x, event_y);
 #endif
 
     SDL_Event e;
