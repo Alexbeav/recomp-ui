@@ -435,6 +435,35 @@ if(BUILD_TESTING)
         NAME recomp-ui-launcher-player-tabs
         COMMAND $<TARGET_FILE:recomp-ui-launcher-player-tabs-test>)
 
+    # The cover button's model side: serial and address, the check of what
+    # came back, the replace rule and the worker job, with fake fetchers. No
+    # network.
+    add_executable(recomp-ui-launcher-cover-test
+        tests/launcher_cover_test.c
+        src/common/launcher_cover.c)
+    target_include_directories(recomp-ui-launcher-cover-test PRIVATE src src/common)
+    if(UNIX)
+        find_package(Threads REQUIRED)
+        target_link_libraries(recomp-ui-launcher-cover-test PRIVATE Threads::Threads)
+    endif()
+    add_test(
+        NAME recomp-ui-launcher-cover
+        COMMAND $<TARGET_FILE:recomp-ui-launcher-cover-test>
+                ${CMAKE_CURRENT_BINARY_DIR})
+
+    # The desktop icon file: the square picture, the .ico and the .png as
+    # written, and the save icon read from a memory-card image the test
+    # builds itself.
+    add_executable(recomp-ui-launcher-icon-test
+        tests/launcher_icon_test.c
+        src/common/launcher_icon.c
+        src/common/crc32.c)
+    target_include_directories(recomp-ui-launcher-icon-test PRIVATE src src/common)
+    add_test(
+        NAME recomp-ui-launcher-icon
+        COMMAND $<TARGET_FILE:recomp-ui-launcher-icon-test>
+                ${CMAKE_CURRENT_BINARY_DIR})
+
     # "Start from" on the dashboard: the list the model holds, the choice,
     # what it does to Record replay and to the disc to boot, and what PLAY
     # hands to the host. Same shape.
