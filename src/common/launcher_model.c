@@ -3731,6 +3731,28 @@ void launcher_model_set_player_tab(LauncherModel* m, int player) {
     if (m) m->player_tab = clampi(player, 0, LNG_MAX_PLAYERS - 1);
 }
 
+int launcher_model_dashboard_tabbed(const LauncherModel* m) {
+    const SystemProfile* prof = m ? (const SystemProfile*)m->profile : NULL;
+    return prof && prof->controller.player_tabs ? 1 : 0;
+}
+
+int launcher_model_card_tabs(const LauncherModel* m) {
+    if (!launcher_model_dashboard_tabbed(m)) return 0;
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    if (prof->save.kind != SAVE_MEMCARD) return 0;
+    return prof->save.slots > 0 && prof->save.slots <= 2 ? prof->save.slots : 2;
+}
+
+int launcher_model_card_tab(const LauncherModel* m) {
+    const int n = launcher_model_card_tabs(m);
+    if (n < 1 || m->card_tab < 0) return 0;
+    return m->card_tab < n ? m->card_tab : n - 1;
+}
+
+void launcher_model_set_card_tab(LauncherModel* m, int slot) {
+    if (m) m->card_tab = clampi(slot, 0, 1);
+}
+
 int launcher_model_multitap_analog_available(const LauncherModel* m) {
     if (!m || m->player_count < 3) return 0;
     /* Digital-only titles (lock_mode + locked_pad_mode=D-Pad): DualShock-on-tap

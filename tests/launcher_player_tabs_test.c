@@ -132,6 +132,52 @@ static void test_open_tab_changes_no_setting(void) {
     before = m->s;
     for (int p = 0; p < 4; ++p) launcher_model_set_player_tab(m, p);
     expect_int(memcmp(&before, &m->s, sizeof(before)), 0, "opening tabs leaves the settings as they were");
+    for (int slot = 0; slot < 2; ++slot) launcher_model_set_card_tab(m, slot);
+    expect_int(memcmp(&before, &m->s, sizeof(before)), 0, "opening card tabs leaves the settings as they were");
+    free(m);
+}
+
+/* The tabbed dashboard is the console's choice, whatever the player count:
+ * a one-player title has no player strip, and still has the card of the
+ * tabbed dashboard and the memory cards as tabs. */
+static void test_tabbed_dashboard(void) {
+    static const int kConsoles[] = { PSX, N64, SNES };
+    static const char* const kNames[] = { "PSX", "N64", "SNES" };
+    for (int c = 0; c < 3; ++c) {
+        for (int players = 1; players <= 8; players += 7) {
+            LauncherModel* m = session(kConsoles[c], players, 1);
+            char what[96];
+            if (!m) return;
+            snprintf(what, sizeof(what), "%s, %d player(s): tabbed dashboard", kNames[c], players);
+            expect_int(launcher_model_dashboard_tabbed(m), kConsoles[c] == PSX, what);
+            snprintf(what, sizeof(what), "%s, %d player(s): memory-card tabs", kNames[c], players);
+            expect_int(launcher_model_card_tabs(m), kConsoles[c] == PSX ? 2 : 0, what);
+            free(m);
+        }
+    }
+    expect_int(launcher_model_dashboard_tabbed(NULL), 0, "no model: no tabbed dashboard");
+    expect_int(launcher_model_card_tabs(NULL), 0, "no model: no card tabs");
+}
+
+static void test_open_card_tab(void) {
+    LauncherModel* m = session(PSX, 2, 0);
+    if (!m) return;
+    expect_int(launcher_model_card_tab(m), 0, "Card 1 is open at the start");
+    launcher_model_set_card_tab(m, 1);
+    expect_int(launcher_model_card_tab(m), 1, "Card 2 opens");
+    launcher_model_set_card_tab(m, 7);
+    expect_int(launcher_model_card_tab(m), 1, "a card past the last one is the last card");
+    launcher_model_set_card_tab(m, -3);
+    expect_int(launcher_model_card_tab(m), 0, "a card before the first one is Card 1");
+    launcher_model_set_card_tab(m, 1);
+    launcher_model_set_player_tab(m, 1);
+    expect_int(launcher_model_card_tab(m), 1, "opening a player tab leaves the card tab alone");
+    free(m);
+
+    m = session(SNES, 2, 0);
+    if (!m) return;
+    launcher_model_set_card_tab(m, 1);
+    expect_int(launcher_model_card_tab(m), 0, "a console without card tabs has no open card tab");
     free(m);
 }
 
@@ -142,6 +188,8 @@ int main(void) {
     test_hidden_cards();
     test_open_tab();
     test_open_tab_changes_no_setting();
+    test_tabbed_dashboard();
+    test_open_card_tab();
     if (fails) { fprintf(stderr, "launcher_player_tabs_test: %d failure(s)\n", fails); return 1; }
     printf("launcher_player_tabs_test: all checks passed\n");
     return 0;

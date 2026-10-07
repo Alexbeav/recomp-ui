@@ -11,6 +11,7 @@
 //                                          switch view (no clicking required)
 //   player:0|1                           which player the controller view edits
 //   tab:N                                open player N's tab on the dashboard (0-based)
+//   cardtab:N                            open memory card N's tab on the dashboard (0-based)
 //   size:WxH                             resize the window (tests live reflow)
 //   click:X,Y                            synthetic click at logical coords
 //   key:escape                           synthetic key press
