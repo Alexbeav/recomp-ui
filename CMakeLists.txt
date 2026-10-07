@@ -418,6 +418,23 @@ if(BUILD_TESTING)
         NAME recomp-ui-launcher-negcon-mode
         COMMAND $<TARGET_FILE:recomp-ui-launcher-negcon-mode-test>)
 
+    # Dashboard player tabs: the tab count per declared player number and
+    # Multitap state, and the open tab. Same shape.
+    add_executable(recomp-ui-launcher-player-tabs-test
+        tests/launcher_player_tabs_test.c
+        src/common/crc32.c
+        src/common/sha1.c
+        src/common/sha256.c
+        src/common/ips_patch.c
+        src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-launcher-player-tabs-test PRIVATE
+        src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-launcher-player-tabs-test PRIVATE
+        ${RUI_SDL_TARGET})
+    add_test(
+        NAME recomp-ui-launcher-player-tabs
+        COMMAND $<TARGET_FILE:recomp-ui-launcher-player-tabs-test>)
+
     # The "Record replay" footer checkbox: gated on the host's
     # has_record_replay, handed back on PLAY, kept by Restore Defaults.
     add_executable(recomp-ui-launcher-record-replay-test

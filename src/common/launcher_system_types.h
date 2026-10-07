@@ -80,6 +80,15 @@ typedef struct {
     // this 0 (the zero-fill of every older positional initializer, so adding
     // this changed no existing console). See launcher_model_pak_ports().
     int  has_pak;
+    // ---- dashboard: one tab per player ------------------------------------
+    // 1 when the dashboard shows the controller cards of a title with two or
+    // more players as tabs: a strip with one tab per player, and one player's
+    // card under it. Cards that stand side by side need a second row from the
+    // third player on, and a console whose dashboard also carries memory
+    // cards has no room for that row. 0 (the zero-fill of every older
+    // positional initializer) keeps the cards side by side, so adding this
+    // changed no console until it opted in. See launcher_model_player_tabs().
+    int  player_tabs;
 } ControllerSpec;
 
 // ---- Save module --------------------------------------------------------------

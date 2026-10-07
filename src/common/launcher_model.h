@@ -528,6 +528,7 @@ typedef struct {
     LngView   view;
     LngAction action;
     int       cfg_player;            // 0..LNG_MAX_PLAYERS-1 — which player the Controller view edits
+    int       player_tab;            // which player's card the dashboard shows when the cards are tabs (launcher_model_player_tab)
     bool      skip_modal_open;       // "Skip the launcher on boot?" confirm
     bool      pgo_confirm_open;      // SYSTEM → VIDEO → Optimize FMV confirm
     bool      fmv_timing_confirm_open; // SYSTEM → VIDEO → Apply FMV Timing confirm
@@ -1003,6 +1004,17 @@ int  launcher_model_multitap_available(const LauncherModel* m);
 int  launcher_model_multitap_enabled(const LauncherModel* m);
 void launcher_model_toggle_multitap(LauncherModel* m);
 int  launcher_model_visible_player_count(const LauncherModel* m);
+/* Dashboard player tabs. How many tabs stand over the controller card: one
+ * per visible player, when the console's profile asks for tabs
+ * (ControllerSpec.player_tabs) and the title shows two or more cards. 0 means
+ * no strip and the cards as they were: a one-player title (its card is also
+ * the one that owns both ports with a PS1 Mouse), a console that did not opt
+ * in, or cards hidden by lock_device. */
+int  launcher_model_player_tabs(const LauncherModel* m);
+/* The open tab, 0-based and always inside the strip: when Multitap is turned
+ * off while a later player's tab is open, it reads as the last tab left. */
+int  launcher_model_player_tab(const LauncherModel* m);
+void launcher_model_set_player_tab(LauncherModel* m, int player);
 /* Player-seat ceiling for a netplay room this title hosts, 2..
  * RECOMP_LAUNCHER_NETPLAY_MAX_MEMBERS. lan_only != 0 asks for a LAN / Direct
  * IP room. The backend's create_max_slots answers when it has one (>= 2);

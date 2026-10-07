@@ -3713,6 +3713,24 @@ int launcher_model_visible_player_count(const LauncherModel* m) {
     return n;
 }
 
+int launcher_model_player_tabs(const LauncherModel* m) {
+    if (!m || m->lock_device) return 0;
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    if (!prof || !prof->controller.player_tabs) return 0;
+    const int n = launcher_model_visible_player_count(m);
+    return n >= 2 ? n : 0;
+}
+
+int launcher_model_player_tab(const LauncherModel* m) {
+    const int n = launcher_model_player_tabs(m);
+    if (n < 1 || m->player_tab < 0) return 0;
+    return m->player_tab < n ? m->player_tab : n - 1;
+}
+
+void launcher_model_set_player_tab(LauncherModel* m, int player) {
+    if (m) m->player_tab = clampi(player, 0, LNG_MAX_PLAYERS - 1);
+}
+
 int launcher_model_multitap_analog_available(const LauncherModel* m) {
     if (!m || m->player_count < 3) return 0;
     /* Digital-only titles (lock_mode + locked_pad_mode=D-Pad): DualShock-on-tap
