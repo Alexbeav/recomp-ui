@@ -435,6 +435,45 @@ if(BUILD_TESTING)
         NAME recomp-ui-launcher-player-tabs
         COMMAND $<TARGET_FILE:recomp-ui-launcher-player-tabs-test>)
 
+    # "Start from" on the dashboard: the list the model holds, the choice,
+    # what it does to Record replay and to the disc to boot, and what PLAY
+    # hands to the host. Same shape.
+    add_executable(recomp-ui-launcher-start-from-test
+        tests/launcher_start_from_test.c
+        src/common/crc32.c
+        src/common/sha1.c
+        src/common/sha256.c
+        src/common/ips_patch.c
+        src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-launcher-start-from-test PRIVATE
+        src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-launcher-start-from-test PRIVATE
+        ${RUI_SDL_TARGET})
+    add_test(
+        NAME recomp-ui-launcher-start-from
+        COMMAND $<TARGET_FILE:recomp-ui-launcher-start-from-test>)
+
+    # The PlayStation lister of "Start from": the save states and replays it
+    # finds in a product folder the test builds itself, their build marks,
+    # and the start-up variables that carry the choice to the host.
+    add_executable(recomp-ui-psx-start-from-test
+        tests/psx_start_from_test.cpp
+        src/consoles/psx/psx_start_from.cpp
+        src/common/launcher_model.c
+        src/common/crc32.c
+        src/common/sha1.c
+        src/common/sha256.c
+        src/common/ips_patch.c
+        src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-psx-start-from-test PRIVATE
+        src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-psx-start-from-test PRIVATE
+        ${RUI_SDL_TARGET})
+    add_test(
+        NAME recomp-ui-psx-start-from
+        COMMAND $<TARGET_FILE:recomp-ui-psx-start-from-test>
+                ${CMAKE_CURRENT_BINARY_DIR})
+
     # The "Record replay" footer checkbox: gated on the host's
     # has_record_replay, handed back on PLAY, kept by Restore Defaults.
     add_executable(recomp-ui-launcher-record-replay-test
@@ -626,6 +665,7 @@ if(BUILD_TESTING)
     add_executable(recomp-ui-launcher-settings-test
         tests/launcher_settings_test.c
         src/common/launcher_ng_capi.c
+        src/consoles/psx/psx_start_from.cpp
         src/common/launcher_model.c
         src/common/crc32.c
         src/common/sha1.c
