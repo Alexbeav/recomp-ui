@@ -547,6 +547,19 @@ void launcher_model_init(LauncherModel* m,
         m->fmv_timing_busy_status = game->fmv_timing_busy_status;
         m->fmv_timing_success_status = game->fmv_timing_success_status;
         m->boxart_path          = game->boxart_path;      // NULL => default boxart.tga
+        {
+            /* The folder of the host's settings file is the title's own. */
+            const char* cfg = game->config_path;
+            const char* slash = cfg ? strrchr(cfg, '/') : NULL;
+            const char* back = cfg ? strrchr(cfg, '\\') : NULL;
+            if (back && (!slash || back > slash)) slash = back;
+            const size_t n = slash ? (size_t)(slash - cfg + 1) : 0;
+            m->user_dir[0] = '\0';
+            if (n && n < sizeof(m->user_dir)) {
+                memcpy(m->user_dir, cfg, n);
+                m->user_dir[n] = '\0';
+            }
+        }
         m->aspect_labels        = game->aspect_labels;    // NULL => built-in 4:3/16:9/21:9
         m->num_aspect_labels    = game->num_aspect_labels;
         m->aspect_experimental  = game->aspect_experimental != 0;
@@ -1627,6 +1640,10 @@ void launcher_model_toggle_record_replay(LauncherModel* m) {
     if (!m || !m->has_record_replay) return;
     m->s.record_replay = !m->s.record_replay;
     if (m->s.record_replay) m->start_selected = -1;
+}
+
+const char* launcher_model_user_dir(const LauncherModel* m) {
+    return m ? m->user_dir : "";
 }
 
 int launcher_model_start_from_available(const LauncherModel* m) {

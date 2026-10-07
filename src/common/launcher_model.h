@@ -334,6 +334,10 @@ typedef struct {
     // Box-art path relative to the assets dir (GameInfo.boxart_path);
     // NULL => the default "assets/img/boxart.tga".
     const char* boxart_path;
+    // The title's own writable folder, with its last separator: the folder of
+    // the host's settings file (GameInfo.config_path), where the launcher
+    // keeps launcher-window.ini. "" is the current folder.
+    char        user_dir[512];
 
     // ---- N64 Transfer Pak --------------------------------------------------
     // Per-slot facts refreshed via tpak_inspect_cb (the HOST's cartridge
@@ -862,6 +866,10 @@ void launcher_model_set_run_ahead(LauncherModel* m, int frames);  // clamped, ga
 // Ticking it puts "Start from" back on Power on: a recording from power-on
 // does not start when a save state or a replay starts the game.
 void launcher_model_toggle_record_replay(LauncherModel* m);
+
+// The title's own writable folder, ending in its separator, or "" for the
+// current folder: where the launcher saves a fetched cover and a made icon.
+const char* launcher_model_user_dir(const LauncherModel* m);
 
 // ---- "Start from": what the next PLAY starts with ---------------------------
 // Power on (the default), one of the title's save states, or one of its
