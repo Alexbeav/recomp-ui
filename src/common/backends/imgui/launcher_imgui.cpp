@@ -79,6 +79,7 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include <ctime>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -2066,23 +2067,48 @@ const LauncherTexture& verdict_texture(int verdict) {
 // its current layout. Selecting a row remounts that disc: the model re-runs
 // the disc verdict against it and records the choice in Settings.disc_index,
 // which the host persists like any other setting.
-void draw_disc_selector(LauncherModel* m, const LauncherTheme& th, float availw) {
+//
+// inset: the same list in a small panel of its own, named "Disc to boot",
+// for the place under the Browse button on the tabbed dashboard.
+void draw_disc_selector(LauncherModel* m, const LauncherTheme& th, float availw, bool inset = false) {
     const int count = launcher_model_disc_count(m);
     if (count <= 1) return;
     const int sel = launcher_model_disc_selected(m);
 
+    auto list = [&](float w) {
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::BeginCombo("##disc_selection",
+                              sel >= 0 ? launcher_model_disc_label(m, sel) : "")) {
+            for (int i = 0; i < count; ++i) {
+                if (ImGui::Selectable(launcher_model_disc_label(m, i), i == sel))
+                    launcher_model_select_disc(m, i);
+                if (i == sel) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+    };
+    if (inset) {
+        ImGui::Dummy(ImVec2(0, px(10)));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, col(th.panel_hovered));
+        ImGui::PushStyleColor(ImGuiCol_Border, col(th.border));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(px(12), px(10)));
+        if (ImGui::BeginChild("disc_to_boot", ImVec2(availw, 0),
+                              ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY,
+                              ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+            // One row: the name, then the list in what is left of the inset.
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(col(th.text_muted), "%s", ui_text("Disc to boot"));
+            ImGui::SameLine(0, px(12));
+            list(ImGui::GetContentRegionAvail().x);
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(2);
+        return;
+    }
     ImGui::TextColored(col(th.text_muted), "%s", ui_text("Disc Selection"));
     ImGui::Dummy(ImVec2(0, px(4)));
-    ImGui::SetNextItemWidth(availw);
-    if (ImGui::BeginCombo("##disc_selection",
-                          sel >= 0 ? launcher_model_disc_label(m, sel) : "")) {
-        for (int i = 0; i < count; ++i) {
-            if (ImGui::Selectable(launcher_model_disc_label(m, i), i == sel))
-                launcher_model_select_disc(m, i);
-            if (i == sel) ImGui::SetItemDefaultFocus();
-        }
-        ImGui::EndCombo();
-    }
+    list(availw);
     ImGui::Dummy(ImVec2(0, px(10)));
 }
 
@@ -2093,7 +2119,8 @@ void draw_disc_selector(LauncherModel* m, const LauncherTheme& th, float availw)
 // m->verify, populated by launcher_model_set_rom()/run_verify() in
 // launcher_model.c (real probe when the SystemProfile has one, a synthesized
 // placeholder verdict otherwise).
-void draw_verdict_block(LauncherModel* m, const LauncherTheme& th, float availw) {
+void draw_verdict_block(LauncherModel* m, const LauncherTheme& th, float availw,
+                        bool disc_selector = true) {
     const VerifyResult& v = m->verify;
     // Keep the Serial/Region/ISO checklist mounted even before a disc is
     // picked (setup wizard) so AutoResize modals don't jump when verify runs.
@@ -2136,8 +2163,9 @@ void draw_verdict_block(LauncherModel* m, const LauncherTheme& th, float availw)
     // ABOVE the identity checklist on purpose — Serial / Region / ISO header
     // describe the SELECTED disc (each disc of a set carries its own serial),
     // so the control that decides which disc that is has to read first.
-    // Single-disc titles never compose this.
-    draw_disc_selector(m, th, availw);
+    // Single-disc titles never compose this. The tabbed dashboard has the
+    // list in an inset under the Browse button instead (disc_selector false).
+    if (disc_selector) draw_disc_selector(m, th, availw);
 
     // Checklist: Serial / Region / ISO header. Before a disc is chosen, show
     // em-dashes with no pass/fail marks so the layout still reserves the rows.
@@ -2199,8 +2227,13 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         // + Change ROM, plus the SAVES block when this game has battery SRAM.
         float reserve = px(198.0f);
         if (disc_verdict) reserve += px(120.0f);          // taller: icon+headline + tracks row
-        // Disc Selection label + combo + spacing, for a multi-image title.
-        if (launcher_model_disc_count(m) > 1) reserve += px(62.0f);
+        // Disc Selection label + combo + spacing, for a multi-image title
+        // (more for the inset of the tabbed dashboard). The reserve must not
+        // be less than what is drawn: the card hugs its content, so a short
+        // reserve makes the art grow a little every frame.
+        const bool disc_inset = disc_verdict && launcher_model_dashboard_tabbed(m) &&
+                                launcher_model_disc_count(m) > 1;
+        if (launcher_model_disc_count(m) > 1) reserve += px(disc_inset ? 92.0f : 62.0f);
         if (m->saves_supported) reserve += px(96.0f);    // compact SAVES row below Change ROM
         if (m->password_save_path) reserve += px(96.0f); // password-save row (same footprint)
         if (m->bios_name && launcher_model_bios_missing(m)) reserve += px(110.0f);  // "required" notice
@@ -2208,7 +2241,10 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
                                                               // (title + up-to-3-line wrapped note + 2 stacked buttons)
         float art_h = ImGui::GetContentRegionAvail().y - reserve;
         if (art_h > px(368.0f)) art_h = px(368.0f);   // allow a larger hero box art (~15% bigger than before)
-        if (art_h < px(248.0f)) art_h = px(248.0f);   // keep it big enough to balance the side column
+        // keep it big enough to balance the side column; the disc inset takes
+        // some of that height, so that the card still ends above the footer
+        const float art_min = px(disc_inset ? 200.0f : 248.0f);
+        if (art_h < art_min) art_h = art_min;
         hero_boxart_centered(g_boxart, art_h, availw);
     }
     ImGui::Dummy(ImVec2(0, px(10)));
@@ -2216,7 +2252,7 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
     // Region + verification state, centered under the art.
     const char* noun = (m->rom_noun && m->rom_noun[0]) ? m->rom_noun : "ROM";
     if (disc_verdict) {
-        draw_verdict_block(m, th, availw);
+        draw_verdict_block(m, th, availw, !launcher_model_dashboard_tabbed(m));
     } else {
         const bool verified = launcher_model_rom_verified(m);
         char line[64];
@@ -2316,6 +2352,13 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
             open_builtin_picker(m, std::move(req));
         }
     }
+
+    // Disc to boot: which image of a multi-disc set PLAY boots, in an inset of
+    // its own under the Browse button (the tabbed dashboard). It is the Disc
+    // Selection list, so the Serial rows above and the number on the Browse
+    // button follow it.
+    if (disc_verdict && launcher_model_dashboard_tabbed(m))
+        draw_disc_selector(m, th, availw, true);
 
     // A required system file the host could not find (GameInfo.bios_name):
     // say so where the player is looking and point at Settings, which owns the
@@ -3948,28 +3991,224 @@ void panel_controller_draw(LauncherModel* m, const LauncherTheme* th) {
     draw_controllers_row(m, *th);
 }
 
+// ---- "Start from" (PSX) ------------------------------------------------------
+// The block beside the controller card and the memory cards: what the next
+// PLAY starts with. Power on, one of the title's save states, or one of its
+// replays (launcher_model_select_start; the lister is psx_start_from.h).
+
+// The pictures of the entries, made when a row first shows them.
+struct StartThumb {
+    std::string     key;   // file and offset
+    LauncherTexture tex;
+};
+static std::vector<StartThumb> g_start_thumbs;
+
+static const LauncherTexture* start_thumb(const LauncherStartEntry& e) {
+    if (!e.thumb_path[0] || e.thumb_w <= 0 || e.thumb_h <= 0) return nullptr;
+    const std::string key = std::string(e.thumb_path) + "@" + std::to_string(e.thumb_offset);
+    for (const StartThumb& t : g_start_thumbs)
+        if (t.key == key) return t.tex.id ? &t.tex : nullptr;
+    StartThumb made = { key, { 0, 0, 0 } };
+    const size_t bytes = (size_t)e.thumb_w * (size_t)e.thumb_h * 4;
+    std::vector<unsigned char> px_buf(bytes);
+    if (FILE* f = fopen(e.thumb_path, "rb")) {
+        if (fseek(f, (long)e.thumb_offset, SEEK_SET) == 0 &&
+            fread(px_buf.data(), 1, bytes, f) == bytes) {
+            // The file has blue, green, red, alpha; the texture wants red first.
+            for (size_t i = 0; i < bytes; i += 4) {
+                std::swap(px_buf[i], px_buf[i + 2]);
+                px_buf[i + 3] = 255;
+            }
+            made.tex = launcher_texture_from_rgba(px_buf.data(), e.thumb_w, e.thumb_h);
+        }
+        fclose(f);
+    }
+    g_start_thumbs.push_back(made);
+    return g_start_thumbs.back().tex.id ? &g_start_thumbs.back().tex : nullptr;
+}
+
+// One row of the block: a radio mark, the entry's picture (with_thumb), a
+// title and a line under it, and on the right the mark of another build.
+// Returns true when the row was chosen (a click, or activate on the focused
+// row).
+static bool start_row(const char* id, bool selected, bool with_thumb,
+                      const LauncherTexture* thumb, const char* title, const char* detail,
+                      const char* mark, const LauncherTheme& th, float w) {
+    const float pad = px(8.0f);
+    const float thumb_w = px(56.0f), thumb_h = px(42.0f);
+    const float row_h = (with_thumb ? thumb_h : ImGui::GetTextLineHeight() * 2.0f + px(2.0f)) + pad * 2.0f;
+    const ImVec2 mn = ImGui::GetCursorScreenPos();
+    const ImVec2 mx(mn.x + w, mn.y + row_h);
+    const bool chosen = ImGui::InvisibleButton(id, ImVec2(w, row_h), ImGuiButtonFlags_EnableNav);
+    const bool hov = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(mn, mx, imcol(selected ? th.panel_hovered : hov ? th.control_hovered : th.control),
+                      px(th.radius_sm));
+    if (selected) dl->AddRect(mn, mx, imcol(th.accent), px(th.radius_sm), 0, px(1.5f));
+
+    const float mid = (mn.y + mx.y) * 0.5f;
+    const ImVec2 dot(mn.x + pad + px(7.0f), mid);
+    dl->AddCircle(dot, px(6.5f), imcol(selected ? th.accent : th.text_muted), 0, px(1.5f));
+    if (selected) dl->AddCircleFilled(dot, px(3.5f), imcol(th.accent));
+
+    float x = mn.x + pad + px(14.0f) + pad;
+    if (with_thumb) {
+        const ImVec2 a(x, mn.y + pad), b(x + thumb_w, mn.y + pad + thumb_h);
+        if (thumb) dl->AddImageRounded(tid(*thumb), a, b, ImVec2(0, 0), ImVec2(1, 1),
+                                       imcol(lng_rgba(1, 1, 1, 1)), px(3.0f));
+        else       dl->AddRectFilled(a, b, imcol(th.panel), px(3.0f));
+        dl->AddRect(a, b, imcol(th.border), px(3.0f), 0, px(1.0f));
+        x += thumb_w + pad;
+    }
+    float right = mx.x - pad;
+    if (mark && mark[0]) {
+        const ImVec2 ts = ImGui::CalcTextSize(mark);
+        const ImVec2 a(right - ts.x - px(12.0f), mid - ts.y * 0.5f - px(3.0f));
+        const ImVec2 b(right, mid + ts.y * 0.5f + px(3.0f));
+        dl->AddRect(a, b, imcol(th.warn), px(4.0f), 0, px(1.0f));
+        dl->AddText(ImVec2(a.x + px(6.0f), mid - ts.y * 0.5f), imcol(th.warn), mark);
+        right = a.x - pad;
+    }
+    const float text_h = ImGui::GetTextLineHeight();
+    const float top = mid - text_h - px(1.0f);
+    dl->PushClipRect(ImVec2(x, mn.y), ImVec2(right, mx.y), true);
+    dl->AddText(ImVec2(x, top), imcol(th.text), title);
+    dl->AddText(ImVec2(x, top + text_h + px(2.0f)), imcol(th.text_muted), detail);
+    dl->PopClipRect();
+    return chosen;
+}
+
+static void start_note(const LauncherTheme& th, const char* text) {
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(col(th.text_muted), "%s", text);
+    ImGui::PopTextWrapPos();
+}
+
+// h > 0: the tall block beside the cards, h high, with its list scrolling
+// inside. h == 0: the block under the cards, as high as its content up to a
+// limit.
+static void draw_start_from(LauncherModel* m, const LauncherTheme& th, float w, float h) {
+    ImGuiChildFlags flags = ImGuiChildFlags_Borders;
+    if (h <= 0.0f) {
+        flags |= ImGuiChildFlags_AutoResizeY;
+        ImGui::SetNextWindowSizeConstraints(ImVec2(w, 0.0f), ImVec2(w, px(330.0f)));
+    }
+    if (!ImGui::BeginChild("start_from", ImVec2(w, h > 0.0f ? h : 0.0f), flags)) {
+        ImGui::EndChild();
+        return;
+    }
+    eyebrow("START FROM");
+    const float rw = ImGui::GetContentRegionAvail().x;
+    const int count = launcher_model_start_count(m);
+    const int sel = launcher_model_start_selected(m);
+    const float gap = px(4.0f);
+
+    if (start_row("##power_on", sel < 0, false, nullptr, ui_text("Power on"),
+                  ui_text("The game starts as the console does."), nullptr, th, rw))
+        launcher_model_select_start(m, -1);
+
+    for (int kind = LNG_START_STATE; kind <= LNG_START_REPLAY; ++kind) {
+        ImGui::Dummy(ImVec2(0, px(6.0f)));
+        ImGui::TextColored(col(th.text_muted), "%s",
+                           ui_text(kind == LNG_START_STATE ? "Save states" : "Replays"));
+        int shown = 0;
+        for (int i = 0; i < count; ++i) {
+            const LauncherStartEntry* e = launcher_model_start_entry(m, i);
+            if (!e || e->kind != kind) continue;
+            char title[160], detail[160], when[32] = "";
+            const time_t t = (time_t)e->when;
+            if (const struct tm* lt = localtime(&t)) strftime(when, sizeof(when), "%Y-%m-%d %H:%M", lt);
+            if (kind == LNG_START_STATE) {
+                if (e->disc > 0)
+                    snprintf(title, sizeof(title), "%s \xC2\xB7 %s %d", e->label, ui_text("Disc"), e->disc);
+                else
+                    snprintf(title, sizeof(title), "%s", e->label);
+                snprintf(detail, sizeof(detail), "%s", when);
+            } else {
+                const unsigned secs = e->frames / 60u;
+                snprintf(title, sizeof(title), "%s", e->label);
+                snprintf(detail, sizeof(detail), "%s \xC2\xB7 %u:%02u \xC2\xB7 %s%s", when, secs / 60u, secs % 60u,
+                         ui_text(e->power_on ? "from power-on" : "from a save state"),
+                         e->partial ? ui_text(" \xC2\xB7 not finished") : "");
+            }
+            char id[32];
+            snprintf(id, sizeof(id), "##start%d", i);
+            ImGui::Dummy(ImVec2(0, gap));
+            if (start_row(id, sel == i, true, start_thumb(*e), title, detail,
+                          e->build == LNG_START_BUILD_OTHER ? ui_text("other build") : nullptr,
+                          th, rw))
+                launcher_model_select_start(m, i);
+            ++shown;
+        }
+        if (!shown)
+            start_note(th, ui_text(kind == LNG_START_STATE
+                ? "No save state yet. In the game, the save-state menu (F7) makes one."
+                : "No replay yet. Tick Record replay below, or record in the game (F11)."));
+        const int more = kind == LNG_START_STATE ? m->start_notes.states_unlisted
+                                                 : m->start_notes.replays_unlisted;
+        if (more > 0) {
+            char line[96];
+            snprintf(line, sizeof(line), "%d %s", more, ui_text("older ones are not listed."));
+            start_note(th, line);
+        }
+        if (kind == LNG_START_STATE && m->start_notes.states_elsewhere > 0) {
+            char line[160];
+            snprintf(line, sizeof(line), "%d %s", m->start_notes.states_elsewhere,
+                     ui_text("of the other BIOS or of another program are not listed."));
+            start_note(th, line);
+        }
+    }
+
+    // What the choice means when it is not plain.
+    if (const LauncherStartEntry* e = launcher_model_start_entry(m, sel)) {
+        if (e->build == LNG_START_BUILD_OTHER) {
+            ImGui::Dummy(ImVec2(0, px(6.0f)));
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(col(th.warn), "%s", ui_text(e->kind == LNG_START_STATE
+                ? "Another build made this save state. This build refuses it and starts from power-on."
+                : "Another build made this replay. It may go out of sync."));
+            ImGui::PopTextWrapPos();
+        }
+    }
+    if (count > 0 && !m->start_notes.build_known) {
+        ImGui::Dummy(ImVec2(0, px(6.0f)));
+        start_note(th, ui_text("Not checked: whether this build made them "
+                               "(no overlay_codegen_hash.h beside the game)."));
+    }
+    ImGui::EndChild();
+}
+
 // Width of the memory-card block of the dashboard: two 300-unit cards and
 // their gap. The tabbed dashboard gives it to the controller section too.
 static const float kDashBlockW = 608.0f;
+// The least width of the "Start from" block beside that column.
+static const float kDashStartW = 300.0f;
 
 // The wide dashboard of a console with tabs (ControllerSpec.player_tabs; PSX).
 // The GAME card stands on the left. Beside it, one column as wide as the
 // memory-card block: the controller section and the memory cards, each a strip
-// of tabs over one card. The column is narrower only when the window is.
+// of tabs over one card. The column is narrower only when the window is. The
+// space this leaves on the right is the "Start from" block, as tall as the
+// taller of its two neighbours; in a window without that space the block
+// stands under the memory cards.
 static void draw_dashboard_tabbed(LauncherModel* m, const LauncherTheme& th,
                                   const LauncherPanel* game_p, const LauncherPanel* ctrl_p,
                                   const LauncherPanel* tpak_p, const LauncherPanel* ident_p,
                                   const LauncherPanel* save_p) {
     const float gap = px(th.spacing_md);
+    float game_h = 0.0f;
     if (game_p) {
         g_game_fill_h = false;
         begin_container("dash_l", ImVec2(px(400), 0), ImGuiChildFlags_AutoResizeY);
         game_p->draw(m, &th);
         end_container();
+        game_h = ImGui::GetItemRectSize().y;
         ImGui::SameLine(0, gap);
     }
     const float availw = ImGui::GetContentRegionAvail().x;
     const float block_w = px(kDashBlockW) < availw ? px(kDashBlockW) : availw;
+    const bool start = launcher_model_start_from_available(m) != 0;
+    const bool beside = start && availw >= px(kDashBlockW) + gap + px(kDashStartW);
     begin_container("dash_r", ImVec2(block_w, 0), ImGuiChildFlags_AutoResizeY);
     bool first = true;
     const LauncherPanel* const stack[] = { ctrl_p, tpak_p, ident_p, save_p };
@@ -3979,7 +4218,16 @@ static void draw_dashboard_tabbed(LauncherModel* m, const LauncherTheme& th,
         panel->draw(m, &th);
         first = false;
     }
+    if (start && !beside) {
+        if (!first) ImGui::Dummy(ImVec2(0, gap));
+        draw_start_from(m, th, block_w, 0.0f);
+    }
     end_container();
+    if (beside) {
+        const float col_h = ImGui::GetItemRectSize().y;
+        ImGui::SameLine(0, gap);
+        draw_start_from(m, th, ImGui::GetContentRegionAvail().x, col_h > game_h ? col_h : game_h);
+    }
 }
 
 // The dashboard COMPOSES whichever panels this game's SystemProfile lists in
@@ -4118,6 +4366,10 @@ void draw_dashboard(LauncherModel* m, const LauncherTheme& th, int logical_w) {
         if (tpak_p) { ImGui::Spacing(); tpak_p->draw(m, &th); }
         if (ident_p) { ImGui::Spacing(); ident_p->draw(m, &th); }
         if (save_p) { ImGui::Spacing(); save_p->draw(m, &th); }
+        if (launcher_model_start_from_available(m)) {
+            ImGui::Spacing();
+            draw_start_from(m, th, ImGui::GetContentRegionAvail().x, 0.0f);
+        }
     }
 }
 
@@ -14870,6 +15122,8 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     launcher_input_shutdown();
     launcher_boot_timing_mark("rui:input_closed");
     launcher_texture_free(&g_boxart);
+    for (StartThumb& t : g_start_thumbs) launcher_texture_free(&t.tex);
+    g_start_thumbs.clear();
     launcher_texture_free(&g_pad);
     launcher_texture_free(&g_pad_analog);
     launcher_texture_free(&g_pad_digital);

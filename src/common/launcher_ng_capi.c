@@ -18,6 +18,7 @@
 #include "launcher_settings.h"
 #include "launcher_theme.h"
 #include "launcher_window_size.h"
+#include "consoles/psx/psx_start_from.h"   // "Start from": the lists and the hand-over
 
 #include <stdio.h>
 #include <string.h>
@@ -86,6 +87,17 @@ int recomp_launcher_run_window(const char* window_title,
     launcher_binds_load(&model, game ? game->config_path : NULL,
                                 game ? game->keybinds_path : NULL);
     const RecompLauncherCSettings before = model.s;
+    /* The dashboard's "Start from" block: the title's save states and
+     * replays, read from the product's own folder. */
+    if (launcher_model_start_from_available(&model)) {
+#if defined(LNG_SDL3)
+        psx_start_from_load(&model, SDL_GetBasePath(), NULL);
+#else
+        char* base = SDL_GetBasePath();
+        psx_start_from_load(&model, base, NULL);
+        SDL_free(base);
+#endif
+    }
     launcher_boot_timing_mark("rui:model+binds_ready");
 
     LauncherTheme theme = launcher_theme_by_name(game ? game->theme : NULL);
@@ -116,6 +128,13 @@ int recomp_launcher_run_window(const char* window_title,
          * pending session. */
         memset(&io->netplay_launch, 0, sizeof(io->netplay_launch));
     }
+
+    /* "Start from": PLAY hands the chosen save state or replay to the host
+     * through the start-up variables it reads next. Any other way out, and a
+     * netplay launch, leave no such variable of ours behind. */
+    if (launcher_model_start_from_available(&model))
+        psx_start_from_apply(&model, act != LNG_ACTION_LAUNCH ||
+                                         (io && io->netplay_launch.enabled));
 
     if (act == LNG_ACTION_LAUNCH || act == LNG_ACTION_RELAUNCH) {
         const char* rom = launcher_model_effective_rom_path(&model);
