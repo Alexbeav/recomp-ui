@@ -2503,12 +2503,79 @@ void panel_game_draw(LauncherModel* m, const LauncherTheme* th) {
     draw_game_panel(m, *th, g_game_fill_h);
 }
 
+// A card of the tabbed dashboard is "wide" from this inner width on: its
+// picture then stands to the left of its controls.
+static const float kDashWideCard = 480.0f;
+
+static RuiPlayerTabsLook dash_tabs_look(const LauncherTheme& th) {
+    return {
+        imcol(th.control), imcol(th.control_hovered), imcol(th.panel),
+        imcol(th.border), imcol(th.text_muted), imcol(th.text), imcol(th.accent),
+        imcol(th.good), imcol(th.text_muted),
+        px(34.0f), px(4.0f), px(th.radius_sm),
+    };
+}
+
 // ---- Save module, SAVE_MEMCARD half (PSX) -----------------------------------
 // SAVE_SRAM keeps the compact row above, folded into the GAME card (SNES,
 // unchanged). SAVE_MEMCARD (PSX) is a standalone WIDE dashboard panel (see
 // kPanelsDashboardPsx in launcher_system.h): one sub-section per card slot —
 // icon + path picker (Browse/New) + a real 15-block usage grid, matching PS1
 // memory-card conventions (each card holds 15 save blocks).
+
+// Pieces of one memory-card slot, shared by the slot's two layouts
+// (draw_memcard_slot, and draw_memcard_slot_wide of the tabbed dashboard).
+
+// The slot's name: its file's name, or "Memory Card N" while it has no file.
+static void memcard_slot_name(const LauncherModel* m, int slot, char* out, size_t cap) {
+    const char* mp = m->s.memcard_path[slot];
+    const char* base = mp;
+    for (const char* q = mp; *q; ++q) if (*q == '/' || *q == '\\') base = q + 1;
+    if (base[0]) snprintf(out, cap, "%s", base);
+    else         snprintf(out, cap, "%s %d", ui_text("Memory Card"), slot + 1);
+}
+
+// The 15-block usage strip of one card, at the cursor.
+static void memcard_block_strip(const LauncherTheme& th, uint16_t used) {
+    const int   kB   = 15;
+    const float bgap = px(4.0f);
+    const float availw = ImGui::GetContentRegionAvail().x;
+    float cell = (availw - bgap * (kB - 1)) / (float)kB;
+    if (cell > px(18.0f)) cell = px(18.0f);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    for (int i = 0; i < kB; ++i) {
+        const bool onb = (used & (1u << i)) != 0;
+        const ImVec2 mn(p0.x + i * (cell + bgap), p0.y);
+        const ImVec2 mx(mn.x + cell, mn.y + cell);
+        dl->AddRectFilled(mn, mx, imcol(onb ? th.accent : th.control), px(3.0f));
+        dl->AddRect(mn, mx, imcol(th.border), px(3.0f), 0, px(1.0f));
+    }
+    ImGui::Dummy(ImVec2(cell * kB + bgap * (kB - 1), cell));
+}
+
+// Browse and New of one card slot, side by side, each `bw` wide.
+static void memcard_browse_new(LauncherModel* m, const LauncherTheme& th, int slot,
+                               float bw, float btn_h) {
+    if (ImGui::Button(ui_text("Browse"), ImVec2(bw, btn_h))) {
+        ui_pick_file(m, "Select memory card image", {"*.mcd", "*.mcr", "*.mc"},
+                     "PS1 memory card (.mcd .mcr .mc)",
+                     [m, slot](const char* path) {
+                         if (path) launcher_model_set_memcard_path(m, slot, path);
+                     });
+    }
+    ImGui::SameLine(0, px(th.spacing_sm));
+    if (ImGui::Button(ui_text("New"), ImVec2(bw, btn_h))) {
+        // "New" picks a DESTINATION (the file need not exist yet — a save
+        // dialog, not the open dialog Browse uses), then writes a real,
+        // freshly formatted blank 128KB card there and adopts it.
+        ui_pick_save_file(m, "Create new memory card",
+                          {"*.mcd", "*.mcr", "*.mc"}, "PS1 memory card (.mcd)",
+                          [m, slot](const char* path) {
+                              if (path) launcher_model_new_memcard(m, slot, path);
+                          });
+    }
+}
 
 // One compact memory-card slot: icon + name, inline block count, and Browse/
 // New actions. `probe` (SystemProfile.save.probe) is the host hook that
@@ -2575,12 +2642,8 @@ void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
     }
 
     // Card name, on its own line under the toggle.
-    const char* mp = m->s.memcard_path[slot];
-    const char* base = mp;
-    for (const char* q = mp; *q; ++q) if (*q == '/' || *q == '\\') base = q + 1;
     char label[40];
-    if (base[0]) snprintf(label, sizeof(label), "%s", base);
-    else         snprintf(label, sizeof(label), "%s %d", ui_text("Memory Card"), slot + 1);
+    memcard_slot_name(m, slot, label, sizeof(label));
     ImGui::SetCursorPos(ImVec2(rc_x, top_y + frame_h + px(10.0f)));
     ImGui::PushStyleColor(ImGuiCol_Text, col(enabled ? th.accent : th.text_muted));
     ImGui::TextUnformatted(label);
@@ -2602,23 +2665,7 @@ void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * body_alpha);
 
     // 15-block usage grid, full width under the image.
-    {
-        const int   kB   = 15;
-        const float bgap = px(4.0f);
-        const float availw = ImGui::GetContentRegionAvail().x;
-        float cell = (availw - bgap * (kB - 1)) / (float)kB;
-        if (cell > px(18.0f)) cell = px(18.0f);
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        const ImVec2 p0 = ImGui::GetCursorScreenPos();
-        for (int i = 0; i < kB; ++i) {
-            const bool onb = (used & (1u << i)) != 0;
-            const ImVec2 mn(p0.x + i * (cell + bgap), p0.y);
-            const ImVec2 mx(mn.x + cell, mn.y + cell);
-            dl->AddRectFilled(mn, mx, imcol(onb ? th.accent : th.control), px(3.0f));
-            dl->AddRect(mn, mx, imcol(th.border), px(3.0f), 0, px(1.0f));
-        }
-        ImGui::Dummy(ImVec2(cell * kB + bgap * (kB - 1), cell));
-    }
+    memcard_block_strip(th, used);
 
     // Gap above Browse/New only — bottom inset is Child WindowPadding (same as
     // the top). An extra bottom Dummy doubled the pad and looked top-heavy.
@@ -2633,26 +2680,62 @@ void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
     } else {
         ImGui::Dummy(ImVec2(0, btn_gap));
     }
-    if (ImGui::Button(ui_text("Browse"), ImVec2(bw, btn_h))) {
-        ui_pick_file(m, "Select memory card image", {"*.mcd", "*.mcr", "*.mc"},
-                     "PS1 memory card (.mcd .mcr .mc)",
-                     [m, slot](const char* path) {
-                         if (path) launcher_model_set_memcard_path(m, slot, path);
-                     });
-    }
-    ImGui::SameLine(0, px(th.spacing_sm));
-    if (ImGui::Button(ui_text("New"), ImVec2(bw, btn_h))) {
-        // "New" picks a DESTINATION (the file need not exist yet — a save
-        // dialog, not the open dialog Browse uses), then writes a real,
-        // freshly formatted blank 128KB card there and adopts it.
-        ui_pick_save_file(m, "Create new memory card",
-                          {"*.mcd", "*.mcr", "*.mc"}, "PS1 memory card (.mcd)",
-                          [m, slot](const char* path) {
-                              if (path) launcher_model_new_memcard(m, slot, path);
-                          });
-    }
+    memcard_browse_new(m, th, slot, bw, btn_h);
 
     ImGui::PopStyleVar();  // body_alpha
+    ImGui::PopID();
+}
+
+// One memory card of a tabbed dashboard on a wide card: the card picture on
+// the left; on its right the Enabled box with the file name and the used
+// count, the block strip, and Browse / New at their own width, so that nothing
+// is stretched across the card. A narrow card is draw_memcard_slot.
+static void draw_memcard_slot_wide(LauncherModel* m, const LauncherTheme& th, int slot) {
+    ImGui::PushID(slot);
+
+    const bool enabled = m->s.memcard_enabled[slot] != 0;
+    const uint16_t used = launcher_model_memcard_blocks_used(m, slot);
+    int used_count = 0;
+    for (int i = 0; i < 15; ++i) if (used & (1u << i)) ++used_count;
+
+    const float img_h = px(108.0f);
+    float iw = img_h * (148.0f / 164.0f);
+    const ImVec2 at = ImGui::GetCursorPos();
+    if (g_memcard.w > 0 && g_memcard.h > 0) {
+        iw = g_memcard.w * (img_h / (float)g_memcard.h);
+        ImGui::Image(tid(g_memcard), ImVec2(iw, img_h));
+    } else {
+        ImGui::Dummy(ImVec2(iw, img_h));
+    }
+    ImGui::SetCursorPos(ImVec2(at.x + iw + px(18.0f), at.y));
+    ImGui::BeginGroup();
+
+    bool enabled_box = enabled;
+    if (ImGui::Checkbox(ui_text("Enabled"), &enabled_box))
+        launcher_model_toggle_memcard(m, slot);
+    char label[40];
+    memcard_slot_name(m, slot, label, sizeof(label));
+    ImGui::SameLine(0, px(16.0f));
+    ImGui::TextColored(col(enabled ? th.accent : th.text_muted), "%s", label);
+    char cap[16]; snprintf(cap, sizeof(cap), "%d / 15", used_count);
+    ImGui::SameLine(0, px(12.0f));
+    ImGui::TextColored(col(th.text_muted), "%s", cap);
+    ImGui::Dummy(ImVec2(0, px(4.0f)));
+
+    // Dim the rest when disabled (visual only; Browse / New stay clickable so
+    // the slot can be re-configured while off).
+    const float body_alpha = enabled ? 1.0f : 0.4f;
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * body_alpha);
+    memcard_block_strip(th, used);
+    ImGui::Dummy(ImVec2(0, px(6.0f)));
+    memcard_browse_new(m, th, slot, px(150.0f), px(32.0f));
+    ImGui::PopStyleVar();  // body_alpha
+
+    ImGui::EndGroup();
+    if (ImGui::GetCursorPosY() < at.y + img_h) {
+        ImGui::SetCursorPosY(at.y + img_h);
+        ImGui::Dummy(ImVec2(0, 0));
+    }
     ImGui::PopID();
 }
 
@@ -2694,6 +2777,39 @@ void panel_save_draw(LauncherModel* m, const LauncherTheme* th) {
     const SystemProfile* prof = (const SystemProfile*)m->profile;
     const SaveKind kind = prof ? prof->save.kind : SAVE_NONE;
     if (kind == SAVE_MEMCARD) {
+        if (const int tabs = launcher_model_card_tabs(m)) {
+            // Tabbed dashboard: a strip with one tab per card, and the open
+            // tab's card under it. A tab carries the used count
+            // ("Card 1 · 3/15") and, as its dot, whether the card is enabled,
+            // so nobody has to open a tab to see either.
+            const float avail = ImGui::GetContentRegionAvail().x;
+            char text[2][48];
+            const char* labels[2];
+            bool on[2];
+            for (int slot = 0; slot < tabs; ++slot) {
+                const uint16_t used = launcher_model_memcard_blocks_used(m, slot);
+                int used_count = 0;
+                for (int i = 0; i < 15; ++i) if (used & (1u << i)) ++used_count;
+                snprintf(text[slot], sizeof(text[slot]), "%s %d \xC2\xB7 %d/15",
+                         ui_text("Card"), slot + 1, used_count);
+                labels[slot] = text[slot];
+                on[slot] = m->s.memcard_enabled[slot] != 0;
+            }
+            const int was = launcher_model_card_tab(m);
+            const int open = rui_tab_rows("card_tabs", tabs, was, labels, on, avail,
+                                          dash_tabs_look(*th), tabs, 0);
+            if (open != was) launcher_model_set_card_tab(m, open);
+            begin_container("mc_tab", ImVec2(avail, 0), ImGuiChildFlags_AutoResizeY);
+            if (begin_panel("mcp", avail, false)) {
+                if (ImGui::GetContentRegionAvail().x >= px(kDashWideCard))
+                    draw_memcard_slot_wide(m, *th, open);
+                else
+                    draw_memcard_slot(m, *th, open);
+            }
+            end_panel();
+            end_container();
+            return;
+        }
         // No outer "MEMORY CARDS" card/eyebrow: the small per-slot cards ARE the
         // UI. Fixed width (same as player cards); wider windows add columns
         // instead of stretching the pair across the column.
@@ -3071,9 +3187,12 @@ void panel_tpak_draw(LauncherModel* m, const LauncherTheme* th) {
 // nothing — there's nothing to pick). Hybrid is deliberately absent: it is a
 // mod-only mode a trusted game plugin requests at runtime, never a player
 // choice.
-void pad_mode_selector(LauncherModel* m, const LauncherTheme& th, int p, float w) {
-    struct Seg { int mode; const char* label; };
-    Seg segs[8];
+struct PadModeOpt { int mode; const char* label; };
+enum { kPadModeOptMax = 8 };
+
+// The pad types a player chooses between, for the button row
+// (pad_mode_selector) and for the list (pad_mode_combo). Returns how many.
+static int pad_mode_options(const LauncherModel* m, PadModeOpt* segs) {
     int n = 0;
     // A console with a custom pad-mode list (ControllerSpec.modes, e.g. Genesis
     // 3-Button/6-Button) drives the segments from that list; otherwise the
@@ -3081,7 +3200,7 @@ void pad_mode_selector(LauncherModel* m, const LauncherTheme& th, int p, float w
     const SystemProfile* prof = (const SystemProfile*)m->profile;
     if (prof && prof->controller.modes && prof->controller.mode_count > 0) {
         int mc = prof->controller.mode_count;
-        if (mc > (int)(sizeof(segs) / sizeof(segs[0]))) mc = (int)(sizeof(segs) / sizeof(segs[0]));
+        if (mc > kPadModeOptMax) mc = kPadModeOptMax;
         for (int i = 0; i < mc; ++i)
             segs[n++] = { prof->controller.modes[i].mode, prof->controller.modes[i].label };
     } else {
@@ -3091,11 +3210,25 @@ void pad_mode_selector(LauncherModel* m, const LauncherTheme& th, int p, float w
         if (launcher_model_negcon_mode_available(m))
             segs[n++] = { RECOMP_LAUNCHER_PAD_MODE_NEGCON, "NeGcon" };
     }
+    return n;
+}
 
-    // Keyboard has no analog sticks — Analog is unavailable (PSX modes).
-    const bool kb_digital_only =
-        m->s.player_src[p] == 1 &&
-        !(prof && prof->controller.modes && prof->controller.mode_count > 0);
+// Keyboard has no analog sticks — Analog is unavailable (PSX modes).
+static bool pad_mode_keyboard_is_digital(const LauncherModel* m, int p) {
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    return m->s.player_src[p] == 1 &&
+           !(prof && prof->controller.modes && prof->controller.mode_count > 0);
+}
+
+static const char* kNegconTip =
+    "Namco neGcon for racing games. Twist: left stick. "
+    "I / II: right / left trigger (or Cross / Square). "
+    "A: Circle. B: Triangle. R: R1. L: L1.";
+
+void pad_mode_selector(LauncherModel* m, const LauncherTheme& th, int p, float w) {
+    PadModeOpt segs[kPadModeOptMax];
+    const int n = pad_mode_options(m, segs);
+    const bool kb_digital_only = pad_mode_keyboard_is_digital(m, p);
 
     const float gap = px(4.0f);
     const float seg_w = (w - gap * (n - 1)) / n;
@@ -3124,14 +3257,49 @@ void pad_mode_selector(LauncherModel* m, const LauncherTheme& th, int p, float w
                 launcher_model_set_pad_mode(m, p, segs[i].mode);
             if (segs[i].mode == RECOMP_LAUNCHER_PAD_MODE_NEGCON &&
                 ImGui::IsItemHovered())
-                ImGui::SetTooltip("%s", ui_text(
-                    "Namco neGcon for racing games. Twist: left stick. "
-                    "I / II: right / left trigger (or Cross / Square). "
-                    "A: Circle. B: Triangle. R: R1. L: L1."));
+                ImGui::SetTooltip("%s", ui_text(kNegconTip));
             ImGui::PopStyleColor(4);
         }
         ImGui::PopID();
     }
+}
+
+// The same choice as pad_mode_selector, as a drop-down list `w` wide, for the
+// card of a tabbed dashboard. It calls the same launcher_model_set_pad_mode
+// with the same values. `live` false draws the list closed and greyed with the
+// type the seat has: a title locked to one pad type. A seat with no pad type
+// (a mouse or a light gun, or `typed` false) shows a dash.
+static void pad_mode_combo(LauncherModel* m, int p, float w, bool live,
+                           bool typed = true) {
+    PadModeOpt opts[kPadModeOptMax];
+    const int n = pad_mode_options(m, opts);
+    const bool kb_digital_only = pad_mode_keyboard_is_digital(m, p);
+    // Keyboard is digital at runtime whatever the stored type says; the list
+    // names what the player gets, and leaves the stored value alone.
+    const int shown = kb_digital_only && m->s.pad_mode[p] == 1 ? 2 : m->s.pad_mode[p];
+    const char* preview = "\xE2\x80\x94";
+    if (typed && !launcher_model_source_is_pointer(m->s.player_src[p]))
+        for (int i = 0; i < n; ++i)
+            if (opts[i].mode == shown) preview = opts[i].label;
+    ImGui::SetNextItemWidth(w);
+    if (!live) ImGui::BeginDisabled();
+    if (ImGui::BeginCombo("##padtype", preview)) {
+        for (int i = 0; i < n; ++i) {
+            // Analog needs sticks; grey out on keyboard.
+            const bool disabled = kb_digital_only && opts[i].mode == 1;
+            const bool sel = opts[i].mode == shown;
+            if (disabled) ImGui::BeginDisabled();
+            if (ImGui::Selectable(opts[i].label, sel) && !disabled)
+                launcher_model_set_pad_mode(m, p, opts[i].mode);
+            if (opts[i].mode == RECOMP_LAUNCHER_PAD_MODE_NEGCON &&
+                ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", ui_text(kNegconTip));
+            if (sel) ImGui::SetItemDefaultFocus();
+            if (disabled) ImGui::EndDisabled();
+        }
+        ImGui::EndCombo();
+    }
+    if (!live) ImGui::EndDisabled();
 }
 
 // Each player is its OWN self-contained card ("PLAYER 1" as its eyebrow), not a
@@ -3399,6 +3567,41 @@ static int np_guess_local_seat(const LauncherModel* m) {
     return 0;
 }
 
+// The pad picture of a player card: PSX-style games swap analog/digital art
+// with the mode; consoles without a mode-swap art PAIR (SNES, and Genesis —
+// which has pad modes but a SINGLE pad image) always show the generic
+// g_pad. The swap only happens when the profile actually ships the pair.
+static const LauncherTexture& player_pad_art(const LauncherModel* m, int pad_seat) {
+    const SystemProfile* aprof = (const SystemProfile*)m->profile;
+    const bool has_swap_art = aprof && aprof->controller.image_analog != nullptr;
+    // The art follows the SELECTED mode. The Analog / D-Pad pair right
+    // below this image is a two-state control with no other feedback, so
+    // the pad picture is the answer to "which did I just pick?" — leaving
+    // it on the DualShock while D-Pad is lit reads as a broken control.
+    //
+    // This deliberately replaces the earlier rule (art keyed only to a
+    // game LOCKED to D-Pad, on the reasoning that mode picks a PROTOCOL
+    // and the player is still physically holding a DualShock). Owner
+    // decision: the selector's feedback value wins.
+    //
+    // s.pad_mode already carries the locked value for a non-selectable
+    // title (launcher_model_init), so a locked D-Pad game keeps exactly
+    // the art it showed before. Mode 2 is D-Pad; 1 Analog, 0 Hybrid — both
+    // of those are stick-bearing pads and keep the analog image. A console
+    // with its own mode vocabulary (Genesis 3/6-Button) never reaches here:
+    // it ships a single pad image, so has_swap_art is false.
+    //
+    // Keyboard is digital at runtime whatever the stored mode says (the
+    // Analog segment is greyed out for it), so it shows the digital pad
+    // rather than promising sticks the player does not have.
+    const bool kb_digital =
+        m->s.player_src[pad_seat] == 1 &&
+        !(aprof && aprof->controller.modes && aprof->controller.mode_count > 0);
+    const bool digital =
+        has_swap_art && (kb_digital || m->s.pad_mode[pad_seat] == 2);
+    return has_swap_art ? (digital ? g_pad_digital : g_pad_analog) : g_pad;
+}
+
 void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w) {
     char id[24];  snprintf(id, sizeof(id), "player%d", p);
     char eb[40];
@@ -3424,44 +3627,12 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
         (p == 0 && launcher_model_mouse_pair_available(m)) ? launcher_model_mouse_pair_port(m) : 0;
     const int pad_seat = pair_port ? launcher_model_mouse_pair_pad_seat(m) : p;
 
-    // pad art centered in the card: PSX-style games swap analog/digital art
-    // with the mode; consoles without a mode-swap art PAIR (SNES, and Genesis —
-    // which has pad modes but a SINGLE pad image) always show the generic
-    // g_pad. The swap only happens when the profile actually ships the pair.
+    // pad art centered in the card (player_pad_art picks the picture).
     {
-        const SystemProfile* aprof = (const SystemProfile*)m->profile;
-        const bool has_swap_art = aprof && aprof->controller.image_analog != nullptr;
-        // The art follows the SELECTED mode. The Analog / D-Pad pair right
-        // below this image is a two-state control with no other feedback, so
-        // the pad picture is the answer to "which did I just pick?" — leaving
-        // it on the DualShock while D-Pad is lit reads as a broken control.
-        //
-        // This deliberately replaces the earlier rule (art keyed only to a
-        // game LOCKED to D-Pad, on the reasoning that mode picks a PROTOCOL
-        // and the player is still physically holding a DualShock). Owner
-        // decision: the selector's feedback value wins.
-        //
-        // s.pad_mode already carries the locked value for a non-selectable
-        // title (launcher_model_init), so a locked D-Pad game keeps exactly
-        // the art it showed before. Mode 2 is D-Pad; 1 Analog, 0 Hybrid — both
-        // of those are stick-bearing pads and keep the analog image. A console
-        // with its own mode vocabulary (Genesis 3/6-Button) never reaches here:
-        // it ships a single pad image, so has_swap_art is false.
-        //
-        // Keyboard is digital at runtime whatever the stored mode says (the
-        // Analog segment is greyed out for it), so it shows the digital pad
-        // rather than promising sticks the player does not have.
-        const bool kb_digital =
-            m->s.player_src[pad_seat] == 1 &&
-            !(aprof && aprof->controller.modes && aprof->controller.mode_count > 0);
-        const bool digital =
-            has_swap_art && (kb_digital || m->s.pad_mode[pad_seat] == 2);
-        const LauncherTexture& art = has_swap_art
-            ? (digital ? g_pad_digital : g_pad_analog) : g_pad;
         // Center on the FITTED width so a near-square pad (N64) or a portrait
         // handheld (GB/GBC) sits centered, not left-shifted by the landscape
         // box's spare width.
-        image_fit_centered(art, 120, 78, inner);
+        image_fit_centered(player_pad_art(m, pad_seat), 120, 78, inner);
     }
     ImGui::Dummy(ImVec2(0, px(6)));
 
@@ -3562,27 +3733,183 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
     end_panel();
 }
 
-// One tab per player and the open tab's card under the strip, for a console
-// whose profile asks for tabs (launcher_model_player_tabs). The card is the
-// same draw_player_panel as in the grid below and spans the column, as the
-// card of a one-player title does. A tab carries the card's own "connected"
-// dot, so nobody has to open every tab to see who has a device.
-static void draw_player_tabs(LauncherModel* m, const LauncherTheme& th, int n) {
-    const float availw = ImGui::GetContentRegionAvail().x;
-    bool assigned[LNG_MAX_PLAYERS];
-    for (int p = 0; p < n; ++p) assigned[p] = m->s.player_src[p] != 0;
-    const RuiPlayerTabsLook look = {
-        imcol(th.control), imcol(th.control_hovered), imcol(th.panel),
-        imcol(th.border), imcol(th.text_muted), imcol(th.text), imcol(th.accent),
-        imcol(th.good), imcol(th.text_muted),
-        px(34.0f), px(4.0f), px(th.radius_sm),
+// The controller card of a tabbed dashboard (ControllerSpec.player_tabs). It
+// has the controls of draw_player_panel with two differences. The pad type is
+// a list (Type) beside the device list (Input), not a row of buttons. And on a
+// wide card the pad picture stands to the left of the controls, so that no
+// control is stretched across the card; a narrow card keeps the picture on
+// top. The model calls and the values they store are those of
+// draw_player_panel.
+static void draw_player_card(LauncherModel* m, const LauncherTheme& th, int p, float w) {
+    char id[24];  snprintf(id, sizeof(id), "player%d", p);
+    char eb[40];
+    if (p == 0 && m->netplay_supported) {
+        const int seat = np_guess_local_seat(m);
+        snprintf(eb, sizeof(eb), "%s %d / %s", ui_text("PLAYER"), seat + 1,
+                 ui_text("NETPLAY"));
+    } else {
+        snprintf(eb, sizeof(eb), "%s %d", ui_text("PLAYER"), p + 1);
+    }
+
+    if (!begin_panel(id, w, false)) { end_panel(); return; }
+    ImGui::PushID(p);
+    eyebrow(eb);
+
+    const float inner = ImGui::GetContentRegionAvail().x;
+    const float gap   = px(th.spacing_sm);
+    const bool  wide  = inner >= px(kDashWideCard);
+
+    // PS1 Mouse + pad (PS1B-279), as in draw_player_panel: while Player 1 of a
+    // one-card title holds the mouse, this card owns both ports.
+    const int pair_port =
+        (p == 0 && launcher_model_mouse_pair_available(m)) ? launcher_model_mouse_pair_port(m) : 0;
+    const int pad_seat = pair_port ? launcher_model_mouse_pair_pad_seat(m) : p;
+    const bool primary = p == 0 && launcher_model_mouse_pair_available(m);
+
+    float cw = inner;        // width of the controls
+    float art_bottom = 0.0f; // wide: where the picture ends
+    if (wide) {
+        const float art_w = px(132.0f), art_gap = px(18.0f);
+        const ImVec2 at = ImGui::GetCursorPos();
+        image_fit_centered(player_pad_art(m, pad_seat), 132, 86, art_w);
+        art_bottom = at.y + px(86.0f);
+        ImGui::SetCursorPos(ImVec2(at.x + art_w + art_gap, at.y));
+        cw = inner - art_w - art_gap;
+        ImGui::BeginGroup();
+    } else {
+        image_fit_centered(player_pad_art(m, pad_seat), 120, 78, inner);
+        ImGui::Dummy(ImVec2(0, px(6)));
+    }
+
+    // Two lists side by side under their names: Type and Input. A console
+    // without pad types has the Input list alone.
+    const bool  show_type = m->pad_mode_supported != 0;
+    const float type_w = !show_type ? 0.0f : wide ? px(150.0f) : (cw - gap) * 0.4f;
+    float src_w = show_type ? cw - gap - type_w : cw;
+    if (wide && src_w > px(300.0f)) src_w = px(300.0f);
+    auto names = [&](const char* input_name) {
+        const float x0 = ImGui::GetCursorPosX();
+        if (show_type) {
+            ImGui::TextColored(col(th.text_muted), "%s", ui_text("Type"));
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(x0 + type_w + gap);
+        }
+        ImGui::TextColored(col(th.text_muted), "%s", input_name);
     };
-    const int was = launcher_model_player_tab(m);
-    const int open = rui_player_tabs(n, was, assigned, availw, look,
-                                     ui_text("Player"), ui_text("P"));
-    if (open != was) launcher_model_set_player_tab(m, open);
+
+    names(ui_text("Input"));
+    if (show_type) {
+        // A mouse or light-gun seat has no pad type to choose (next to the
+        // mouse, the pad's type is on the pad's own row below).
+        pad_mode_combo(m, p, type_w,
+                       !pair_port && m->pad_mode_selectable &&
+                           !launcher_model_source_is_pointer(m->s.player_src[p]),
+                       !pair_port);
+        ImGui::SameLine(0, gap);
+    }
+    ImGui::SetNextItemWidth(src_w);
+    if (ImGui::BeginCombo("##src", ui_text(pair_port ? "PS1 Mouse"
+                                                     : launcher_model_player_src_label(m, p)))) {
+        draw_source_selectables(m, p, primary ? kPickPrimary : kPickSeat);
+        ImGui::EndCombo();
+    }
+    if (pair_port) {
+        // Which port the mouse is in: Syndicate Wars reads it in port 1,
+        // Quake II and Final Doom in port 2 (pad in port 1).
+        ImGui::Dummy(ImVec2(0, px(4)));
+        const float seg_gap = px(4.0f);
+        const float seg_w = (cw - seg_gap) * 0.5f;
+        for (int port = 1; port <= 2; ++port) {
+            if (port > 1) ImGui::SameLine(0, seg_gap);
+            const bool sel = pair_port == port;
+            char lbl[48];
+            std::snprintf(lbl, sizeof(lbl), "%s %d##mouseport", ui_text("Mouse in port"), port);
+            ImGui::PushID(port);
+            ImGui::PushStyleColor(ImGuiCol_Button, sel ? col(th.accent) : col(th.control));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, sel ? col(th.accent) : col(th.control_hovered));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, col(th.accent));
+            ImGui::PushStyleColor(ImGuiCol_Text, sel ? col(th.accent_text) : col(th.text));
+            if (ImGui::Button(lbl, ImVec2(seg_w, px(28)))) {
+                launcher_model_set_mouse_pair_port(m, port);
+                launcher_binds_refresh(m);
+            }
+            ImGui::PopStyleColor(4);
+            ImGui::PopID();
+        }
+        ImGui::Dummy(ImVec2(0, px(4)));
+        // The pad (or keyboard) in the other port, for the same player.
+        char pad_name[48];
+        std::snprintf(pad_name, sizeof(pad_name), "%s %d", ui_text("Controller in port"), pad_seat + 1);
+        names(pad_name);
+        ImGui::PushID("pairpad");
+        if (show_type) {
+            pad_mode_combo(m, pad_seat, type_w,
+                           m->pad_mode_selectable && m->s.player_src[pad_seat] != 0);
+            ImGui::SameLine(0, gap);
+        }
+        ImGui::SetNextItemWidth(src_w);
+        if (ImGui::BeginCombo("##pairpad",
+                              ui_text(launcher_model_player_src_label(m, pad_seat)))) {
+            draw_source_selectables(m, pad_seat, kPickPadOnly);
+            ImGui::EndCombo();
+        }
+        ImGui::PopID();
+    }
+    ImGui::Dummy(ImVec2(0, px(6)));
+    // Configure and the connection state on one row. (Analog-stick deadzone
+    // lives on the Configure page's per-player Deadzone stepper.)
+    {
+        const float btnh = px(32);
+        const float btnw = wide ? px(150.0f) : (cw - gap) * 0.5f;
+        if (ImGui::Button(ui_text("Configure"), ImVec2(btnw, btnh)))
+            launcher_model_open_config(m, pad_seat);
+        ImGui::SameLine(0, wide ? px(16.0f) : gap);
+        const bool on = pair_port || m->s.player_src[p] != 0;
+        const char* st = ui_text(on ? "connected" : "not assigned");
+        if (!wide) {
+            // center the dot+label within the right half
+            const float sw = px(10) + px(8) + ImGui::CalcTextSize(st).x;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (btnw - sw) * 0.5f);
+        }
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (btnh - ImGui::GetTextLineHeight()) * 0.5f);
+        draw_dot(on, th.good, th.text_muted);
+        ImGui::TextColored(on ? col(th.good) : col(th.text_muted), "%s", st);
+    }
+    // Controller pak, under Configure, for a console whose pads take one.
+    if (p < launcher_model_pak_ports(m)) {
+        ImGui::Dummy(ImVec2(0, px(6)));
+        pak_kind_picker(m, p, cw);
+    }
+    if (wide) {
+        ImGui::EndGroup();
+        if (ImGui::GetCursorPosY() < art_bottom) {
+            ImGui::SetCursorPosY(art_bottom);
+            ImGui::Dummy(ImVec2(0, 0));
+        }
+    }
+    ImGui::PopID();
+    end_panel();
+}
+
+// The controller section of a tabbed dashboard: from two players on, one tab
+// per player (players 5 to 8 in a second row) and the open tab's card under
+// the strip; one card and no strip for a one-player title. A tab carries the
+// card's own "connected" dot, so nobody has to open every tab to see who has a
+// device. The section is as wide as its column, which the dashboard makes as
+// wide as the memory-card block.
+static void draw_player_tabs(LauncherModel* m, const LauncherTheme& th) {
+    const float availw = ImGui::GetContentRegionAvail().x;
+    int open = 0;
+    if (const int n = launcher_model_player_tabs(m)) {
+        bool assigned[LNG_MAX_PLAYERS];
+        for (int p = 0; p < n; ++p) assigned[p] = m->s.player_src[p] != 0;
+        const int was = launcher_model_player_tab(m);
+        open = rui_player_tabs(n, was, assigned, availw, dash_tabs_look(th),
+                               ui_text("Player"));
+        if (open != was) launcher_model_set_player_tab(m, open);
+    }
     begin_container("pc_tab", ImVec2(availw, 0), ImGuiChildFlags_AutoResizeY);
-    draw_player_panel(m, th, open, availw);
+    draw_player_card(m, th, open, availw);
     end_container();
 }
 
@@ -3591,8 +3918,8 @@ static void draw_player_tabs(LauncherModel* m, const LauncherTheme& th, int n) {
 // stay fixed-width via dash_card_width).
 void draw_controllers_row(LauncherModel* m, const LauncherTheme& th) {
     if (m->lock_device) return;   // fixed pad: hide the player controller cards entirely
-    if (const int tabs = launcher_model_player_tabs(m)) {
-        draw_player_tabs(m, th, tabs);
+    if (launcher_model_dashboard_tabbed(m)) {
+        draw_player_tabs(m, th);
         return;
     }
     int n = launcher_model_visible_player_count(m);
@@ -3619,6 +3946,40 @@ void draw_controllers_row(LauncherModel* m, const LauncherTheme& th) {
 
 void panel_controller_draw(LauncherModel* m, const LauncherTheme* th) {
     draw_controllers_row(m, *th);
+}
+
+// Width of the memory-card block of the dashboard: two 300-unit cards and
+// their gap. The tabbed dashboard gives it to the controller section too.
+static const float kDashBlockW = 608.0f;
+
+// The wide dashboard of a console with tabs (ControllerSpec.player_tabs; PSX).
+// The GAME card stands on the left. Beside it, one column as wide as the
+// memory-card block: the controller section and the memory cards, each a strip
+// of tabs over one card. The column is narrower only when the window is.
+static void draw_dashboard_tabbed(LauncherModel* m, const LauncherTheme& th,
+                                  const LauncherPanel* game_p, const LauncherPanel* ctrl_p,
+                                  const LauncherPanel* tpak_p, const LauncherPanel* ident_p,
+                                  const LauncherPanel* save_p) {
+    const float gap = px(th.spacing_md);
+    if (game_p) {
+        g_game_fill_h = false;
+        begin_container("dash_l", ImVec2(px(400), 0), ImGuiChildFlags_AutoResizeY);
+        game_p->draw(m, &th);
+        end_container();
+        ImGui::SameLine(0, gap);
+    }
+    const float availw = ImGui::GetContentRegionAvail().x;
+    const float block_w = px(kDashBlockW) < availw ? px(kDashBlockW) : availw;
+    begin_container("dash_r", ImVec2(block_w, 0), ImGuiChildFlags_AutoResizeY);
+    bool first = true;
+    const LauncherPanel* const stack[] = { ctrl_p, tpak_p, ident_p, save_p };
+    for (const LauncherPanel* panel : stack) {
+        if (!panel || (panel == ctrl_p && m->lock_device)) continue;
+        if (!first) ImGui::Dummy(ImVec2(0, gap));
+        panel->draw(m, &th);
+        first = false;
+    }
+    end_container();
 }
 
 // The dashboard COMPOSES whichever panels this game's SystemProfile lists in
@@ -3653,17 +4014,17 @@ void draw_dashboard(LauncherModel* m, const LauncherTheme& th, int logical_w) {
         // controller cards — so N64 takes the ordinary else-branch below and
         // the fill-to-height columns are back for it too.
         const bool has_save = (save_p != nullptr);
-        if (has_save) {
+        if (has_save && launcher_model_dashboard_tabbed(m)) {
+            draw_dashboard_tabbed(m, th, game_p, ctrl_p, tpak_p, ident_p, save_p);
+        } else if (has_save) {
             // Capture body height before the row so multitap can grow the right
             // column to the footer.
             const float row_h = ImGui::GetContentRegionAvail().y;
             // 2P: AutoResizeY the right column so hug-height memcards (with
             // even Browse/New pad) are never clipped by a boxart-height cap.
             // Multitap (3+): fill to footer and scroll controllers when they
-            // would crush the save band. Not when the cards are tabs: the
-            // section is then one card high whatever the player count.
-            const bool many_players = launcher_model_visible_player_count(m) > 2 &&
-                                      !launcher_model_player_tabs(m);
+            // would crush the save band.
+            const bool many_players = launcher_model_visible_player_count(m) > 2;
             if (game_p) {
                 g_game_fill_h = false;
                 begin_container("dash_l", ImVec2(px(400), 0), ImGuiChildFlags_AutoResizeY);
