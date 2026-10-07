@@ -30,6 +30,7 @@
 #include "imgui.h"
 #include "launcher_nav.h"
 #include "launcher_pad_nav.h"     // pad buttons held when pad nav starts
+#include "launcher_player_tabs.h" // one tab per player over the controller card
 #if defined(LNG_SDL3)
   #include "imgui_impl_sdl3.h"
   #define LNG_ImplSDL_InitForOpenGL  ImGui_ImplSDL3_InitForOpenGL
@@ -3561,11 +3562,39 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
     end_panel();
 }
 
+// One tab per player and the open tab's card under the strip, for a console
+// whose profile asks for tabs (launcher_model_player_tabs). The card is the
+// same draw_player_panel as in the grid below and spans the column, as the
+// card of a one-player title does. A tab carries the card's own "connected"
+// dot, so nobody has to open every tab to see who has a device.
+static void draw_player_tabs(LauncherModel* m, const LauncherTheme& th, int n) {
+    const float availw = ImGui::GetContentRegionAvail().x;
+    bool assigned[LNG_MAX_PLAYERS];
+    for (int p = 0; p < n; ++p) assigned[p] = m->s.player_src[p] != 0;
+    const RuiPlayerTabsLook look = {
+        imcol(th.control), imcol(th.control_hovered), imcol(th.panel),
+        imcol(th.border), imcol(th.text_muted), imcol(th.text), imcol(th.accent),
+        imcol(th.good), imcol(th.text_muted),
+        px(34.0f), px(4.0f), px(th.radius_sm),
+    };
+    const int was = launcher_model_player_tab(m);
+    const int open = rui_player_tabs(n, was, assigned, availw, look,
+                                     ui_text("Player"), ui_text("P"));
+    if (open != was) launcher_model_set_player_tab(m, open);
+    begin_container("pc_tab", ImVec2(availw, 0), ImGuiChildFlags_AutoResizeY);
+    draw_player_panel(m, th, open, availw);
+    end_container();
+}
+
 // Lays out player cards: stretch to fill the row until there is room for
 // another card at the standard width, then bump the column count (memcards
 // stay fixed-width via dash_card_width).
 void draw_controllers_row(LauncherModel* m, const LauncherTheme& th) {
     if (m->lock_device) return;   // fixed pad: hide the player controller cards entirely
+    if (const int tabs = launcher_model_player_tabs(m)) {
+        draw_player_tabs(m, th, tabs);
+        return;
+    }
     int n = launcher_model_visible_player_count(m);
     if (n < 1) n = 1;
     if (n > LNG_MAX_PLAYERS) n = LNG_MAX_PLAYERS;
@@ -3631,8 +3660,10 @@ void draw_dashboard(LauncherModel* m, const LauncherTheme& th, int logical_w) {
             // 2P: AutoResizeY the right column so hug-height memcards (with
             // even Browse/New pad) are never clipped by a boxart-height cap.
             // Multitap (3+): fill to footer and scroll controllers when they
-            // would crush the save band.
-            const bool many_players = launcher_model_visible_player_count(m) > 2;
+            // would crush the save band. Not when the cards are tabs: the
+            // section is then one card high whatever the player count.
+            const bool many_players = launcher_model_visible_player_count(m) > 2 &&
+                                      !launcher_model_player_tabs(m);
             if (game_p) {
                 g_game_fill_h = false;
                 begin_container("dash_l", ImVec2(px(400), 0), ImGuiChildFlags_AutoResizeY);

@@ -715,4 +715,16 @@ if(BUILD_TESTING)
     target_include_directories(recomp-ui-launcher-pad-nav-test PRIVATE
         src/common/backends/imgui src/third_party/imgui)
     add_test(NAME recomp-ui-launcher-pad-nav COMMAND $<TARGET_FILE:recomp-ui-launcher-pad-nav-test>)
+    # The dashboard's player tab strip: one tab per player, opened by a click,
+    # by activate on the focused tab, or by L1 / R1.
+    add_executable(recomp-ui-launcher-player-tabs-strip-test
+        tests/launcher_player_tabs_strip_test.cpp
+        src/third_party/imgui/imgui.cpp
+        src/third_party/imgui/imgui_draw.cpp
+        src/third_party/imgui/imgui_tables.cpp
+        src/third_party/imgui/imgui_widgets.cpp)
+    target_include_directories(recomp-ui-launcher-player-tabs-strip-test PRIVATE
+        src/common/backends/imgui src/third_party/imgui)
+    add_test(NAME recomp-ui-launcher-player-tabs-strip
+             COMMAND $<TARGET_FILE:recomp-ui-launcher-player-tabs-strip-test>)
 endif()

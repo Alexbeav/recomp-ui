@@ -43,7 +43,9 @@ The System is the **template**; the Game **refines** it.
   analog/digital (swaps the image, gated by `allow_hybrid`), or a **custom mode
   list** (`ControllerSpec.modes`, e.g. Genesis **3-Button / 6-Button**) where
   the selected mode's `button_count` also sets how many rebind rows show
-  (3-Button hides X/Y/Z/Mode).
+  (3-Button hides X/Y/Z/Mode). Optional `player_tabs` (PSX, whose dashboard
+  also carries the memory cards): from two players on, one tab per player and
+  one card under the strip, instead of the grid.
 - **Binds:** the game-pad buttons are rebound on a **page reached from the
   Controller panel's Configure** (controller view). Per-system base button set.
   A console can set `has_pad_binds` to add a second **GAMEPAD** chip per row
