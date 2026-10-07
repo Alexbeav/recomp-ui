@@ -2088,22 +2088,24 @@ void draw_disc_selector(LauncherModel* m, const LauncherTheme& th, float availw,
         }
     };
     if (inset) {
+        // Drawn on the panel itself, not in a child window of its own, so
+        // that the pad reaches the list as it reaches the Browse button.
         ImGui::Dummy(ImVec2(0, px(10)));
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, col(th.panel_hovered));
-        ImGui::PushStyleColor(ImGuiCol_Border, col(th.border));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(px(12), px(10)));
-        if (ImGui::BeginChild("disc_to_boot", ImVec2(availw, 0),
-                              ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY,
-                              ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-            // One row: the name, then the list in what is left of the inset.
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextColored(col(th.text_muted), "%s", ui_text("Disc to boot"));
-            ImGui::SameLine(0, px(12));
-            list(ImGui::GetContentRegionAvail().x);
-        }
-        ImGui::EndChild();
-        ImGui::PopStyleVar();
-        ImGui::PopStyleColor(2);
+        const float pad_x = px(12), pad_y = px(8);
+        const float h = ImGui::GetFrameHeight() + pad_y * 2.0f;
+        const ImVec2 at = ImGui::GetCursorPos();
+        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+        const ImVec2 p1(p0.x + availw, p0.y + h);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(p0, p1, imcol(th.panel_hovered), ImGui::GetStyle().ChildRounding);
+        dl->AddRect(p0, p1, imcol(th.border), ImGui::GetStyle().ChildRounding, 0, px(1.0f));
+        ImGui::SetCursorPos(ImVec2(at.x + pad_x, at.y + pad_y));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(col(th.text_muted), "%s", ui_text("Disc to boot"));
+        ImGui::SameLine(0, px(12));
+        list(at.x + availw - pad_x - ImGui::GetCursorPosX());
+        ImGui::SetCursorPos(ImVec2(at.x, at.y + h));
+        ImGui::Dummy(ImVec2(availw, 0));
         return;
     }
     ImGui::TextColored(col(th.text_muted), "%s", ui_text("Disc Selection"));
