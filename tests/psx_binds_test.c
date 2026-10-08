@@ -143,6 +143,38 @@ int main(int argc, char **argv)
                 "a refused load leaves every player unchanged");
         require(rui_psx_binds_load_profile(path, 0, "no-such-profile.ini") == 0,
                 "a missing file is refused");
+
+        /* Save Profile: one player's keys as a file that Load Profile takes
+         * back, for any player. Player 2 holds Cross = Mouse1, Triangle = R, F. */
+        {
+            char saved[1024];
+            snprintf(saved, sizeof(saved), "%s.saved.ini", path);
+            remove(saved);
+            require(rui_psx_binds_is_default(path, 0) == 0 &&
+                    rui_psx_binds_is_default(path, 2) == 1,
+                    "the default map is told from a changed one");
+            require(rui_psx_binds_matches_profile(path, 1, profile) == 1 &&
+                    rui_psx_binds_matches_profile(path, 0, profile) == 0 &&
+                    rui_psx_binds_matches_profile(path, 1, foreign) == 0,
+                    "a player's keys are compared with a profile file");
+            require(rui_psx_binds_save_profile(path, 1, saved) == 1,
+                    "a player's keys are saved as a profile");
+            require(file_contains(saved, "[player1]\n") && !file_contains(saved, "[player2]") &&
+                    file_contains(saved, "cross     = Mouse1\n") &&
+                    file_contains(saved, "triangle  = R, F\n"),
+                    "the saved profile is one [player1] section of key names");
+            require(rui_psx_binds_get_slot(path, 2, TEST_CROSS, 0) != TEST_MOUSE1 &&
+                    rui_psx_binds_load_profile(path, 2, saved) == 1 &&
+                    rui_psx_binds_get_slot(path, 2, TEST_CROSS, 0) == TEST_MOUSE1 &&
+                    rui_psx_binds_get_slot(path, 2, TEST_TRIANGLE, 1) == TEST_KEY_F,
+                    "a profile saved from Player 2 loads onto Player 3");
+            require(rui_psx_binds_matches_profile(path, 2, saved) == 1,
+                    "and then holds that player's keys");
+            require(rui_psx_binds_save_profile(path, 9, saved) == 0 &&
+                    rui_psx_binds_save_profile(path, 0, "") == 0,
+                    "a player or a file that is not there saves nothing");
+            remove(saved);
+        }
         remove(profile);
         remove(foreign);
     }
