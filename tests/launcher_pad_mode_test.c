@@ -225,7 +225,108 @@ static void test_genesis_custom_mode_list(void) {
     free(m);
 }
 
+/* ---- every seat owns its pad type ---------------------------------------- */
+/* A Multitap title draws a pad type row on the card of every seat. The row of
+ * seat N must set seat N: the setter once clamped the seat to the first two,
+ * so the rows of players 3 to 8 changed Player 2 and their own seat could not
+ * be set at all. */
+static LauncherModel* multitap_session(int genesis, int players) {
+    static RecompLauncherCGameInfo game;
+    static RecompLauncherCSettings io;
+    LauncherModel* m = (LauncherModel*)calloc(1, sizeof(LauncherModel));
+    if (!m) { fprintf(stderr, "FAIL: out of memory\n"); ++fails; return NULL; }
+
+    memset(&game, 0, sizeof(game));
+    if (genesis) launcher_profile_apply_genesis(&game);
+    else launcher_profile_apply_psx(&game);
+    game.name = "Seat Fixture";
+    game.num_players = players;
+    game.pad_mode_selectable = 1;
+
+    memset(&io, 0, sizeof(io));
+    io.multitap_enabled = 1;
+    for (int p = 0; p < RECOMP_LAUNCHER_MAX_PLAYERS; ++p) {
+        io.player_src[p] = SRC_GAMEPAD;
+        io.pad_mode[p] = genesis ? 0 : PSX_ANALOG;
+    }
+
+    launcher_model_init(m, &io, &game, NULL);
+    return m;
+}
+
+static void test_pad_type_row_sets_its_own_seat(void) {
+    for (int seat = 0; seat < RECOMP_LAUNCHER_MAX_PLAYERS; ++seat) {
+        LauncherModel* m = multitap_session(0, RECOMP_LAUNCHER_MAX_PLAYERS);
+        char what[96];
+        if (!m) return;
+        launcher_model_set_pad_mode(m, seat, PSX_DIGITAL);
+        for (int q = 0; q < RECOMP_LAUNCHER_MAX_PLAYERS; ++q) {
+            snprintf(what, sizeof(what), "D-Pad on Player %d's card: Player %d is %s",
+                     seat + 1, q + 1, q == seat ? "D-Pad" : "still Analog");
+            expect_mode(m, q, q == seat ? PSX_DIGITAL : PSX_ANALOG, what);
+        }
+        free(m);
+    }
+}
+
+static void test_the_two_clicks_of_the_report(void) {
+    /* Four players, Multitap on: D-Pad on Player 4's card, then NeGcon on
+     * Player 3's card. Player 2 was the one that changed. */
+    LauncherModel* m = multitap_session(0, 4);
+    if (!m) return;
+    launcher_model_set_pad_mode(m, 3, PSX_DIGITAL);
+    launcher_model_set_pad_mode(m, 2, RECOMP_LAUNCHER_PAD_MODE_NEGCON);
+    expect_mode(m, 0, PSX_ANALOG, "Player 1 is untouched");
+    expect_mode(m, 1, PSX_ANALOG, "Player 2 is untouched");
+    expect_mode(m, 2, RECOMP_LAUNCHER_PAD_MODE_NEGCON, "Player 3 is the NeGcon");
+    expect_mode(m, 3, PSX_DIGITAL, "Player 4 is the D-Pad");
+    free(m);
+}
+
+static void test_keyboard_rule_reads_the_seat_itself(void) {
+    /* "A keyboard has no sticks" is a rule about the seat the row is on. */
+    LauncherModel* m = multitap_session(0, 4);
+    if (!m) return;
+    /* Player 2 on a pad set to D-Pad, Player 3 on the keyboard. */
+    launcher_model_set_pad_mode(m, 1, PSX_DIGITAL);
+    launcher_model_set_source(m, 2, SRC_KEYBOARD, 0, NULL, NULL);
+    expect_mode(m, 2, PSX_DIGITAL, "Player 3 on the keyboard presents D-Pad");
+    launcher_model_set_pad_mode(m, 2, PSX_ANALOG);
+    expect_mode(m, 2, PSX_DIGITAL, "Player 3 on the keyboard refuses Analog");
+    expect_mode(m, 1, PSX_DIGITAL, "and the refused pick does not land on Player 2");
+    /* Player 2 on the keyboard does not stop Player 4's pad. */
+    launcher_model_set_source(m, 1, SRC_KEYBOARD, 0, NULL, NULL);
+    launcher_model_set_pad_mode(m, 3, PSX_DIGITAL);
+    expect_mode(m, 3, PSX_DIGITAL, "Player 4's pad takes D-Pad");
+    launcher_model_set_pad_mode(m, 3, PSX_ANALOG);
+    expect_mode(m, 3, PSX_ANALOG,
+                "and Analog again, while Player 2 is on the keyboard");
+    free(m);
+}
+
+static void test_genesis_seats_three_and_four(void) {
+    /* A console with its own mode list goes through the same setter, and the
+     * rows its Controls page shows follow the mode of the seat it is on. */
+    LauncherModel* m = multitap_session(1, 4);
+    if (!m) return;
+    launcher_model_set_pad_mode(m, 2, 1);
+    expect_mode(m, 2, 1, "Genesis Player 3 takes 6-Button");
+    expect_mode(m, 1, 0, "Genesis Player 2 keeps 3-Button");
+    expect(launcher_model_active_button_count(m, 2) == kGenesisPadModes[1].button_count,
+           "Genesis Player 3's page shows the 6-Button rows");
+    expect(launcher_model_active_button_count(m, 1) == kGenesisPadModes[0].button_count,
+           "Genesis Player 2's page shows the 3-Button rows");
+    launcher_model_set_pad_mode(m, 1, 1);
+    expect(launcher_model_active_button_count(m, 3) == kGenesisPadModes[0].button_count,
+           "Genesis Player 4's page does not follow Player 2's mode");
+    free(m);
+}
+
 int main(void) {
+    test_pad_type_row_sets_its_own_seat();
+    test_the_two_clicks_of_the_report();
+    test_keyboard_rule_reads_the_seat_itself();
+    test_genesis_seats_three_and_four();
     test_locked_analog_keyboard_seat();
     test_locked_analog_poisoned_settings();
     test_locked_digital_still_digital();
