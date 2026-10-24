@@ -148,7 +148,7 @@ static long lm_file_size(FILE* f) {
 static void lm_write_zero_padding(FILE* f, long count) {
     static const unsigned char zeros[256] = {0};
     while (count > 0) {
-        size_t n = (size_t)(count > (long)sizeof(zeros) ? sizeof(zeros) : count);
+        size_t n = count > (long)sizeof(zeros) ? sizeof(zeros) : (size_t)count;
         fwrite(zeros, 1, n, f);
         count -= (long)n;
     }
@@ -2000,7 +2000,8 @@ int launcher_model_start_count(const LauncherModel* m) {
 }
 
 const LauncherStartEntry* launcher_model_start_entry(const LauncherModel* m, int idx) {
-    if (idx < 0 || idx >= launcher_model_start_count(m)) return NULL;
+    if (!m || (unsigned)idx >= (unsigned)LNG_START_MAX) return NULL;
+    if (idx >= launcher_model_start_count(m)) return NULL;
     return &m->start_entries[idx];
 }
 
@@ -5510,7 +5511,7 @@ void launcher_model_cancel_camera_capture(LauncherModel* m) {
 }
 
 const char* launcher_model_scale_label(const LauncherModel* m) {
-    static char buf[8];
+    static char buf[16];
     int s = m->s.window_scale < 1 ? 1 : m->s.window_scale;
     snprintf(buf, sizeof(buf), "%dx", s);
     return buf;
