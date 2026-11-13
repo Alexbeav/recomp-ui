@@ -51,12 +51,25 @@ static int h_disc_insert(int n) { if (g_netplay) return 3; g_inserted = n; retur
 static void h_game_info(RecompLauncherCGameInfo *gi) { (void)gi; }
 #if defined(PSX_MENU_HOST_HAS_SESSION)
 static int g_scale = 2, g_volume = 80, g_port = 0, g_reinserts = 0, g_fullscreen_host = 0, g_port_ok = 1;
+#if defined(PSX_MENU_HOST_HAS_LOOK_ROWS)
+static int g_look[32];
+static int look_row(int s) { return s >= PSX_MENU_SESSION_RESTART_GAME && s <= PSX_MENU_SESSION_DITHERING; }
+static int look_at_restart(int s) {
+    return s == PSX_MENU_SESSION_PGXP || s == PSX_MENU_SESSION_CRT_FILTER || s == PSX_MENU_SESSION_VSYNC;
+}
+#endif
 static int h_sess_enabled(int s) {
     if (s == PSX_MENU_SESSION_WINDOW_SCALE) return !g_fullscreen_host;
     if (s == PSX_MENU_SESSION_CONTROLLER_PORT) return g_port_ok;
+#if defined(PSX_MENU_HOST_HAS_LOOK_ROWS)
+    if (s == PSX_MENU_SESSION_RESTART_GAME) return !g_netplay;
+#endif
     return 1;
 }
 static int h_sess_get(int s, int *o) {
+#if defined(PSX_MENU_HOST_HAS_LOOK_ROWS)
+    if (look_row(s)) { *o = g_look[s]; return 1; }
+#endif
     if (s == PSX_MENU_SESSION_WINDOW_SCALE) *o = g_scale;
     else if (s == PSX_MENU_SESSION_VOLUME) *o = g_volume;
     else if (s == PSX_MENU_SESSION_CONTROLLER_PORT) *o = g_port;
@@ -65,6 +78,9 @@ static int h_sess_get(int s, int *o) {
 }
 static int h_sess_set(int s, int v) {
     if (!h_sess_enabled(s)) return 0;
+#if defined(PSX_MENU_HOST_HAS_LOOK_ROWS)
+    if (look_row(s)) { g_look[s] = v; return look_at_restart(s) ? PSX_MENU_SESSION_AT_RESTART : 1; }
+#endif
     if (s == PSX_MENU_SESSION_WINDOW_SCALE) g_scale = v;
     else if (s == PSX_MENU_SESSION_VOLUME) g_volume = v;
     else if (s == PSX_MENU_SESSION_CONTROLLER_PORT) g_port = v;
@@ -232,6 +248,47 @@ int main() {
     CHECK(go("Disc", "media.reinsert"));
     in(A);
     CHECK(g_reinserts == 1 && !p->is_open(p->ctx));
+#if defined(PSX_MENU_HOST_HAS_LOOK_ROWS)
+    // Live look rows apply without a relaunch.
+    g_exit = -1;
+    in(T);
+    CHECK(go("Graphics", "graphics.internal_resolution"));
+    in(R);
+    CHECK(g_look[PSX_MENU_SESSION_INTERNAL_RESOLUTION] == 1);
+    CHECK(go("Display", "display.dithering"));
+    in(R);
+    CHECK(g_look[PSX_MENU_SESSION_DITHERING] == 1);
+    CHECK(go("Display", "display.texture_filtering"));
+    in(R); in(R);
+    CHECK(g_look[PSX_MENU_SESSION_TEXTURE_FILTERING] == 2);
+    if (rui_psx::model()->in_section) in(B);
+    in(B);
+    CHECK(!p->is_open(p->ctx) && g_exit == -1);
+    // A restart-only row (PGXP) relaunches when the menu closes.
+    in(T);
+    CHECK(go("Graphics", "graphics.pgxp"));
+    in(R);
+    CHECK(g_look[PSX_MENU_SESSION_PGXP] == 1);
+    in(T);
+    CHECK(!p->is_open(p->ctx) && g_exit == PSX_MENU_EXIT_RELAUNCH);
+    g_exit = -1;
+    // Restart game asks twice, and is refused online.
+    in(T);
+    CHECK(go("System", "system.restart_game"));
+    in(A);
+    CHECK(p->is_open(p->ctx) && g_exit == -1);
+    in(A);
+    CHECK(!p->is_open(p->ctx) && g_exit == PSX_MENU_EXIT_RELAUNCH);
+    g_exit = -1;
+    g_netplay = 1;
+    in(T);
+    CHECK(go("System", "system.restart_game"));
+    in(A); in(A);
+    CHECK(g_exit == -1);
+    in(T);
+    g_netplay = 0;
+    CHECK(!p->is_open(p->ctx));
+#endif
 #endif
 
     // Detach while open drops the pause.
