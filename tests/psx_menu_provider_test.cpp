@@ -49,6 +49,30 @@ static int h_disc_mounted(void) { return g_mounted; }
 static const char *h_disc_path(int) { return "disc.cue"; }
 static int h_disc_insert(int n) { if (g_netplay) return 3; g_inserted = n; return 0; }
 static void h_game_info(RecompLauncherCGameInfo *gi) { (void)gi; }
+#if defined(PSX_MENU_HOST_HAS_SESSION)
+static int g_scale = 2, g_volume = 80, g_port = 0, g_reinserts = 0, g_fullscreen_host = 0, g_port_ok = 1;
+static int h_sess_enabled(int s) {
+    if (s == PSX_MENU_SESSION_WINDOW_SCALE) return !g_fullscreen_host;
+    if (s == PSX_MENU_SESSION_CONTROLLER_PORT) return g_port_ok;
+    return 1;
+}
+static int h_sess_get(int s, int *o) {
+    if (s == PSX_MENU_SESSION_WINDOW_SCALE) *o = g_scale;
+    else if (s == PSX_MENU_SESSION_VOLUME) *o = g_volume;
+    else if (s == PSX_MENU_SESSION_CONTROLLER_PORT) *o = g_port;
+    else return 0;
+    return 1;
+}
+static int h_sess_set(int s, int v) {
+    if (!h_sess_enabled(s)) return 0;
+    if (s == PSX_MENU_SESSION_WINDOW_SCALE) g_scale = v;
+    else if (s == PSX_MENU_SESSION_VOLUME) g_volume = v;
+    else if (s == PSX_MENU_SESSION_CONTROLLER_PORT) g_port = v;
+    else if (s == PSX_MENU_SESSION_REINSERT_DISC) ++g_reinserts;
+    else return 0;
+    return 1;
+}
+#endif
 
 static PsxMenuHost make_host(int default_selection) {
     PsxMenuHost h{};
@@ -170,6 +194,45 @@ int main() {
     CHECK(go("System", RECOMP_RUNTIME_UI_KEY_QUIT));
     in(A); in(A);
     CHECK(g_exit == PSX_MENU_EXIT_QUIT);
+
+#if defined(PSX_MENU_HOST_HAS_SESSION)
+    // Without the runtime's session rows the menu has none of them.
+    in(T);
+    CHECK(!go("Input", "input.controller_port"));
+    CHECK(!go("Display", RECOMP_RUNTIME_UI_KEY_WINDOW_SCALE));
+    CHECK(!go("Disc", "media.reinsert"));
+    if (rui_psx::model()->in_section) in(B);
+    in(B);
+    p->detach(p->ctx);
+
+    // With them: controller 1 port, window size, volume and reinsert.
+    PsxMenuHost sh = make_host(0);
+    sh.session_get = h_sess_get; sh.session_set = h_sess_set; sh.session_enabled = h_sess_enabled;
+    CHECK(p->attach(p->ctx, nullptr, nullptr, &sh) == 1);
+    in(T);
+    CHECK(go("Input", "input.controller_port"));
+    in(R);
+    CHECK(g_port == 1);
+    in(L);
+    CHECK(g_port == 0);
+    g_port_ok = 0;  // netplay or a multitap: the row refuses
+    in(R);
+    CHECK(g_port == 0);
+    g_port_ok = 1;
+    CHECK(go("Display", RECOMP_RUNTIME_UI_KEY_WINDOW_SCALE));
+    in(R);
+    CHECK(g_scale == 3);
+    g_fullscreen_host = 1;  // fullscreen owns the window size
+    in(R);
+    CHECK(g_scale == 3);
+    g_fullscreen_host = 0;
+    CHECK(go("Audio", RECOMP_RUNTIME_UI_KEY_VOLUME));
+    in(L);
+    CHECK(g_volume < 80);
+    CHECK(go("Disc", "media.reinsert"));
+    in(A);
+    CHECK(g_reinserts == 1 && !p->is_open(p->ctx));
+#endif
 
     // Detach while open drops the pause.
     in(T);

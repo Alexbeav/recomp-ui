@@ -43,7 +43,30 @@ RecompRuntimeUiItem g_extra[] = {
      RECOMP_RUNTIME_UI_INT, 1, 1, 1, nullptr, 0, nullptr},
     {"media.insert", "Disc", "Insert disc and resume", "Change the disc while the game keeps running.",
      RECOMP_RUNTIME_UI_ACTION, 0, 0, 0, nullptr, 0, nullptr},
+    // Session rows: only when the runtime offers them (PsxMenuHost session_*).
+    {"media.reinsert", "Disc", "Reinsert current disc", "Open and close the lid with the same disc.",
+     RECOMP_RUNTIME_UI_ACTION, 0, 0, 0, nullptr, 0, nullptr},
+    {"input.controller_port", "Input", "Controller 1 port",
+     "Move controller 1 to console port 2 or back, as if the plug were moved. Some games ask for it.",
+     RECOMP_RUNTIME_UI_CHOICE, 0, 1, 1, nullptr, 2, nullptr},
 };
+const char *const kPortChoices[] = {"Port 1", "Port 2"};
+constexpr size_t kBaseExtras = 3;
+
+#if defined(PSX_MENU_HOST_HAS_SESSION)
+bool has_session() { return g_host && g_host->session_get && g_host->session_set && g_host->session_enabled; }
+int session_of(const RecompRuntimeUiItem *item) {
+    if (!item || !item->key) return 0;
+    if (!std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_WINDOW_SCALE)) return PSX_MENU_SESSION_WINDOW_SCALE;
+    if (!std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_VOLUME)) return PSX_MENU_SESSION_VOLUME;
+    if (!std::strcmp(item->key, "input.controller_port")) return PSX_MENU_SESSION_CONTROLLER_PORT;
+    if (!std::strcmp(item->key, "media.reinsert")) return PSX_MENU_SESSION_REINSERT_DISC;
+    return 0;
+}
+#else
+bool has_session() { return false; }
+int session_of(const RecompRuntimeUiItem *) { return 0; }
+#endif
 
 bool is(const RecompRuntimeUiItem *item, const char *key) { return item && item->key && !std::strcmp(item->key, key); }
 int disc_count() { return g_host && g_host->disc_count ? g_host->disc_count() : 0; }
@@ -66,6 +89,9 @@ void apply_video() {
 }
 
 int cb_get(void *, const RecompRuntimeUiItem *item, int *out) {
+#if defined(PSX_MENU_HOST_HAS_SESSION)
+    if (const int s = session_of(item)) return has_session() ? g_host->session_get(s, out) : 0;
+#endif
     if (is(item, RECOMP_RUNTIME_UI_KEY_FULLSCREEN)) *out = g_video.fullscreen;
     else if (is(item, "graphics.render_thread")) *out = g_video.render_thread;
     else if (is(item, RECOMP_RUNTIME_UI_KEY_PAUSE_IN_MENU)) *out = g_pause_in_menu ? 1 : 0;
@@ -75,6 +101,9 @@ int cb_get(void *, const RecompRuntimeUiItem *item, int *out) {
 }
 
 int cb_set(void *, const RecompRuntimeUiItem *item, int v) {
+#if defined(PSX_MENU_HOST_HAS_SESSION)
+    if (const int s = session_of(item)) return has_session() ? g_host->session_set(s, v) : 0;
+#endif
     if (is(item, RECOMP_RUNTIME_UI_KEY_FULLSCREEN)) g_video.fullscreen = v;
     else if (is(item, "graphics.render_thread")) g_video.render_thread = v ? 1 : 0;
     else if (is(item, RECOMP_RUNTIME_UI_KEY_PAUSE_IN_MENU)) {
@@ -108,6 +137,14 @@ int cb_action(void *, const RecompRuntimeUiItem *item) {
     } else if (is(item, RECOMP_RUNTIME_UI_KEY_QUIT)) {
         close_menu();
         g_host->request_exit(PSX_MENU_EXIT_QUIT);
+#if defined(PSX_MENU_HOST_HAS_SESSION)
+    } else if (is(item, "media.reinsert")) {
+        if (!has_session() || !g_host->session_set(PSX_MENU_SESSION_REINSERT_DISC, 1)) {
+            status("Disc changes are unavailable in this game mode.");
+            return 0;
+        }
+        close_menu();  // the lid cycle runs in the game
+#endif
     } else if (is(item, "media.insert")) {
         if (netplay() || g_disc < 1 || g_disc > disc_count() ||
             !g_host->disc_path || !g_host->disc_path(g_disc) ||
@@ -127,6 +164,9 @@ int cb_action(void *, const RecompRuntimeUiItem *item) {
 }
 
 int cb_enabled(void *, const RecompRuntimeUiItem *item) {
+#if defined(PSX_MENU_HOST_HAS_SESSION)
+    if (const int s = session_of(item)) return has_session() && g_host->session_enabled(s);
+#endif
     if (is(item, "media.insert")) return disc_count() > 0 && !netplay() && g_host && g_host->disc_insert;
     if (is(item, "media.disc")) return disc_count() > 0 && !netplay();
     return 1;
@@ -184,8 +224,15 @@ int p_attach(void *, void *window, void *, const PsxMenuHost *host) {
     cfg.features = RECOMP_RUNTIME_UI_STANDARD_FULLSCREEN | RECOMP_RUNTIME_UI_STANDARD_PAUSE_IN_MENU |
                    RECOMP_RUNTIME_UI_STANDARD_RESUME | RECOMP_RUNTIME_UI_STANDARD_RETURN_TO_LAUNCHER |
                    RECOMP_RUNTIME_UI_STANDARD_QUIT;
+    // Window size, volume, the controller 1 port and a same-disc reinsert
+    // come from the runtime's session rows when it has them.
+    const bool session = has_session();
+    if (session)
+        cfg.features |= RECOMP_RUNTIME_UI_STANDARD_WINDOW_SCALE | RECOMP_RUNTIME_UI_STANDARD_VOLUME;
+    cfg.window_scale_max = 4;
+    g_extra[4].choices = kPortChoices;
     cfg.extra_items = g_extra;
-    cfg.extra_item_count = 3;
+    cfg.extra_item_count = session ? sizeof g_extra / sizeof g_extra[0] : kBaseExtras;
     g_ui = recomp_runtime_ui_create_standard(&cfg);
     if (!g_ui) { g_host = nullptr; return 0; }
     return 1;
