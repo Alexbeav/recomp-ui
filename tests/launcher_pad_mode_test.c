@@ -259,7 +259,9 @@ static void test_dino_default_and_analog_note(void) {
 /* A Multitap title draws a pad type row on the card of every seat. The row of
  * seat N must set seat N: the setter once clamped the seat to the first two,
  * so the rows of players 3 to 8 changed Player 2 and their own seat could not
- * be set at all. */
+ * be set at all. A PSX seat chooses Auto or, where the host presents one, the
+ * neGcon (D-Pad is no longer a PSX choice: see test_dino_default_and_analog_note
+ * and docs/PSX_CONTROLLER_MODE.md), so the neGcon is the pick that shows it. */
 static LauncherModel* multitap_session(int genesis, int players) {
     static RecompLauncherCGameInfo game;
     static RecompLauncherCSettings io;
@@ -272,6 +274,8 @@ static LauncherModel* multitap_session(int genesis, int players) {
     game.name = "Seat Fixture";
     game.num_players = players;
     game.pad_mode_selectable = 1;
+    /* psxrecomp declares its neGcon port device (runtime/src/main.cpp). */
+    game.has_native_negcon = !genesis;
 
     memset(&io, 0, sizeof(io));
     io.multitap_enabled = 1;
@@ -284,53 +288,57 @@ static LauncherModel* multitap_session(int genesis, int players) {
     return m;
 }
 
+enum { PSX_NEGCON = RECOMP_LAUNCHER_PAD_MODE_NEGCON };
+
 static void test_pad_type_row_sets_its_own_seat(void) {
     for (int seat = 0; seat < RECOMP_LAUNCHER_MAX_PLAYERS; ++seat) {
         LauncherModel* m = multitap_session(0, RECOMP_LAUNCHER_MAX_PLAYERS);
         char what[96];
         if (!m) return;
-        launcher_model_set_pad_mode(m, seat, PSX_DIGITAL);
+        launcher_model_set_pad_mode(m, seat, PSX_NEGCON);
         for (int q = 0; q < RECOMP_LAUNCHER_MAX_PLAYERS; ++q) {
-            snprintf(what, sizeof(what), "D-Pad on Player %d's card: Player %d is %s",
-                     seat + 1, q + 1, q == seat ? "D-Pad" : "still Analog");
-            expect_mode(m, q, q == seat ? PSX_DIGITAL : PSX_ANALOG, what);
+            snprintf(what, sizeof(what), "NeGcon on Player %d's card: Player %d is %s",
+                     seat + 1, q + 1, q == seat ? "the NeGcon" : "still Auto");
+            expect_mode(m, q, q == seat ? PSX_NEGCON : PSX_ANALOG, what);
         }
         free(m);
     }
 }
 
 static void test_the_two_clicks_of_the_report(void) {
-    /* Four players, Multitap on: D-Pad on Player 4's card, then NeGcon on
+    /* Four players, Multitap on: a pad type on Player 4's card, then on
      * Player 3's card. Player 2 was the one that changed. */
     LauncherModel* m = multitap_session(0, 4);
     if (!m) return;
-    launcher_model_set_pad_mode(m, 3, PSX_DIGITAL);
-    launcher_model_set_pad_mode(m, 2, RECOMP_LAUNCHER_PAD_MODE_NEGCON);
+    launcher_model_set_pad_mode(m, 3, PSX_NEGCON);
+    launcher_model_set_pad_mode(m, 2, PSX_NEGCON);
+    launcher_model_set_pad_mode(m, 3, PSX_ANALOG);
     expect_mode(m, 0, PSX_ANALOG, "Player 1 is untouched");
     expect_mode(m, 1, PSX_ANALOG, "Player 2 is untouched");
-    expect_mode(m, 2, RECOMP_LAUNCHER_PAD_MODE_NEGCON, "Player 3 is the NeGcon");
-    expect_mode(m, 3, PSX_DIGITAL, "Player 4 is the D-Pad");
+    expect_mode(m, 2, PSX_NEGCON, "Player 3 is the NeGcon");
+    expect_mode(m, 3, PSX_ANALOG, "Player 4 is back on Auto");
     free(m);
 }
 
 static void test_keyboard_rule_reads_the_seat_itself(void) {
-    /* "A keyboard has no sticks" is a rule about the seat the row is on. */
+    /* A rule about one seat's input source applies to that seat only. */
     LauncherModel* m = multitap_session(0, 4);
     if (!m) return;
-    /* Player 2 on a pad set to D-Pad, Player 3 on the keyboard. */
-    launcher_model_set_pad_mode(m, 1, PSX_DIGITAL);
+    /* Player 2 on a pad set to NeGcon, Player 3 on the keyboard. */
+    launcher_model_set_pad_mode(m, 1, PSX_NEGCON);
     launcher_model_set_source(m, 2, SRC_KEYBOARD, 0, NULL, NULL);
-    expect_mode(m, 2, PSX_DIGITAL, "Player 3 on the keyboard presents D-Pad");
-    launcher_model_set_pad_mode(m, 2, PSX_ANALOG);
-    expect_mode(m, 2, PSX_DIGITAL, "Player 3 on the keyboard refuses Analog");
-    expect_mode(m, 1, PSX_DIGITAL, "and the refused pick does not land on Player 2");
+    expect_mode(m, 2, PSX_ANALOG, "Player 3 on the keyboard presents Auto");
+    launcher_model_set_pad_mode(m, 2, PSX_DIGITAL);
+    expect_mode(m, 2, PSX_ANALOG, "Player 3 on the keyboard refuses the removed D-Pad");
+    expect_mode(m, 1, PSX_NEGCON, "and the refused pick does not land on Player 2");
     /* Player 2 on the keyboard does not stop Player 4's pad. */
     launcher_model_set_source(m, 1, SRC_KEYBOARD, 0, NULL, NULL);
-    launcher_model_set_pad_mode(m, 3, PSX_DIGITAL);
-    expect_mode(m, 3, PSX_DIGITAL, "Player 4's pad takes D-Pad");
+    expect_mode(m, 1, PSX_NEGCON, "Player 2's NeGcon survives the keyboard");
+    launcher_model_set_pad_mode(m, 3, PSX_NEGCON);
+    expect_mode(m, 3, PSX_NEGCON, "Player 4's pad takes NeGcon");
     launcher_model_set_pad_mode(m, 3, PSX_ANALOG);
     expect_mode(m, 3, PSX_ANALOG,
-                "and Analog again, while Player 2 is on the keyboard");
+                "and Auto again, while Player 2 is on the keyboard");
     free(m);
 }
 
