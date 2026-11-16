@@ -158,6 +158,14 @@ static void render_matrix(LauncherModel& model,const LauncherTheme& theme,const 
         }
     }
 }
+// The fixture's General and Display features carry one option per runtime
+// player setting on that page, plus 6 and 1 of their own (see feature()).
+static size_t provider_controls() {
+    size_t n=7;
+    for(const auto& spec:PSXRecompV4::kExtraPlayerSettings)
+        n+=!strcmp(spec.page,"General") || !strcmp(spec.page,"Display");
+    return n;
+}
 int main() {
     RecompLauncherCModProvider provider{};
     provider.feature_count=features;provider.feature_get=feature;provider.feature_option_get=option;
@@ -190,7 +198,7 @@ int main() {
     io.AddMouseButtonEvent(0,false);frame(model,theme);frame(model,theme);
     std::fprintf(stderr,"Settings drawer general=%zu display=%zu selected=%08x target=%08x click=%.1f,%.1f scroll=%.1f\n",
         visited_general.size(),visited_display.size(),bar->SelectedTabId,display.ID,click.x,click.y,window->Scroll.y);
-    assert(visited_general.size()+visited_display.size()==35);
+    assert(visited_general.size()+visited_display.size()==provider_controls());
     assert(visited_packages.size()==6);
     assert(visited_general.count("video.fast_boot") && visited_general.count("audio.buffer_ms"));
     assert(visited_display.count("video.pgxp_tolerance") && visited_display.count("video.fov_scale"));
@@ -210,6 +218,6 @@ int main() {
     assert(!visited_general.empty() && visited_display.empty());
     if (const char* folder=std::getenv("RUI_LAYOUT_CAPTURE_DIR")) render_matrix(model,theme,folder);
     ImGui::DestroyContext();
-    puts("PASS: production Settings drawer General default/reentry,Display selection,35 provider controls+6 real widgets,preserved values,built-in grouping,plugin boundary;CPU-only");
+    puts("PASS: production Settings drawer General default/reentry,Display selection,every provider control+6 real widgets,preserved values,built-in grouping,plugin boundary;CPU-only");
     return 0;
 }
