@@ -39,6 +39,14 @@
 #include "imgui.h"
 #include "launcher_nav.h"
 #include "launcher_mod_button.h"
+#include "imgui_internal.h"         // private PS1B-482 activation-gate trace
+#include "launcher_pad_nav.h"     // pad buttons held when pad nav starts
+#include "launcher_player_tabs.h" // one tab per player over the controller card
+#include "launcher_cover.h"       // the cover button: fetch, check, save
+#include "launcher_icon.h"        // a desktop icon file from the cover or a save
+#if defined(RECOMP_LAUNCHER_V2_BUILD_MODULE)
+#include "launcher_module_runtime.h"
+#endif
 #if defined(LNG_SDL3)
   #include "imgui_impl_sdl3.h"
   #define LNG_ImplSDL_InitForOpenGL  ImGui_ImplSDL3_InitForOpenGL
@@ -88,6 +96,7 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include <ctime>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -96,6 +105,38 @@
 #else
 #include <sys/stat.h>
 #endif
+
+/* Private PS1B-482 discriminator. It is inert unless the owned title probe
+ * opts in, and observes the real SDL -> ImGui -> PLAY path without changing
+ * model state, readiness, focus or the requested action. */
+static bool ps1b482_settings_actions_trace_enabled() {
+    const char* value = SDL_getenv("PS1B482_SETTINGS_ACTIONS_TRACE");
+    return value && value[0] && std::strcmp(value, "0") != 0;
+}
+
+static void ps1b482_trace_key_event(const SDL_Event& ev,
+                                    const LauncherPlatform* p,
+                                    bool backend_called) {
+    if (!ps1b482_settings_actions_trace_enabled()) return;
+    if (ev.type != SDL_EVENT_KEY_DOWN && ev.type != SDL_EVENT_KEY_UP) return;
+#if defined(LNG_SDL3)
+    const int key = (int)ev.key.key;
+    const int scancode = (int)ev.key.scancode;
+    const unsigned int window_id = (unsigned int)ev.key.windowID;
+#else
+    const int key = (int)ev.key.keysym.sym;
+    const int scancode = (int)ev.key.keysym.scancode;
+    const unsigned int window_id = (unsigned int)ev.key.windowID;
+#endif
+    const unsigned int owned_window_id =
+        p && p->window ? (unsigned int)SDL_GetWindowID(p->window) : 0u;
+    std::fprintf(stderr,
+                 "[ps1b482-trace] receive type=%u key=%d scancode=%d window=%u "
+                 "owned_window=%u window_match=%d backend_called=%d\n",
+                 (unsigned int)ev.type, key, scancode, window_id,
+                 owned_window_id, window_id == owned_window_id ? 1 : 0,
+                 backend_called ? 1 : 0);
+}
 
 extern "C" const char* launcher_backend_name(void) { return "Dear ImGui"; }
 
@@ -1701,11 +1742,15 @@ bool neon_cta(const char* id, const char* label, ImVec2 size, bool enabled = tru
     ImDrawList* dl = ImGui::GetWindowDrawList();
     float r = px(th.radius_sm);
 
-    glow_rect(dl, mn, mx, r, th.accent, hov ? 1.6f : 1.0f, 6);
-    LngColor top = hov ? th.accent : th.accent;
-    LngColor bot = act ? th.accent_dim : th.accent_dim;
+    // A button that is off is drawn off: the panel's own fill, no glow, a
+    // muted label. With the accent fill and only its label faded, a PLAY that
+    // refused the disc read as active at a glance (Alex, 2026-10-02, A15).
+    if (enabled) glow_rect(dl, mn, mx, r, th.accent, hov ? 1.6f : 1.0f, 6);
+    LngColor top = enabled ? th.accent : th.panel_hovered;
+    LngColor bot = enabled ? th.accent_dim : th.panel;
     grad_rect(dl, mn, mx, r, top, bot);
-    dl->AddRect(mn, mx, imcol(th.accent, hov ? 0.9f : 0.5f), r, 0, px(1.0f));  // crisp edge
+    dl->AddRect(mn, mx, enabled ? imcol(th.accent, hov ? 0.9f : 0.5f) : imcol(th.border),
+                r, 0, px(1.0f));  // crisp edge
     // InvisibleButton draws no nav highlight itself — paint the cyan focus ring
     // when nav-focused so the CTA reads as selectable via controller/keyboard.
     if (foc) {
@@ -1719,7 +1764,7 @@ bool neon_cta(const char* id, const char* label, ImVec2 size, bool enabled = tru
     float tri = arrow ? px(11.0f) : 0.0f, gap = arrow ? px(10.0f) : 0.0f;
     float total = tri + gap + tw;
     float cx = p.x + (size.x - total) * 0.5f, cy = p.y + size.y * 0.5f;
-    ImU32 fg = imcol(th.accent_text);
+    ImU32 fg = imcol(enabled ? th.accent_text : th.text_muted);
     if (arrow)
         dl->AddTriangleFilled(ImVec2(cx, cy - tri*0.55f), ImVec2(cx, cy + tri*0.55f),
                               ImVec2(cx + tri, cy), fg);
@@ -1806,14 +1851,14 @@ bool begin_container(const char* id, ImVec2 size, ImGuiChildFlags flags = ImGuiC
 }
 void end_container() { ImGui::EndChild(); ImGui::PopStyleColor(); }
 
-void state_mark(bool ok, const LauncherTheme& th);   // fwd
+void state_mark(bool ok, const LauncherTheme& th, const LngColor* cross = nullptr);   // fwd
 void draw_save_row(LauncherModel* m, const LauncherTheme& th);   // fwd (Save module row-drawer)
 
 // One metadata row inside a 3-column table: label | value | optional check.
 // `show_mark` puts a mint check / amber cross in its own column instead of a
 // text badge, so it can never crowd the panel edge.
 void kv_row(const char* k, const char* v, const LauncherTheme& th,
-            bool show_mark, bool ok) {
+            bool show_mark, bool ok, const LngColor* cross = nullptr) {
     ImGui::TableNextRow();
     ImGui::TableNextColumn();
     ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
@@ -1822,7 +1867,7 @@ void kv_row(const char* k, const char* v, const LauncherTheme& th,
     ImGui::TableNextColumn();
     ImGui::TextUnformatted(v);
     ImGui::TableNextColumn();
-    if (show_mark) state_mark(ok, th);
+    if (show_mark) state_mark(ok, th, cross);
 }
 
 // Key/value row, drawn full width: muted label column, value, and an optional
@@ -1843,6 +1888,69 @@ void kv(const char* k, const char* v, const LauncherTheme& th,
         ImGui::TextUnformatted(b); ImGui::PopStyleColor();
     }
 }
+// One segment of a segmented control. The label is centred in BOTH axes inside
+// its own box (ImGui::Button only centres horizontally, on the text baseline),
+// so "Mouse in port 1" and "Mouse in port 2" sit on the same optical centre and
+// neither one drifts with the glyphs its own digit happens to produce.
+static bool segment_button(const char* id, const char* label, ImVec2 size,
+                           bool selected, bool enabled, const LauncherTheme& th) {
+    ImGui::PushID(id);
+    const ImVec2 min = ImGui::GetCursorScreenPos();
+    const ImVec2 max(min.x + size.x, min.y + size.y);
+    const bool pressed = ImGui::InvisibleButton("##segment", size);
+    const bool hovered = enabled && ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const LngColor& bg = selected ? th.accent
+                        : (hovered ? th.control_hovered : th.control);
+    dl->AddRectFilled(min, max, imcol(bg), px(th.radius_sm));
+    dl->AddRect(min, max, imcol(th.border), px(th.radius_sm));
+    const char* text = ui_text(label);
+    const ImVec2 ts = ImGui::CalcTextSize(text);
+    dl->AddText(ImVec2(std::floor(min.x + (size.x - ts.x) * 0.5f),
+                       std::floor(min.y + (size.y - ts.y) * 0.5f)),
+                imcol(selected ? th.accent_text
+                               : (enabled ? th.text : th.text_muted)),
+                text);
+    ImGui::PopID();
+    return enabled && pressed;
+}
+
+// A one-glyph button whose glyph is centred in BOTH axes. ImGui::Button centres
+// its label horizontally only and draws it on the text baseline, which leaves a
+// bare "-" or "+" sitting low and left of the middle of its box. The glyph is
+// drawn after the (empty) button so the frame, hover and press states are still
+// ImGui's own.
+static bool glyph_button(const char* id, const char* glyph, ImVec2 size) {
+    ImGui::PushID(id);
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    const bool pressed = ImGui::Button("##glyph", size);
+    const ImVec2 ts = ImGui::CalcTextSize(glyph);
+    const ImVec2 pos(std::floor(at.x + (size.x - ts.x) * 0.5f),
+                     std::floor(at.y + (size.y - ts.y) * 0.5f));
+    ImGui::GetWindowDrawList()->AddText(pos, ImGui::GetColorU32(ImGuiCol_Text), glyph);
+    ImGui::PopID();
+    return pressed;
+}
+
+// A button whose label is centred the same way the glyphs are: by pixel, in
+// both axes, clipped to the button. Bind chips are fixed-width with variable
+// text, so ImGui's own layout leaves short labels wandering off-centre; the
+// caller can still colour the text, because AddText reads the current colour.
+static bool centered_button(const char* id, const char* label, ImVec2 size) {
+    ImGui::PushID(id);
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    const bool pressed = ImGui::Button("##centered", size);
+    const ImVec2 ts = ImGui::CalcTextSize(label);
+    const ImVec2 pos(std::floor(at.x + (size.x - ts.x) * 0.5f),
+                     std::floor(at.y + (size.y - ts.y) * 0.5f));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->PushClipRect(at, ImVec2(at.x + size.x, at.y + size.y), true);
+    dl->AddText(pos, ImGui::GetColorU32(ImGuiCol_Text), label);
+    dl->PopClipRect();
+    ImGui::PopID();
+    return pressed;
+}
+
 // `total_w` > 0 stretches the value field so the whole widget measures exactly
 // that — which is what lets a right-anchored stepper line its LEFT edge up
 // with the dropdowns above it instead of floating a few pixels inside them.
@@ -1853,10 +1961,13 @@ void stepper(const char* id, int value, const char* suffix, int* out_delta,
     const float bh = px(30), bw = px(32), gap = px(6);
     float fw = px(58);
     if (total_w > 0.0f) {
+        // Fill the reserved width exactly: a value field narrower than the box
+        // pulls the "+" inwards, so the widget would no longer be flush with
+        // the control column around it.
         const float want = total_w - bw * 2.0f - gap * 2.0f;
         if (want > fw) fw = want;
     }
-    if (ImGui::Button("-", ImVec2(bw, bh))) *out_delta = -5;
+    if (glyph_button("minus", "-", ImVec2(bw, bh))) *out_delta = -5;
     ImGui::SameLine(0, gap);
     // value centered in a fixed-width field so "+" never shifts with the digits
     char buf[32]; snprintf(buf, sizeof(buf), "%d%s", value, suffix);
@@ -1867,7 +1978,7 @@ void stepper(const char* id, int value, const char* suffix, int* out_delta,
     ImGui::TextUnformatted(buf);
     ImGui::SameLine(0, 0);
     ImGui::SetCursorPosX(cx + fw + gap);
-    if (ImGui::Button("+", ImVec2(bw, bh))) *out_delta = +5;
+    if (glyph_button("plus", "+", ImVec2(bw, bh))) *out_delta = +5;
     ImGui::PopID();
 }
 
@@ -2095,10 +2206,12 @@ static const SettingsChoice kRunAheadChoices[RECOMP_LAUNCHER_RUN_AHEAD_MAX + 1] 
 /* The three rows those lists drive, so the legacy and deep Display surfaces
  * cannot drift apart in what they offer. */
 void row_window_scale(LauncherModel* m, const LauncherTheme& th) {
+    ImGui::BeginDisabled(m->s.fullscreen != 0);
     launcher_model_set_scale(
         m, settings_combo_row("Window scale", th, "##window_scale",
                               kScaleChoices, LNG_WINDOW_SCALE_MAX,
                               m->s.window_scale < 1 ? 1 : m->s.window_scale));
+    ImGui::EndDisabled();
 }
 
 void row_fullscreen(LauncherModel* m, const LauncherTheme& th) {
@@ -2179,11 +2292,13 @@ void hero_boxart_centered(const LauncherTexture& t, float box_h, float avail_w) 
 
 // A verified/failed state marker: mint check or amber cross. Replaces the
 // [MATCH] badge that crowded the panel edge.
-void state_mark(bool ok, const LauncherTheme& th) {
+// `cross`: the colour of the cross, for a row that is the reason of a refusal.
+// Every other cross is the theme's amber.
+void state_mark(bool ok, const LauncherTheme& th, const LngColor* cross) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p = ImGui::GetCursorScreenPos();
     float s = ImGui::GetTextLineHeight();
-    ImU32 c = imcol(ok ? th.good : th.warn);
+    ImU32 c = imcol(ok ? th.good : (cross ? *cross : th.warn));
     float y = p.y + s * 0.5f;
     if (ok) {
         dl->AddLine(ImVec2(p.x + s*0.16f, y), ImVec2(p.x + s*0.40f, y + s*0.26f), c, px(2.0f));
@@ -2210,24 +2325,51 @@ const LauncherTexture& verdict_texture(int verdict) {
 // its current layout. Selecting a row remounts that disc: the model re-runs
 // the disc verdict against it and records the choice in Settings.disc_index,
 // which the host persists like any other setting.
-void draw_disc_selector(LauncherModel* m, const LauncherTheme& th, float availw) {
+//
+// inset: the same list in a small panel of its own, named "Disc to boot",
+// for the place under the Browse button on the tabbed dashboard.
+void draw_disc_selector(LauncherModel* m, const LauncherTheme& th, float availw, bool inset = false) {
     if(m->disc_selection_locked)return;
     const int count = launcher_model_disc_count(m);
     if (count <= 1) return;
     const int sel = launcher_model_disc_selected(m);
 
+    auto list = [&](float w) {
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::BeginCombo("##disc_selection",
+                              sel >= 0 ? launcher_model_disc_label(m, sel) : "")) {
+            for (int i = 0; i < count; ++i) {
+                if (ImGui::Selectable(launcher_model_disc_label(m, i), i == sel))
+                    launcher_model_select_disc(m, i);
+                if (i == sel) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+    };
+    if (inset) {
+        // Drawn on the panel itself, not in a child window of its own, so
+        // that the pad reaches the list as it reaches the Browse button.
+        ImGui::Dummy(ImVec2(0, px(10)));
+        const float pad_x = px(12), pad_y = px(8);
+        const float h = ImGui::GetFrameHeight() + pad_y * 2.0f;
+        const ImVec2 at = ImGui::GetCursorPos();
+        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+        const ImVec2 p1(p0.x + availw, p0.y + h);
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(p0, p1, imcol(th.panel_hovered), ImGui::GetStyle().ChildRounding);
+        dl->AddRect(p0, p1, imcol(th.border), ImGui::GetStyle().ChildRounding, 0, px(1.0f));
+        ImGui::SetCursorPos(ImVec2(at.x + pad_x, at.y + pad_y));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(col(th.text_muted), "%s", ui_text("Disc to boot"));
+        ImGui::SameLine(0, px(12));
+        list(at.x + availw - pad_x - ImGui::GetCursorPosX());
+        ImGui::SetCursorPos(ImVec2(at.x, at.y + h));
+        ImGui::Dummy(ImVec2(availw, 0));
+        return;
+    }
     ImGui::TextColored(col(th.text_muted), "%s", ui_text("Disc Selection"));
     ImGui::Dummy(ImVec2(0, px(4)));
-    ImGui::SetNextItemWidth(availw);
-    if (ImGui::BeginCombo("##disc_selection",
-                          sel >= 0 ? launcher_model_disc_label(m, sel) : "")) {
-        for (int i = 0; i < count; ++i) {
-            if (ImGui::Selectable(launcher_model_disc_label(m, i), i == sel))
-                launcher_model_select_disc(m, i);
-            if (i == sel) ImGui::SetItemDefaultFocus();
-        }
-        ImGui::EndCombo();
-    }
+    list(availw);
     ImGui::Dummy(ImVec2(0, px(10)));
 }
 
@@ -2238,7 +2380,24 @@ void draw_disc_selector(LauncherModel* m, const LauncherTheme& th, float availw)
 // m->verify, populated by launcher_model_set_rom()/run_verify() in
 // launcher_model.c (real probe when the SystemProfile has one, a synthesized
 // placeholder verdict otherwise).
-void draw_verdict_block(LauncherModel* m, const LauncherTheme& th, float availw) {
+// The wrong-disc sentence the disc card drew this frame and that has to be
+// in view (draw_verdict_block notes it; the body, which scrolls, acts on it).
+static bool  g_disc_note_reveal = false;
+static float g_disc_note_top = 0.0f, g_disc_note_bottom = 0.0f;
+
+// Called inside the dashboard's scrolling body, after its content is drawn.
+static void reveal_disc_note_in_body() {
+    if (!g_disc_note_reveal) return;
+    g_disc_note_reveal = false;
+    const float view_top = ImGui::GetWindowPos().y;
+    const float move = launcher_model_scroll_into_view(
+        g_disc_note_top, g_disc_note_bottom, view_top,
+        view_top + ImGui::GetWindowHeight(), px(10.0f));
+    if (move != 0.0f) ImGui::SetScrollY(ImGui::GetScrollY() + move);
+}
+
+void draw_verdict_block(LauncherModel* m, const LauncherTheme& th, float availw,
+                        bool disc_selector = true, bool reveal_note = false) {
     const VerifyResult& v = m->verify;
     // Keep the Serial/Region/ISO checklist mounted even before a disc is
     // picked (setup wizard) so AutoResize modals don't jump when verify runs.
@@ -2281,8 +2440,9 @@ void draw_verdict_block(LauncherModel* m, const LauncherTheme& th, float availw)
     // ABOVE the identity checklist on purpose — Serial / Region / ISO header
     // describe the SELECTED disc (each disc of a set carries its own serial),
     // so the control that decides which disc that is has to read first.
-    // Single-disc titles never compose this.
-    draw_disc_selector(m, th, availw);
+    // Single-disc titles never compose this. The tabbed dashboard has the
+    // list in an inset under the Browse button instead (disc_selector false).
+    if (disc_selector) draw_disc_selector(m, th, availw);
 
     // Checklist: Serial / Region / ISO header. Before a disc is chosen, show
     // em-dashes with no pass/fail marks so the layout still reserves the rows.
@@ -2306,6 +2466,24 @@ void draw_verdict_block(LauncherModel* m, const LauncherTheme& th, float availw)
                th, !pending, v.region[0] != '\0');
         kv_row("ISO header", pending ? dash : (v.iso_ok ? "OK" : "Mismatch"),
                th, !pending, v.iso_ok);
+        // Setup refused this file (PS1B-415): the three rows above are true
+        // of it and keep their ticks, so the headline said "failed" over
+        // nothing but ticks. This row carries the cross (Alex, 2026-10-02,
+        // A12). It shows only while the refusal stands. The value wraps: the
+        // dashboard's card is narrower than the setup window.
+        if (launcher_model_disc_refused_by_setup(m)) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
+            ImGui::TextUnformatted(ui_text("Disc image"));
+            ImGui::PopStyleColor();
+            ImGui::TableNextColumn();
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextUnformatted(ui_text("Not the image this kit was made from"));
+            ImGui::PopTextWrapPos();
+            ImGui::TableNextColumn();
+            state_mark(false, th, &refused_red);
+        }
         const char* sbi_text = v.sbi_status == RECOMP_SBI_OK ? "OK" :
                               v.sbi_status == RECOMP_SBI_MISSING ? "Missing" : "N/A";
         kv_row("SBI File", pending ? dash : sbi_text,
@@ -2338,6 +2516,19 @@ void draw_verdict_block(LauncherModel* m, const LauncherTheme& th, float availw)
         ImGui::TextColored(col(wrong_disc ? lng_rgba(0.945f, 0.322f, 0.322f, 1.0f) : th.warn),
                            "%s", note);
         ImGui::PopTextWrapPos();
+        // The card hugs its content and the dashboard's body scrolls, so on a
+        // window made smaller than the launcher's own size the sentence that
+        // says why the disc is refused ended below the window's edge, under a
+        // red headline with no reason in view. A new sentence is scrolled
+        // into view; nothing moves when it is in view already. The window
+        // that scrolls is the body, two levels above this card, and a child
+        // cannot set its parent's scroll: the sentence's place is noted here
+        // and the body moves itself (reveal_disc_note_in_body).
+        if (reveal) {
+            g_disc_note_reveal = true;
+            g_disc_note_top = ImGui::GetItemRectMin().y;
+            g_disc_note_bottom = ImGui::GetItemRectMax().y;
+        }
     }
 }
 
@@ -2409,10 +2600,197 @@ void draw_artwork_gallery(LauncherModel* m,float height,float width) {
     }
 }
 
+// ---- cover and desktop icon (tabbed dashboard; PS1B-462) ---------------------
+// Two small buttons at the top right of the disc panel. The first fetches the
+// cover of the mounted disc from github.com/xlenore/psx-covers and saves it in
+// the title's own folder; the cover slot shows it from then on. Nothing is
+// fetched without the click, and no cover is shipped. The second makes a
+// desktop icon file from that cover, or from the icon of the game's own save
+// on a memory card (launcher_cover.h, launcher_icon.h).
+static std::string g_cover_path;        // <title's folder>/launcher-cover.jpg
+static char        g_cover_line[200];   // what the last click did
+static double      g_cover_line_until;  // ImGui time until which the line shows
+static int         g_cover_tool = -1;   // this system has a curl: not asked yet
+static int         g_icon_save_card;    // the card (1 or 2) that holds a save of this title; 0 none
+static unsigned char g_icon_save_px[16 * 16 * 4];
+
+static std::string user_file(const LauncherModel* m, const char* leaf) {
+    return std::string(launcher_model_user_dir(m)) + leaf;
+}
+
+static void cover_say(const char* text) {
+    snprintf(g_cover_line, sizeof(g_cover_line), "%s", text);
+    g_cover_line_until = ImGui::GetTime() + 8.0;
+}
+
+// The saved cover into the cover slot, when it is there and is a picture.
+static void cover_show(const LauncherModel* m) {
+    g_cover_path = user_file(m, LAUNCHER_COVER_FILE);
+    if (!launcher_cover_check_file(g_cover_path.c_str(), nullptr, nullptr)) return;
+    LauncherTexture t = launcher_texture_load(g_cover_path.c_str());
+    if (!t.id) return;
+    launcher_texture_free(&g_boxart);
+    g_boxart = t;
+}
+
+// The serials to ask the source for: the mounted disc's, and for a later disc
+// of a set the first disc's too (a set often has one cover, under disc 1).
+static int cover_serials(LauncherModel* m, char out[2][16]) {
+    int n = 0;
+    if (m->verify.serial[0]) snprintf(out[n++], 16, "%s", m->verify.serial);
+    if (launcher_model_disc_count(m) > 1 && launcher_model_disc_selected(m) > 0 &&
+        m->disc_verify_cb) {
+        RecompLauncherCDiscVerify first = {};
+        const char* path = launcher_model_disc_path(m, 0);
+        if (path && path[0] && m->disc_verify_cb(path, &first) && first.serial[0])
+            snprintf(out[n++], 16, "%s", first.serial);
+    }
+    return n;
+}
+
+// A small square button with a drawn picture: 0 the download arrow, 1 a
+// picture frame. Reached by the pad and the keyboard like any button.
+static bool corner_button(const char* id, float side, bool enabled, int picture,
+                          const LauncherTheme& th) {
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    if (!enabled) ImGui::BeginDisabled();
+    const bool clicked = ImGui::InvisibleButton(id, ImVec2(side, side), ImGuiButtonFlags_EnableNav);
+    if (!enabled) ImGui::EndDisabled();
+    const bool hot = enabled && ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 p1(p0.x + side, p0.y + side);
+    dl->AddRectFilled(p0, p1, imcol(hot ? th.control_hovered : th.control), px(th.radius_sm));
+    dl->AddRect(p0, p1, imcol(th.border), px(th.radius_sm), 0, px(1.0f));
+    const ImU32 ink = imcol(enabled ? (hot ? th.accent : th.text) : th.text_muted, enabled ? 1.0f : 0.45f);
+    const float cx = p0.x + side * 0.5f, cy = p0.y + side * 0.5f, u = side / 30.0f;
+    if (picture == 0) {   // an arrow into a tray
+        dl->AddLine(ImVec2(cx, cy - 8 * u), ImVec2(cx, cy + 3 * u), ink, 2.0f * u);
+        dl->AddLine(ImVec2(cx - 5 * u, cy - 2 * u), ImVec2(cx, cy + 3.5f * u), ink, 2.0f * u);
+        dl->AddLine(ImVec2(cx + 5 * u, cy - 2 * u), ImVec2(cx, cy + 3.5f * u), ink, 2.0f * u);
+        dl->AddLine(ImVec2(cx - 8 * u, cy + 4 * u), ImVec2(cx - 8 * u, cy + 8 * u), ink, 2.0f * u);
+        dl->AddLine(ImVec2(cx - 8 * u, cy + 8 * u), ImVec2(cx + 8 * u, cy + 8 * u), ink, 2.0f * u);
+        dl->AddLine(ImVec2(cx + 8 * u, cy + 8 * u), ImVec2(cx + 8 * u, cy + 4 * u), ink, 2.0f * u);
+    } else {              // a frame with a picture in it
+        dl->AddRect(ImVec2(cx - 8 * u, cy - 8 * u), ImVec2(cx + 8 * u, cy + 8 * u), ink, 3.0f * u, 0, 2.0f * u);
+        dl->AddRectFilled(ImVec2(cx - 4 * u, cy - 4 * u), ImVec2(cx + 4 * u, cy + 4 * u), ink, 1.0f * u);
+    }
+    return clicked;
+}
+
+// Writes launcher-icon.ico and launcher-icon.png from a picture and says so.
+static void icon_write(const LauncherModel* m, const unsigned char* rgba, int w, int h, bool hard) {
+    const std::string ico = user_file(m, LAUNCHER_ICON_ICO), png = user_file(m, LAUNCHER_ICON_PNG);
+    const bool ok = launcher_icon_write_ico(ico.c_str(), rgba, w, h, hard ? 1 : 0) != 0;
+    launcher_icon_write_png(png.c_str(), rgba, w, h, 256, hard ? 1 : 0);
+    char line[200];
+    if (ok) snprintf(line, sizeof(line), "%s %s", ui_text("Icon saved in the game folder:"), LAUNCHER_ICON_ICO);
+    else    snprintf(line, sizeof(line), "%s", ui_text("The icon could not be saved in the game folder."));
+    cover_say(line);
+}
+
+// The two buttons, at the top right of a panel whose content starts at
+// `corner` and is `availw` wide. The cursor is put back where it was.
+static void draw_cover_buttons(LauncherModel* m, const LauncherTheme& th, ImVec2 corner, float availw) {
+    const float side = px(30.0f);
+    const ImVec2 back = ImGui::GetCursorPos();
+    if (g_cover_tool < 0) g_cover_tool = launcher_cover_tool_available() ? 1 : 0;
+
+    // A fetch that has ended: show the cover, say what happened.
+    char used[16] = "";
+    const int state = launcher_cover_job_poll(used);
+    if (launcher_cover_job_take_finished()) {
+        if (state == LNG_COVER_SAVED) cover_show(m);
+        cover_say(ui_text(launcher_cover_state_text(state)));
+    }
+    const bool busy = state == LNG_COVER_BUSY;
+
+    ImGui::SetCursorPos(ImVec2(corner.x + availw - side, corner.y));
+    if (corner_button("##cover_fetch", side, g_cover_tool == 1 && !busy, 0, th)) {
+        char serials[2][16];
+        const int n = cover_serials(m, serials);
+        const char* list[2] = { serials[0], serials[1] };
+        if (n == 0)
+            cover_say(ui_text(launcher_cover_state_text(LNG_COVER_NO_SERIAL)));
+        else if (launcher_cover_job_start(list, n, g_cover_path.c_str(), nullptr, nullptr))
+            cover_say(ui_text(launcher_cover_state_text(LNG_COVER_BUSY)));
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled | ImGuiHoveredFlags_DelayShort)) {
+        if (g_cover_tool == 1)
+            ImGui::SetTooltip("%s", ui_text(
+                "Downloads this game's cover from " LAUNCHER_COVER_SOURCE "\n"
+                "and saves it in the game folder (" LAUNCHER_COVER_FILE ").\n"
+                "A second click fetches it again."));
+        else
+            ImGui::SetTooltip("%s", ui_text(launcher_cover_state_text(LNG_COVER_NO_TOOL)));
+    }
+
+    ImGui::SetCursorPos(ImVec2(corner.x + availw - side, corner.y + side + px(6.0f)));
+    if (corner_button("##desk_icon", side, true, 1, th)) {
+        // What the menu can offer is looked up once, as it opens.
+        char serials[2][16];
+        const int n = cover_serials(m, serials);
+        const char* list[2] = { serials[0], serials[1] };
+        g_icon_save_card = 0;
+        for (int slot = 0; slot < 2 && !g_icon_save_card && n > 0; ++slot)
+            if (m->s.memcard_path[slot][0] &&
+                launcher_icon_from_memcard(m->s.memcard_path[slot], list, n, g_icon_save_px, nullptr))
+                g_icon_save_card = slot + 1;
+        ImGui::OpenPopup("##desk_icon_menu");
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+        ImGui::SetTooltip("%s", ui_text(
+            "Makes a desktop icon file for this game, from its cover\n"
+            "or from the icon of its save on a memory card."));
+    if (ImGui::BeginPopup("##desk_icon_menu")) {
+        const bool has_cover = launcher_cover_check_file(g_cover_path.c_str(), nullptr, nullptr) != 0;
+        if (!has_cover) ImGui::BeginDisabled();
+        if (ImGui::Selectable(ui_text("Icon from the cover")) && has_cover) {
+            int w = 0, h = 0;
+            if (unsigned char* rgba = launcher_image_load_rgba(g_cover_path.c_str(), &w, &h)) {
+                icon_write(m, rgba, w, h, false);
+                launcher_image_free(rgba);
+            } else {
+                cover_say(ui_text(launcher_cover_state_text(LNG_COVER_BAD_IMAGE)));
+            }
+        }
+        if (!has_cover) ImGui::EndDisabled();
+        if (g_icon_save_card) {
+            char label[64];
+            snprintf(label, sizeof(label), "%s (%s %d)", ui_text("Icon from the game's save"),
+                     ui_text("Card"), g_icon_save_card);
+            if (ImGui::Selectable(label)) icon_write(m, g_icon_save_px, 16, 16, true);
+        }
+        ImGui::Separator();
+        ImGui::TextColored(col(th.text_muted), "%s",
+                           ui_text(has_cover ? "The file is " LAUNCHER_ICON_ICO " in the game folder.\n"
+                                               "Use it in your shortcut: Properties, Change Icon."
+                                             : "Fetch the cover first, or save in the game\n"
+                                               "to have its save icon here."));
+        ImGui::EndPopup();
+    }
+    ImGui::SetCursorPos(back);
+}
+
+// The line of the last click, over the lower edge of the cover slot, so that
+// it moves nothing on the panel.
+static void draw_cover_line(const LauncherTheme& th, ImVec2 slot_min, ImVec2 slot_max, float x0, float x1) {
+    if (!g_cover_line[0] || ImGui::GetTime() > g_cover_line_until) return;
+    const ImVec2 ts = ImGui::CalcTextSize(g_cover_line, nullptr, false, x1 - x0 - px(12.0f));
+    const ImVec2 a(x0, slot_max.y - ts.y - px(10.0f)), b(x1, slot_max.y);
+    (void)slot_min;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(a, b, imcol(th.panel, 0.92f), px(4.0f));
+    dl->AddRect(a, b, imcol(th.border), px(4.0f), 0, px(1.0f));
+    dl->AddText(nullptr, 0.0f, ImVec2(x0 + px(6.0f), a.y + px(5.0f)), imcol(th.text), g_cover_line,
+                nullptr, x1 - x0 - px(12.0f));
+}
+
 void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = false) {
     if (!begin_panel("game", 0, fill_h)) { end_panel(); return; }
     // No "GAME" eyebrow: the box art itself tells the user this is the game.
     const float availw = ImGui::GetContentRegionAvail().x;
+    const ImVec2 corner = ImGui::GetCursorPos();
+    const ImVec2 corner_screen = ImGui::GetCursorScreenPos();
 
     // Verify module: verify.mode==1 systems (PSX) render a disc-verdict block
     // (icon + Serial/Region/ISO checklist) here instead of the CRC/SHA line;
@@ -2462,11 +2840,17 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
             ImGui::Dummy(ImVec2(0, px(10)));
         }
     }
+    if (disc_verdict && launcher_model_dashboard_tabbed(m)) {
+        draw_cover_line(th, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+                        corner_screen.x, corner_screen.x + availw);
+        draw_cover_buttons(m, th, corner, availw);
+    }
 
     // Region + verification state, centered under the art.
     const char* noun = (m->rom_noun && m->rom_noun[0]) ? m->rom_noun : "ROM";
     if (disc_verdict) {
-        draw_verdict_block(m, th, availw);
+        draw_verdict_block(m, th, availw, !launcher_model_dashboard_tabbed(m),
+                           /*reveal_note=*/true);
     } else {
         const bool verified = launcher_model_rom_verified(m);
         char line[64];
@@ -2582,6 +2966,8 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
     }
 
     } else ImGui::TextDisabled("%s", ui_text("This disc was chosen before the game started. To change it, quit and start again."));
+    if (!m->disc_selection_locked && disc_verdict && launcher_model_dashboard_tabbed(m))
+        draw_disc_selector(m, th, availw, true);
 
     // A required system file the host could not find (GameInfo.bios_name):
     // say so where the player is looking and point at Settings, which owns the
@@ -2771,12 +3157,79 @@ void panel_game_draw(LauncherModel* m, const LauncherTheme* th) {
     draw_game_panel(m, *th, g_game_fill_h);
 }
 
+// A card of the tabbed dashboard is "wide" from this inner width on: its
+// picture then stands to the left of its controls.
+static const float kDashWideCard = 480.0f;
+
+static RuiPlayerTabsLook dash_tabs_look(const LauncherTheme& th) {
+    return {
+        imcol(th.control), imcol(th.control_hovered), imcol(th.panel),
+        imcol(th.border), imcol(th.text_muted), imcol(th.text), imcol(th.accent),
+        imcol(th.good), imcol(th.text_muted),
+        px(34.0f), px(4.0f), px(th.radius_sm),
+    };
+}
+
 // ---- Save module, SAVE_MEMCARD half (PSX) -----------------------------------
 // SAVE_SRAM keeps the compact row above, folded into the GAME card (SNES,
 // unchanged). SAVE_MEMCARD (PSX) is a standalone WIDE dashboard panel (see
 // kPanelsDashboardPsx in launcher_system.h): one sub-section per card slot —
 // icon + path picker (Browse/New) + a real 15-block usage grid, matching PS1
 // memory-card conventions (each card holds 15 save blocks).
+
+// Pieces of one memory-card slot, shared by the slot's two layouts
+// (draw_memcard_slot, and draw_memcard_slot_wide of the tabbed dashboard).
+
+// The slot's name: its file's name, or "Memory Card N" while it has no file.
+static void memcard_slot_name(const LauncherModel* m, int slot, char* out, size_t cap) {
+    const char* mp = m->s.memcard_path[slot];
+    const char* base = mp;
+    for (const char* q = mp; *q; ++q) if (*q == '/' || *q == '\\') base = q + 1;
+    if (base[0]) snprintf(out, cap, "%s", base);
+    else         snprintf(out, cap, "%s %d", ui_text("Memory Card"), slot + 1);
+}
+
+// The 15-block usage strip of one card, at the cursor.
+static void memcard_block_strip(const LauncherTheme& th, uint16_t used) {
+    const int   kB   = 15;
+    const float bgap = px(4.0f);
+    const float availw = ImGui::GetContentRegionAvail().x;
+    float cell = (availw - bgap * (kB - 1)) / (float)kB;
+    if (cell > px(18.0f)) cell = px(18.0f);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    for (int i = 0; i < kB; ++i) {
+        const bool onb = (used & (1u << i)) != 0;
+        const ImVec2 mn(p0.x + i * (cell + bgap), p0.y);
+        const ImVec2 mx(mn.x + cell, mn.y + cell);
+        dl->AddRectFilled(mn, mx, imcol(onb ? th.accent : th.control), px(3.0f));
+        dl->AddRect(mn, mx, imcol(th.border), px(3.0f), 0, px(1.0f));
+    }
+    ImGui::Dummy(ImVec2(cell * kB + bgap * (kB - 1), cell));
+}
+
+// Browse and New of one card slot, side by side, each `bw` wide.
+static void memcard_browse_new(LauncherModel* m, const LauncherTheme& th, int slot,
+                               float bw, float btn_h) {
+    if (ImGui::Button(ui_text("Browse"), ImVec2(bw, btn_h))) {
+        ui_pick_file(m, "Select memory card image", {"*.mcd", "*.mcr", "*.mc"},
+                     "PS1 memory card (.mcd .mcr .mc)",
+                     [m, slot](const char* path) {
+                         if (path) launcher_model_set_memcard_path(m, slot, path);
+                     });
+    }
+    ImGui::SameLine(0, px(th.spacing_sm));
+    if (ImGui::Button(ui_text("New"), ImVec2(bw, btn_h))) {
+        // "New" picks a DESTINATION (the file need not exist yet — a save
+        // dialog, not the open dialog Browse uses), then writes a real,
+        // freshly formatted blank 128KB card there and adopts it.
+        ui_pick_save_file(m, "Create new memory card",
+                          {"*.mcd", "*.mcr", "*.mc"}, "PS1 memory card (.mcd)",
+                          [m, slot](const char* path) {
+                              if (path) launcher_model_new_memcard(m, slot, path);
+                          });
+    }
+}
 
 // One compact memory-card slot: icon + name, inline block count, and Browse/
 // New actions. `probe` (SystemProfile.save.probe) is the host hook that
@@ -2843,12 +3296,8 @@ void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
     }
 
     // Card name, on its own line under the toggle.
-    const char* mp = m->s.memcard_path[slot];
-    const char* base = mp;
-    for (const char* q = mp; *q; ++q) if (*q == '/' || *q == '\\') base = q + 1;
     char label[40];
-    if (base[0]) snprintf(label, sizeof(label), "%s", base);
-    else         snprintf(label, sizeof(label), "%s %d", ui_text("Memory Card"), slot + 1);
+    memcard_slot_name(m, slot, label, sizeof(label));
     ImGui::SetCursorPos(ImVec2(rc_x, top_y + frame_h + px(10.0f)));
     ImGui::PushStyleColor(ImGuiCol_Text, col(enabled ? th.accent : th.text_muted));
     ImGui::TextUnformatted(label);
@@ -2870,23 +3319,7 @@ void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * body_alpha);
 
     // 15-block usage grid, full width under the image.
-    {
-        const int   kB   = 15;
-        const float bgap = px(4.0f);
-        const float availw = ImGui::GetContentRegionAvail().x;
-        float cell = (availw - bgap * (kB - 1)) / (float)kB;
-        if (cell > px(18.0f)) cell = px(18.0f);
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        const ImVec2 p0 = ImGui::GetCursorScreenPos();
-        for (int i = 0; i < kB; ++i) {
-            const bool onb = (used & (1u << i)) != 0;
-            const ImVec2 mn(p0.x + i * (cell + bgap), p0.y);
-            const ImVec2 mx(mn.x + cell, mn.y + cell);
-            dl->AddRectFilled(mn, mx, imcol(onb ? th.accent : th.control), px(3.0f));
-            dl->AddRect(mn, mx, imcol(th.border), px(3.0f), 0, px(1.0f));
-        }
-        ImGui::Dummy(ImVec2(cell * kB + bgap * (kB - 1), cell));
-    }
+    memcard_block_strip(th, used);
 
     // Gap above Browse/New only — bottom inset is Child WindowPadding (same as
     // the top). An extra bottom Dummy doubled the pad and looked top-heavy.
@@ -2901,26 +3334,62 @@ void draw_memcard_slot(LauncherModel* m, const LauncherTheme& th, int slot) {
     } else {
         ImGui::Dummy(ImVec2(0, btn_gap));
     }
-    if (ImGui::Button(ui_text("Browse"), ImVec2(bw, btn_h))) {
-        ui_pick_file(m, "Select memory card image", {"*.mcd", "*.mcr", "*.mc"},
-                     "PS1 memory card (.mcd .mcr .mc)",
-                     [m, slot](const char* path) {
-                         if (path) launcher_model_set_memcard_path(m, slot, path);
-                     });
-    }
-    ImGui::SameLine(0, px(th.spacing_sm));
-    if (ImGui::Button(ui_text("New"), ImVec2(bw, btn_h))) {
-        // "New" picks a DESTINATION (the file need not exist yet — a save
-        // dialog, not the open dialog Browse uses), then writes a real,
-        // freshly formatted blank 128KB card there and adopts it.
-        ui_pick_save_file(m, "Create new memory card",
-                          {"*.mcd", "*.mcr", "*.mc"}, "PS1 memory card (.mcd)",
-                          [m, slot](const char* path) {
-                              if (path) launcher_model_new_memcard(m, slot, path);
-                          });
-    }
+    memcard_browse_new(m, th, slot, bw, btn_h);
 
     ImGui::PopStyleVar();  // body_alpha
+    ImGui::PopID();
+}
+
+// One memory card of a tabbed dashboard on a wide card: the card picture on
+// the left; on its right the Enabled box with the file name and the used
+// count, the block strip, and Browse / New at their own width, so that nothing
+// is stretched across the card. A narrow card is draw_memcard_slot.
+static void draw_memcard_slot_wide(LauncherModel* m, const LauncherTheme& th, int slot) {
+    ImGui::PushID(slot);
+
+    const bool enabled = m->s.memcard_enabled[slot] != 0;
+    const uint16_t used = launcher_model_memcard_blocks_used(m, slot);
+    int used_count = 0;
+    for (int i = 0; i < 15; ++i) if (used & (1u << i)) ++used_count;
+
+    const float img_h = px(108.0f);
+    float iw = img_h * (148.0f / 164.0f);
+    const ImVec2 at = ImGui::GetCursorPos();
+    if (g_memcard.w > 0 && g_memcard.h > 0) {
+        iw = g_memcard.w * (img_h / (float)g_memcard.h);
+        ImGui::Image(tid(g_memcard), ImVec2(iw, img_h));
+    } else {
+        ImGui::Dummy(ImVec2(iw, img_h));
+    }
+    ImGui::SetCursorPos(ImVec2(at.x + iw + px(18.0f), at.y));
+    ImGui::BeginGroup();
+
+    bool enabled_box = enabled;
+    if (ImGui::Checkbox(ui_text("Enabled"), &enabled_box))
+        launcher_model_toggle_memcard(m, slot);
+    char label[40];
+    memcard_slot_name(m, slot, label, sizeof(label));
+    ImGui::SameLine(0, px(16.0f));
+    ImGui::TextColored(col(enabled ? th.accent : th.text_muted), "%s", label);
+    char cap[16]; snprintf(cap, sizeof(cap), "%d / 15", used_count);
+    ImGui::SameLine(0, px(12.0f));
+    ImGui::TextColored(col(th.text_muted), "%s", cap);
+    ImGui::Dummy(ImVec2(0, px(4.0f)));
+
+    // Dim the rest when disabled (visual only; Browse / New stay clickable so
+    // the slot can be re-configured while off).
+    const float body_alpha = enabled ? 1.0f : 0.4f;
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * body_alpha);
+    memcard_block_strip(th, used);
+    ImGui::Dummy(ImVec2(0, px(6.0f)));
+    memcard_browse_new(m, th, slot, px(150.0f), px(32.0f));
+    ImGui::PopStyleVar();  // body_alpha
+
+    ImGui::EndGroup();
+    if (ImGui::GetCursorPosY() < at.y + img_h) {
+        ImGui::SetCursorPosY(at.y + img_h);
+        ImGui::Dummy(ImVec2(0, 0));
+    }
     ImGui::PopID();
 }
 
@@ -2959,6 +3428,13 @@ static int dash_card_columns(float availw, float gap, float cardw, int count) {
 }
 
 static void draw_quick_mods(LauncherModel* m,const LauncherTheme& th);
+/* PSX Settings pages: GENERAL / DISPLAY / HOTKEYS (see launcher_psx_settings.inc). */
+enum { PSX_SETTINGS_GENERAL = 0, PSX_SETTINGS_DISPLAY = 1, PSX_SETTINGS_HOTKEYS = 2 };
+static void draw_psx_settings_page(LauncherModel* m, const LauncherTheme& th, int page);
+/* Per-device host options (mouse / JogCon / anti-deadzone / Select shortcuts),
+ * drawn with the controller they belong to on the Configure page. */
+void draw_psx_pad_options(LauncherModel* m, const LauncherTheme& th, int player);
+bool psx_player_has_jogcon(const LauncherModel* m, int player);
 
 #include "card_manager_imgui.hpp"
 
@@ -2974,6 +3450,39 @@ void panel_save_draw(LauncherModel* m, const LauncherTheme* th) {
     const SystemProfile* prof = (const SystemProfile*)m->profile;
     const SaveKind kind = prof ? prof->save.kind : SAVE_NONE;
     if (kind == SAVE_MEMCARD) {
+        if (const int tabs = launcher_model_card_tabs(m)) {
+            // Tabbed dashboard: a strip with one tab per card, and the open
+            // tab's card under it. A tab carries the used count
+            // ("Card 1 · 3/15") and, as its dot, whether the card is enabled,
+            // so nobody has to open a tab to see either.
+            const float avail = ImGui::GetContentRegionAvail().x;
+            char text[2][48];
+            const char* labels[2];
+            bool on[2];
+            for (int slot = 0; slot < tabs; ++slot) {
+                const uint16_t used = launcher_model_memcard_blocks_used(m, slot);
+                int used_count = 0;
+                for (int i = 0; i < 15; ++i) if (used & (1u << i)) ++used_count;
+                snprintf(text[slot], sizeof(text[slot]), "%s %d \xC2\xB7 %d/15",
+                         ui_text("Card"), slot + 1, used_count);
+                labels[slot] = text[slot];
+                on[slot] = m->s.memcard_enabled[slot] != 0;
+            }
+            const int was = launcher_model_card_tab(m);
+            const int open = rui_tab_rows("card_tabs", tabs, was, labels, on, avail,
+                                          dash_tabs_look(*th), tabs, 0);
+            if (open != was) launcher_model_set_card_tab(m, open);
+            begin_container("mc_tab", ImVec2(avail, 0), ImGuiChildFlags_AutoResizeY);
+            if (begin_panel("mcp", avail, false)) {
+                if (ImGui::GetContentRegionAvail().x >= px(kDashWideCard))
+                    draw_memcard_slot_wide(m, *th, open);
+                else
+                    draw_memcard_slot(m, *th, open);
+            }
+            end_panel();
+            end_container();
+            return;
+        }
         // No outer "MEMORY CARDS" card/eyebrow: the small per-slot cards ARE the
         // UI. Fixed width (same as player cards); wider windows add columns
         // instead of stretching the pair across the column.
@@ -3369,17 +3878,25 @@ void panel_tpak_draw(LauncherModel* m, const LauncherTheme* th) {
 // nothing — there's nothing to pick). Hybrid is deliberately absent: it is a
 // mod-only mode a trusted game plugin requests at runtime, never a player
 // choice.
-void pad_mode_selector(LauncherModel* m, const LauncherTheme& th, int p, float w) {
-    struct Seg { int mode; const char* label; };
-    Seg segs[8];
+struct PadModeOpt { int mode; const char* label; };
+enum { kPadModeOptMax = 8 };
+
+// The pad types a player chooses between, for the button row
+// (pad_mode_selector) and for the list (pad_mode_combo). Returns how many.
+static int pad_mode_options(const LauncherModel* m, PadModeOpt* segs) {
     int n = 0;
     // A console with a custom pad-mode list (ControllerSpec.modes, e.g. Genesis
     // 3-Button/6-Button) drives the segments from that list; otherwise the
     // legacy PSX-shaped Analog/D-Pad set.
     const SystemProfile* prof = (const SystemProfile*)m->profile;
+    if (prof && prof->id && !strcmp(prof->id, "psx") && !m->pad_mode_selectable) {
+        const int mode = m->locked_pad_mode;
+        segs[n++] = { mode, mode == 2 ? "D-Pad" : mode == 1 ? "Analog" : "NeGcon" };
+        return n;
+    }
     if (prof && prof->controller.modes && prof->controller.mode_count > 0) {
         int mc = prof->controller.mode_count;
-        if (mc > (int)(sizeof(segs) / sizeof(segs[0]))) mc = (int)(sizeof(segs) / sizeof(segs[0]));
+        if (mc > kPadModeOptMax) mc = kPadModeOptMax;
         for (int i = 0; i < mc; ++i)
             segs[n++] = { prof->controller.modes[i].mode, prof->controller.modes[i].label };
         if (launcher_model_negcon_mode_available(m) && n < 8)
@@ -3391,17 +3908,33 @@ void pad_mode_selector(LauncherModel* m, const LauncherTheme& th, int p, float w
         if (launcher_model_negcon_mode_available(m))
             segs[n++] = { RECOMP_LAUNCHER_PAD_MODE_NEGCON, "NeGcon" };
     }
+    return n;
+}
 
-    // Keyboard has no analog sticks — Analog is unavailable (PSX modes).
-    const bool kb_digital_only =
-        m->s.player_src[p] == 1 &&
-        !(prof && prof->controller.modes && prof->controller.mode_count > 0);
+// Keyboard has no analog sticks — Analog is unavailable (PSX modes).
+static bool pad_mode_keyboard_is_digital(const LauncherModel* m, int p) {
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    return m->s.player_src[p] == 1 &&
+           !(prof && prof->controller.modes && prof->controller.mode_count > 0);
+}
+
+static const char* kNegconTip =
+    "Namco neGcon for racing games. Twist: left stick. "
+    "I / II: right / left trigger (or Cross / Square). "
+    "A: Circle. B: Triangle. R: R1. L: L1.";
+
+void pad_mode_selector(LauncherModel* m, const LauncherTheme& th, int p, float w) {
+    PadModeOpt segs[kPadModeOptMax];
+    const int n = pad_mode_options(m, segs);
+    const bool kb_digital_only = pad_mode_keyboard_is_digital(m, p);
 
     const float gap = px(4.0f);
     const float seg_w = (w - gap * (n - 1)) / n;
     for (int i = 0; i < n; ++i) {
         if (i) ImGui::SameLine(0, gap);
-        bool sel = m->s.pad_mode[p] == segs[i].mode;
+        const int shown = launcher_model_analog_note(m) != NULL &&
+                          kb_digital_only && m->s.pad_mode[p] == 1 ? 2 : m->s.pad_mode[p];
+        bool sel = shown == segs[i].mode;
         // Analog needs sticks; grey out on keyboard.
         const bool stick_mode = (segs[i].mode == 1);
         const bool disabled = kb_digital_only && stick_mode;
@@ -3432,6 +3965,48 @@ void pad_mode_selector(LauncherModel* m, const LauncherTheme& th, int p, float w
         }
         ImGui::PopID();
     }
+    if (m->s.player_src[p] == 2 && m->s.pad_mode[p] == 1) {
+        const char* note = launcher_model_analog_note(m);
+        if (note && *note) ImGui::TextWrapped("%s", note);
+    }
+}
+
+// The same choice as pad_mode_selector, as a drop-down list `w` wide, for the
+// card of a tabbed dashboard. It calls the same launcher_model_set_pad_mode
+// with the same values. `live` false draws the list closed and greyed with the
+// type the seat has: a title locked to one pad type. A seat with no pad type
+// (a mouse or a light gun, or `typed` false) shows a dash.
+static void pad_mode_combo(LauncherModel* m, int p, float w, bool live,
+                           bool typed = true) {
+    PadModeOpt opts[kPadModeOptMax];
+    const int n = pad_mode_options(m, opts);
+    const bool kb_digital_only = pad_mode_keyboard_is_digital(m, p);
+    // Keyboard is digital at runtime whatever the stored type says; the list
+    // names what the player gets, and leaves the stored value alone.
+    const int shown = kb_digital_only && m->s.pad_mode[p] == 1 ? 2 : m->s.pad_mode[p];
+    const char* preview = "\xE2\x80\x94";
+    if (typed && !launcher_model_source_is_pointer(m->s.player_src[p]))
+        for (int i = 0; i < n; ++i)
+            if (opts[i].mode == shown) preview = opts[i].label;
+    ImGui::SetNextItemWidth(w);
+    if (!live) ImGui::BeginDisabled();
+    if (ImGui::BeginCombo("##padtype", preview)) {
+        for (int i = 0; i < n; ++i) {
+            // Analog needs sticks; grey out on keyboard.
+            const bool disabled = kb_digital_only && opts[i].mode == 1;
+            const bool sel = opts[i].mode == shown;
+            if (disabled) ImGui::BeginDisabled();
+            if (ImGui::Selectable(opts[i].label, sel) && !disabled)
+                launcher_model_set_pad_mode(m, p, opts[i].mode);
+            if (opts[i].mode == RECOMP_LAUNCHER_PAD_MODE_NEGCON &&
+                ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", ui_text(kNegconTip));
+            if (sel) ImGui::SetItemDefaultFocus();
+            if (disabled) ImGui::EndDisabled();
+        }
+        ImGui::EndCombo();
+    }
+    if (!live) ImGui::EndDisabled();
 }
 
 // Each player is its OWN self-contained card ("PLAYER 1" as its eyebrow), not a
@@ -3459,7 +4034,7 @@ void draw_source_selectables(LauncherModel* m, int p) {
         choose(0, 0, nullptr, nullptr);
         if (psx) launcher_binds_refresh(m);
     }
-    if (m->has_mouse_controls && p == 0) {
+    if (m->has_mouse_controls && p == 0 && pick == kPickSeat) {
         const bool kbm = m->s.player_src[p] == 1 && m->s.mouse_enabled;
         const bool kb  = m->s.player_src[p] == 1 && !m->s.mouse_enabled;
         if (ImGui::Selectable(ui_text("Keyboard + Mouse"), kbm))
@@ -3693,6 +4268,41 @@ static int np_guess_local_seat(const LauncherModel* m) {
     return 0;
 }
 
+// The pad picture of a player card: PSX-style games swap analog/digital art
+// with the mode; consoles without a mode-swap art PAIR (SNES, and Genesis —
+// which has pad modes but a SINGLE pad image) always show the generic
+// g_pad. The swap only happens when the profile actually ships the pair.
+static const LauncherTexture& player_pad_art(const LauncherModel* m, int pad_seat) {
+    const SystemProfile* aprof = (const SystemProfile*)m->profile;
+    const bool has_swap_art = aprof && aprof->controller.image_analog != nullptr;
+    // The art follows the SELECTED mode. The Analog / D-Pad pair right
+    // below this image is a two-state control with no other feedback, so
+    // the pad picture is the answer to "which did I just pick?" — leaving
+    // it on the DualShock while D-Pad is lit reads as a broken control.
+    //
+    // This deliberately replaces the earlier rule (art keyed only to a
+    // game LOCKED to D-Pad, on the reasoning that mode picks a PROTOCOL
+    // and the player is still physically holding a DualShock). Owner
+    // decision: the selector's feedback value wins.
+    //
+    // s.pad_mode already carries the locked value for a non-selectable
+    // title (launcher_model_init), so a locked D-Pad game keeps exactly
+    // the art it showed before. Mode 2 is D-Pad; 1 Analog, 0 Hybrid — both
+    // of those are stick-bearing pads and keep the analog image. A console
+    // with its own mode vocabulary (Genesis 3/6-Button) never reaches here:
+    // it ships a single pad image, so has_swap_art is false.
+    //
+    // Keyboard is digital at runtime whatever the stored mode says (the
+    // Analog segment is greyed out for it), so it shows the digital pad
+    // rather than promising sticks the player does not have.
+    const bool kb_digital =
+        m->s.player_src[pad_seat] == 1 &&
+        !(aprof && aprof->controller.modes && aprof->controller.mode_count > 0);
+    const bool digital =
+        has_swap_art && (kb_digital || m->s.pad_mode[pad_seat] == 2);
+    return has_swap_art ? (digital ? g_pad_digital : g_pad_analog) : g_pad;
+}
+
 void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w) {
     char id[24];  snprintf(id, sizeof(id), "player%d", p);
     char eb[40];
@@ -3711,44 +4321,19 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
     const float inner = ImGui::GetContentRegionAvail().x;
     const float cw    = inner;   // controls span the card => flush by construction
 
-    // pad art centered in the card: PSX-style games swap analog/digital art
-    // with the mode; consoles without a mode-swap art PAIR (SNES, and Genesis —
-    // which has pad modes but a SINGLE pad image) always show the generic
-    // g_pad. The swap only happens when the profile actually ships the pair.
+    // PS1 Mouse + pad (PS1B-279): while Player 1 of a one-card PSX title holds
+    // the mouse, this card owns both ports. pad_seat is the other port's seat;
+    // the pad art, pad type and Configure follow that pad.
+    const int pair_port =
+        (p == 0 && launcher_model_mouse_pair_available(m)) ? launcher_model_mouse_pair_port(m) : 0;
+    const int pad_seat = pair_port ? launcher_model_mouse_pair_pad_seat(m) : p;
+
+    // pad art centered in the card (player_pad_art picks the picture).
     {
-        const SystemProfile* aprof = (const SystemProfile*)m->profile;
-        const bool has_swap_art = aprof && aprof->controller.image_analog != nullptr;
-        // The art follows the SELECTED mode. The Analog / D-Pad pair right
-        // below this image is a two-state control with no other feedback, so
-        // the pad picture is the answer to "which did I just pick?" — leaving
-        // it on the DualShock while D-Pad is lit reads as a broken control.
-        //
-        // This deliberately replaces the earlier rule (art keyed only to a
-        // game LOCKED to D-Pad, on the reasoning that mode picks a PROTOCOL
-        // and the player is still physically holding a DualShock). Owner
-        // decision: the selector's feedback value wins.
-        //
-        // s.pad_mode already carries the locked value for a non-selectable
-        // title (launcher_model_init), so a locked D-Pad game keeps exactly
-        // the art it showed before. Mode 2 is D-Pad; 1 Analog, 0 Hybrid — both
-        // of those are stick-bearing pads and keep the analog image. A console
-        // with its own mode vocabulary (Genesis 3/6-Button) never reaches here:
-        // it ships a single pad image, so has_swap_art is false.
-        //
-        // Keyboard is digital at runtime whatever the stored mode says (the
-        // Analog segment is greyed out for it), so it shows the digital pad
-        // rather than promising sticks the player does not have.
-        const bool kb_digital =
-            m->s.player_src[p] == 1 &&
-            !(aprof && aprof->controller.modes && aprof->controller.mode_count > 0);
-        const bool digital =
-            has_swap_art && (kb_digital || m->s.pad_mode[p] == 2);
-        const LauncherTexture& art = has_swap_art
-            ? (digital ? g_pad_digital : g_pad_analog) : g_pad;
         // Center on the FITTED width so a near-square pad (N64) or a portrait
         // handheld (GB/GBC) sits centered, not left-shifted by the landscape
         // box's spare width.
-        image_fit_centered(art, 120, 78, inner);
+        image_fit_centered(player_pad_art(m, pad_seat), 120, 78, inner);
     }
     ImGui::Dummy(ImVec2(0, px(6)));
 
@@ -3762,8 +4347,10 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
     }
 
     ImGui::SetNextItemWidth(cw);
-    if (ImGui::BeginCombo("##src", ui_text(launcher_model_player_src_label(m, p)))) {
-        draw_source_selectables(m, p);
+    const bool primary = p == 0 && launcher_model_mouse_pair_available(m);
+    if (ImGui::BeginCombo("##src", ui_text(pair_port ? "PS1 Mouse"
+                                                     : launcher_model_player_src_label(m, p)))) {
+        draw_source_selectables(m, p, primary ? kPickPrimary : kPickSeat);
         ImGui::EndCombo();
     }
     if(p==0 && launcher_model_mouse_pair_port(m)) {
@@ -3777,6 +4364,38 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
         }
     }
     ImGui::Dummy(ImVec2(0, px(4)));
+    if (pair_port) {
+        // Which port the mouse is in: Syndicate Wars reads it in port 1,
+        // Quake II and Final Doom in port 2 (pad in port 1).
+        const float gap = px(4.0f);
+        const float seg_w = (cw - gap) * 0.5f;
+        for (int port = 1; port <= 2; ++port) {
+            if (port > 1) ImGui::SameLine(0, gap);
+            char lbl[48], sid[24];
+            std::snprintf(lbl, sizeof(lbl), "%s %d", ui_text("Mouse in port"), port);
+            std::snprintf(sid, sizeof(sid), "mouseport%d", port);
+            if (segment_button(sid, lbl, ImVec2(seg_w, px(28)),
+                               pair_port == port, true, th)) {
+                launcher_model_set_mouse_pair_port(m, port);
+                launcher_binds_refresh(m);
+            }
+        }
+        ImGui::Dummy(ImVec2(0, px(4)));
+        // The pad (or keyboard) in the other port, for the same player.
+        ImGui::TextColored(col(th.text_muted), "%s %d", ui_text("Controller in port"), pad_seat + 1);
+        ImGui::SetNextItemWidth(cw);
+        if (ImGui::BeginCombo("##pairpad",
+                              ui_text(launcher_model_player_src_label(m, pad_seat)))) {
+            draw_source_selectables(m, pad_seat, kPickPadOnly);
+            ImGui::EndCombo();
+        }
+        ImGui::Dummy(ImVec2(0, px(4)));
+        if (m->pad_mode_supported && m->pad_mode_selectable &&
+            m->s.player_src[pad_seat] != 0) {
+            pad_mode_selector(m, th, pad_seat, cw);
+            ImGui::Dummy(ImVec2(0, px(4)));
+        }
+    }
     // Configure + connection status share ONE half/half row (Configure left,
     // status right) so the card stays short — that keeps the memory cards below
     // it from being pushed off the bottom. (Analog-stick deadzone lives on the
@@ -3785,9 +4404,10 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
         const float gap  = px(th.spacing_sm);
         const float half = (cw - gap) * 0.5f;
         const float btnh = px(32);
-        if (ImGui::Button(ui_text("Configure"), ImVec2(half, btnh))) launcher_model_open_config(m, p);
+        if (ImGui::Button(ui_text("Configure"), ImVec2(half, btnh)))
+            launcher_model_open_config(m, pad_seat);
         ImGui::SameLine(0, gap);
-        const bool on = m->s.player_src[p] != 0;
+        const bool on = pair_port || m->s.player_src[p] != 0;
         const char* st = ui_text(on ? "connected" : "not assigned");
         const float sw = px(10) + px(8) + ImGui::CalcTextSize(st).x;
         // center the dot+label within the right half, vertically on the button
@@ -3853,8 +4473,193 @@ static void draw_player_tabs(LauncherModel* m, const LauncherTheme& th, int n) {
 // A console whose pads take no accessory (no pak ports) keeps the card at full
 // width. The right half is simply empty while the selected player's pak kind is
 // None: the picker on the card is how one is added.
+// The controller card of a tabbed dashboard (ControllerSpec.player_tabs). It
+// has the controls of draw_player_panel with two differences. The pad type is
+// a list (Type) beside the device list (Input), not a row of buttons. And on a
+// wide card the pad picture stands to the left of the controls, so that no
+// control is stretched across the card; a narrow card keeps the picture on
+// top. The model calls and the values they store are those of
+// draw_player_panel.
+static void draw_player_card(LauncherModel* m, const LauncherTheme& th, int p, float w) {
+    char id[24];  snprintf(id, sizeof(id), "player%d", p);
+    char eb[40];
+    if (p == 0 && m->netplay_supported) {
+        const int seat = np_guess_local_seat(m);
+        snprintf(eb, sizeof(eb), "%s %d / %s", ui_text("PLAYER"), seat + 1,
+                 ui_text("NETPLAY"));
+    } else {
+        snprintf(eb, sizeof(eb), "%s %d", ui_text("PLAYER"), p + 1);
+    }
+
+    if (!begin_panel(id, w, false)) { end_panel(); return; }
+    ImGui::PushID(p);
+    eyebrow(eb);
+
+    const float inner = ImGui::GetContentRegionAvail().x;
+    const float gap   = px(th.spacing_sm);
+    const bool  wide  = inner >= px(kDashWideCard);
+
+    // PS1 Mouse + pad (PS1B-279), as in draw_player_panel: while Player 1 of a
+    // one-card title holds the mouse, this card owns both ports.
+    const int pair_port =
+        (p == 0 && launcher_model_mouse_pair_available(m)) ? launcher_model_mouse_pair_port(m) : 0;
+    const int pad_seat = pair_port ? launcher_model_mouse_pair_pad_seat(m) : p;
+    const bool primary = p == 0 && launcher_model_mouse_pair_available(m);
+
+    float cw = inner;        // width of the controls
+    float art_bottom = 0.0f; // wide: where the picture ends
+    if (wide) {
+        const float art_w = px(132.0f), art_gap = px(18.0f);
+        const ImVec2 at = ImGui::GetCursorPos();
+        image_fit_centered(player_pad_art(m, pad_seat), 132, 86, art_w);
+        art_bottom = at.y + px(86.0f);
+        ImGui::SetCursorPos(ImVec2(at.x + art_w + art_gap, at.y));
+        cw = inner - art_w - art_gap;
+        ImGui::BeginGroup();
+    } else {
+        image_fit_centered(player_pad_art(m, pad_seat), 120, 78, inner);
+        ImGui::Dummy(ImVec2(0, px(6)));
+    }
+
+    // Two lists side by side under their names: Type and Input. A console
+    // without pad types has the Input list alone.
+    const bool  show_type = m->pad_mode_supported != 0;
+    const float type_w = !show_type ? 0.0f : wide ? px(150.0f) : (cw - gap) * 0.4f;
+    float src_w = show_type ? cw - gap - type_w : cw;
+    if (wide && src_w > px(300.0f)) src_w = px(300.0f);
+    auto names = [&](const char* input_name) {
+        const float x0 = ImGui::GetCursorPosX();
+        if (show_type) {
+            ImGui::TextColored(col(th.text_muted), "%s", ui_text("Type"));
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(x0 + type_w + gap);
+        }
+        ImGui::TextColored(col(th.text_muted), "%s", input_name);
+    };
+
+    names(ui_text("Input"));
+    if (show_type) {
+        // A mouse or light-gun seat has no pad type to choose (next to the
+        // mouse, the pad's type is on the pad's own row below).
+        pad_mode_combo(m, p, type_w,
+                       !pair_port && m->pad_mode_selectable &&
+                           !launcher_model_source_is_pointer(m->s.player_src[p]),
+                       !pair_port);
+        ImGui::SameLine(0, gap);
+    }
+    ImGui::SetNextItemWidth(src_w);
+    if (ImGui::BeginCombo("##src", ui_text(pair_port ? "PS1 Mouse"
+                                                     : launcher_model_player_src_label(m, p)))) {
+        draw_source_selectables(m, p, primary ? kPickPrimary : kPickSeat);
+        ImGui::EndCombo();
+    }
+    if (pair_port) {
+        // Which port the mouse is in: Syndicate Wars reads it in port 1,
+        // Quake II and Final Doom in port 2 (pad in port 1).
+        ImGui::Dummy(ImVec2(0, px(4)));
+        const float seg_gap = px(4.0f);
+        const float seg_w = (cw - seg_gap) * 0.5f;
+        for (int port = 1; port <= 2; ++port) {
+            if (port > 1) ImGui::SameLine(0, seg_gap);
+            char lbl[48], sid[24];
+            std::snprintf(lbl, sizeof(lbl), "%s %d", ui_text("Mouse in port"), port);
+            std::snprintf(sid, sizeof(sid), "mouseport%d", port);
+            if (segment_button(sid, lbl, ImVec2(seg_w, px(28)),
+                               pair_port == port, true, th)) {
+                launcher_model_set_mouse_pair_port(m, port);
+                launcher_binds_refresh(m);
+            }
+        }
+        ImGui::Dummy(ImVec2(0, px(4)));
+        // The pad (or keyboard) in the other port, for the same player.
+        char pad_name[48];
+        std::snprintf(pad_name, sizeof(pad_name), "%s %d", ui_text("Controller in port"), pad_seat + 1);
+        names(pad_name);
+        ImGui::PushID("pairpad");
+        if (show_type) {
+            pad_mode_combo(m, pad_seat, type_w,
+                           m->pad_mode_selectable && m->s.player_src[pad_seat] != 0);
+            ImGui::SameLine(0, gap);
+        }
+        ImGui::SetNextItemWidth(src_w);
+        if (ImGui::BeginCombo("##pairpad",
+                              ui_text(launcher_model_player_src_label(m, pad_seat)))) {
+            draw_source_selectables(m, pad_seat, kPickPadOnly);
+            ImGui::EndCombo();
+        }
+        ImGui::PopID();
+    }
+    if (show_type && m->s.player_src[pad_seat] == 2 && m->s.pad_mode[pad_seat] == 1) {
+        const char* note = launcher_model_analog_note(m);
+        if (note && *note) ImGui::TextWrapped("%s", note);
+    }
+    ImGui::Dummy(ImVec2(0, px(6)));
+    // Configure and the connection state on one row. (Analog-stick deadzone
+    // lives on the Configure page's per-player Deadzone stepper.)
+    {
+        const float btnh = px(32);
+        const float btnw = wide ? px(150.0f) : (cw - gap) * 0.5f;
+        if (ImGui::Button(ui_text("Configure"), ImVec2(btnw, btnh)))
+            launcher_model_open_config(m, pad_seat);
+        ImGui::SameLine(0, wide ? px(16.0f) : gap);
+        const bool on = pair_port || m->s.player_src[p] != 0;
+        const char* st = ui_text(on ? "connected" : "not assigned");
+        if (!wide) {
+            // center the dot+label within the right half
+            const float sw = px(10) + px(8) + ImGui::CalcTextSize(st).x;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (btnw - sw) * 0.5f);
+        }
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (btnh - ImGui::GetTextLineHeight()) * 0.5f);
+        draw_dot(on, th.good, th.text_muted);
+        ImGui::TextColored(on ? col(th.good) : col(th.text_muted), "%s", st);
+    }
+    // Controller pak, under Configure, for a console whose pads take one.
+    if (p < launcher_model_pak_ports(m)) {
+        ImGui::Dummy(ImVec2(0, px(6)));
+        pak_kind_picker(m, p, cw);
+    }
+    if (wide) {
+        ImGui::EndGroup();
+        if (ImGui::GetCursorPosY() < art_bottom) {
+            ImGui::SetCursorPosY(art_bottom);
+            ImGui::Dummy(ImVec2(0, 0));
+        }
+    }
+    ImGui::PopID();
+    end_panel();
+}
+
+// The controller section of a tabbed dashboard: from two players on, one tab
+// per player (players 5 to 8 in a second row) and the open tab's card under
+// the strip; one card and no strip for a one-player title. A tab carries the
+// card's own "connected" dot, so nobody has to open every tab to see who has a
+// device. The section is as wide as its column, which the dashboard makes as
+// wide as the memory-card block.
+static void draw_player_tabs(LauncherModel* m, const LauncherTheme& th) {
+    const float availw = ImGui::GetContentRegionAvail().x;
+    int open = 0;
+    if (const int n = launcher_model_player_tabs(m)) {
+        bool assigned[LNG_MAX_PLAYERS];
+        for (int p = 0; p < n; ++p) assigned[p] = m->s.player_src[p] != 0;
+        const int was = launcher_model_player_tab(m);
+        open = rui_player_tabs(n, was, assigned, availw, dash_tabs_look(th),
+                               ui_text("Player"));
+        if (open != was) launcher_model_set_player_tab(m, open);
+    }
+    begin_container("pc_tab", ImVec2(availw, 0), ImGuiChildFlags_AutoResizeY);
+    draw_player_card(m, th, open, availw);
+    end_container();
+}
+
+// Lays out player cards: stretch to fill the row until there is room for
+// another card at the standard width, then bump the column count (memcards
+// stay fixed-width via dash_card_width).
 void draw_controllers_row(LauncherModel* m, const LauncherTheme& th) {
     if (m->lock_device) return;   // fixed pad: hide the player controller cards entirely
+    if (launcher_model_dashboard_tabbed(m)) {
+        draw_player_tabs(m, th);
+        return;
+    }
     int n = launcher_model_visible_player_count(m);
     if (n < 1) n = 1;
     if (n > LNG_MAX_PLAYERS) n = LNG_MAX_PLAYERS;
@@ -3890,6 +4695,260 @@ void panel_controller_draw(LauncherModel* m, const LauncherTheme* th) {
     draw_controllers_row(m, *th);
 }
 
+// ---- "Start from" (PSX) ------------------------------------------------------
+// The block beside the controller card and the memory cards: what the next
+// PLAY starts with. Power on, one of the title's save states, or one of its
+// replays (launcher_model_select_start; the lister is psx_start_from.h).
+
+// The pictures of the entries, made when a row first shows them.
+struct StartThumb {
+    std::string     key;   // file and offset
+    LauncherTexture tex;
+};
+static std::vector<StartThumb> g_start_thumbs;
+
+static const LauncherTexture* start_thumb(const LauncherStartEntry& e) {
+#if defined(RECOMP_LAUNCHER_V2_BUILD_MODULE)
+    if (e.thumb_w <= 0 || e.thumb_h <= 0) return nullptr;
+    const std::string key = "provider:" + std::to_string(e.thumb_offset);
+#else
+    if (!e.thumb_path[0] || e.thumb_w <= 0 || e.thumb_h <= 0) return nullptr;
+    const std::string key = std::string(e.thumb_path) + "@" + std::to_string(e.thumb_offset);
+#endif
+    for (const StartThumb& t : g_start_thumbs)
+        if (t.key == key) return t.tex.id ? &t.tex : nullptr;
+    StartThumb made = { key, { 0, 0, 0 } };
+    const size_t bytes = (size_t)e.thumb_w * (size_t)e.thumb_h * 4;
+    std::vector<unsigned char> px_buf(bytes);
+#if defined(RECOMP_LAUNCHER_V2_BUILD_MODULE)
+    if (launcher_v2_thumbnail(e.thumb_offset, px_buf.data(), (uint32_t)bytes) == bytes) {
+        for (size_t i = 0; i < bytes; i += 4) {
+            std::swap(px_buf[i], px_buf[i + 2]);
+            px_buf[i + 3] = 255;
+        }
+        made.tex = launcher_texture_from_rgba(px_buf.data(), e.thumb_w, e.thumb_h);
+    }
+#else
+    if (FILE* f = fopen(e.thumb_path, "rb")) {
+        if (fseek(f, (long)e.thumb_offset, SEEK_SET) == 0 &&
+            fread(px_buf.data(), 1, bytes, f) == bytes) {
+            // The file has blue, green, red, alpha; the texture wants red first.
+            for (size_t i = 0; i < bytes; i += 4) {
+                std::swap(px_buf[i], px_buf[i + 2]);
+                px_buf[i + 3] = 255;
+            }
+            made.tex = launcher_texture_from_rgba(px_buf.data(), e.thumb_w, e.thumb_h);
+        }
+        fclose(f);
+    }
+#endif
+    g_start_thumbs.push_back(made);
+    return g_start_thumbs.back().tex.id ? &g_start_thumbs.back().tex : nullptr;
+}
+
+// One row of the block: a radio mark, the entry's picture (with_thumb), a
+// title and a line under it, and on the right the mark of another build.
+// Returns true when the row was chosen (a click, or activate on the focused
+// row).
+static bool start_row(const char* id, bool selected, bool with_thumb,
+                      const LauncherTexture* thumb, const char* title, const char* detail,
+                      const char* mark, const LauncherTheme& th, float w) {
+    const float pad = px(8.0f);
+    const float thumb_w = px(56.0f), thumb_h = px(42.0f);
+    const float row_h = (with_thumb ? thumb_h : ImGui::GetTextLineHeight() * 2.0f + px(2.0f)) + pad * 2.0f;
+    const ImVec2 mn = ImGui::GetCursorScreenPos();
+    const ImVec2 mx(mn.x + w, mn.y + row_h);
+    const bool chosen = ImGui::InvisibleButton(id, ImVec2(w, row_h), ImGuiButtonFlags_EnableNav);
+    const bool hov = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(mn, mx, imcol(selected ? th.panel_hovered : hov ? th.control_hovered : th.control),
+                      px(th.radius_sm));
+    if (selected) dl->AddRect(mn, mx, imcol(th.accent), px(th.radius_sm), 0, px(1.5f));
+
+    const float mid = (mn.y + mx.y) * 0.5f;
+    const ImVec2 dot(mn.x + pad + px(7.0f), mid);
+    dl->AddCircle(dot, px(6.5f), imcol(selected ? th.accent : th.text_muted), 0, px(1.5f));
+    if (selected) dl->AddCircleFilled(dot, px(3.5f), imcol(th.accent));
+
+    float x = mn.x + pad + px(14.0f) + pad;
+    if (with_thumb) {
+        const ImVec2 a(x, mn.y + pad), b(x + thumb_w, mn.y + pad + thumb_h);
+        if (thumb) dl->AddImageRounded(tid(*thumb), a, b, ImVec2(0, 0), ImVec2(1, 1),
+                                       imcol(lng_rgba(1, 1, 1, 1)), px(3.0f));
+        else       dl->AddRectFilled(a, b, imcol(th.panel), px(3.0f));
+        dl->AddRect(a, b, imcol(th.border), px(3.0f), 0, px(1.0f));
+        x += thumb_w + pad;
+    }
+    float right = mx.x - pad;
+    if (mark && mark[0]) {
+        const ImVec2 ts = ImGui::CalcTextSize(mark);
+        const ImVec2 a(right - ts.x - px(12.0f), mid - ts.y * 0.5f - px(3.0f));
+        const ImVec2 b(right, mid + ts.y * 0.5f + px(3.0f));
+        dl->AddRect(a, b, imcol(th.warn), px(4.0f), 0, px(1.0f));
+        dl->AddText(ImVec2(a.x + px(6.0f), mid - ts.y * 0.5f), imcol(th.warn), mark);
+        right = a.x - pad;
+    }
+    const float text_h = ImGui::GetTextLineHeight();
+    const float top = mid - text_h - px(1.0f);
+    dl->PushClipRect(ImVec2(x, mn.y), ImVec2(right, mx.y), true);
+    dl->AddText(ImVec2(x, top), imcol(th.text), title);
+    dl->AddText(ImVec2(x, top + text_h + px(2.0f)), imcol(th.text_muted), detail);
+    dl->PopClipRect();
+    return chosen;
+}
+
+static void start_note(const LauncherTheme& th, const char* text) {
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(col(th.text_muted), "%s", text);
+    ImGui::PopTextWrapPos();
+}
+
+// h > 0: the tall block beside the cards, h high, with its list scrolling
+// inside. h == 0: the block under the cards, as high as its content up to a
+// limit.
+static void draw_start_from(LauncherModel* m, const LauncherTheme& th, float w, float h) {
+    ImGuiChildFlags flags = ImGuiChildFlags_Borders;
+    if (h <= 0.0f) {
+        flags |= ImGuiChildFlags_AutoResizeY;
+        ImGui::SetNextWindowSizeConstraints(ImVec2(w, 0.0f), ImVec2(w, px(330.0f)));
+    }
+    if (!ImGui::BeginChild("start_from", ImVec2(w, h > 0.0f ? h : 0.0f), flags)) {
+        ImGui::EndChild();
+        return;
+    }
+    eyebrow("START FROM");
+    const float rw = ImGui::GetContentRegionAvail().x;
+    const int count = launcher_model_start_count(m);
+    const int sel = launcher_model_start_selected(m);
+    const float gap = px(4.0f);
+
+    if (start_row("##power_on", sel < 0, false, nullptr, ui_text("Power on"),
+                  ui_text("The game starts as the console does."), nullptr, th, rw))
+        launcher_model_select_start(m, -1);
+
+    for (int kind = LNG_START_STATE; kind <= LNG_START_REPLAY; ++kind) {
+        ImGui::Dummy(ImVec2(0, px(6.0f)));
+        ImGui::TextColored(col(th.text_muted), "%s",
+                           ui_text(kind == LNG_START_STATE ? "Save states" : "Replays"));
+        int shown = 0;
+        for (int i = 0; i < count; ++i) {
+            const LauncherStartEntry* e = launcher_model_start_entry(m, i);
+            if (!e || e->kind != kind) continue;
+            char title[160], detail[160], when[32] = "";
+            const time_t t = (time_t)e->when;
+            if (const struct tm* lt = localtime(&t)) strftime(when, sizeof(when), "%Y-%m-%d %H:%M", lt);
+            if (kind == LNG_START_STATE) {
+                if (e->disc > 0)
+                    snprintf(title, sizeof(title), "%s \xC2\xB7 %s %d", e->label, ui_text("Disc"), e->disc);
+                else
+                    snprintf(title, sizeof(title), "%s", e->label);
+                snprintf(detail, sizeof(detail), "%s", when);
+            } else {
+                const unsigned secs = e->frames / 60u;
+                snprintf(title, sizeof(title), "%s", e->label);
+                snprintf(detail, sizeof(detail), "%s \xC2\xB7 %u:%02u \xC2\xB7 %s%s", when, secs / 60u, secs % 60u,
+                         ui_text(e->power_on ? "from power-on" : "from a save state"),
+                         e->partial ? ui_text(" \xC2\xB7 not finished") : "");
+            }
+            char id[32];
+            snprintf(id, sizeof(id), "##start%d", i);
+            ImGui::Dummy(ImVec2(0, gap));
+            if (start_row(id, sel == i, true, start_thumb(*e), title, detail,
+                          e->build == LNG_START_BUILD_OTHER ? ui_text("other build") : nullptr,
+                          th, rw))
+                launcher_model_select_start(m, i);
+            ++shown;
+        }
+        if (!shown)
+            start_note(th, ui_text(kind == LNG_START_STATE
+                ? "No save state yet. In the game, the save-state menu (F7) makes one."
+                : "No replay yet. Tick Record replay below, or record in the game (F12)."));
+        const int more = kind == LNG_START_STATE ? m->start_notes.states_unlisted
+                                                 : m->start_notes.replays_unlisted;
+        if (more > 0) {
+            char line[96];
+            snprintf(line, sizeof(line), "%d %s", more, ui_text("older ones are not listed."));
+            start_note(th, line);
+        }
+        if (kind == LNG_START_STATE && m->start_notes.states_elsewhere > 0) {
+            char line[160];
+            snprintf(line, sizeof(line), "%d %s", m->start_notes.states_elsewhere,
+                     ui_text("of the other BIOS or of another program are not listed."));
+            start_note(th, line);
+        }
+    }
+
+    // What the choice means when it is not plain.
+    if (const LauncherStartEntry* e = launcher_model_start_entry(m, sel)) {
+        if (e->build == LNG_START_BUILD_OTHER) {
+            ImGui::Dummy(ImVec2(0, px(6.0f)));
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(col(th.warn), "%s", ui_text(e->kind == LNG_START_STATE
+                ? "Another build made this save state. This build refuses it and starts from power-on."
+                : "Another build made this replay. It may go out of sync."));
+            ImGui::PopTextWrapPos();
+        }
+    }
+    if (count > 0 && !m->start_notes.build_known) {
+        ImGui::Dummy(ImVec2(0, px(6.0f)));
+        start_note(th, ui_text("Not checked: whether this build made them "
+                               "(no overlay_codegen_hash.h beside the game)."));
+    }
+    ImGui::EndChild();
+}
+
+// Width of the memory-card block of the dashboard: two 300-unit cards and
+// their gap. The tabbed dashboard gives it to the controller section too.
+static const float kDashBlockW = 608.0f;
+// The least width of the "Start from" block beside that column.
+static const float kDashStartW = 300.0f;
+
+// The wide dashboard of a console with tabs (ControllerSpec.player_tabs; PSX).
+// The GAME card stands on the left. Beside it, one column as wide as the
+// memory-card block: the controller section and the memory cards, each a strip
+// of tabs over one card. The column is narrower only when the window is. The
+// space this leaves on the right is the "Start from" block, as tall as the
+// taller of its two neighbours; in a window without that space the block
+// stands under the memory cards.
+static void draw_dashboard_tabbed(LauncherModel* m, const LauncherTheme& th,
+                                  const LauncherPanel* game_p, const LauncherPanel* ctrl_p,
+                                  const LauncherPanel* tpak_p, const LauncherPanel* ident_p,
+                                  const LauncherPanel* save_p) {
+    const float gap = px(th.spacing_md);
+    float game_h = 0.0f;
+    if (game_p) {
+        g_game_fill_h = false;
+        begin_container("dash_l", ImVec2(px(400), 0), ImGuiChildFlags_AutoResizeY);
+        game_p->draw(m, &th);
+        end_container();
+        game_h = ImGui::GetItemRectSize().y;
+        ImGui::SameLine(0, gap);
+    }
+    const float availw = ImGui::GetContentRegionAvail().x;
+    const float block_w = px(kDashBlockW) < availw ? px(kDashBlockW) : availw;
+    const bool start = launcher_model_start_from_available(m) != 0;
+    const bool beside = start && availw >= px(kDashBlockW) + gap + px(kDashStartW);
+    begin_container("dash_r", ImVec2(block_w, 0), ImGuiChildFlags_AutoResizeY);
+    bool first = true;
+    const LauncherPanel* const stack[] = { ctrl_p, tpak_p, ident_p, save_p };
+    for (const LauncherPanel* panel : stack) {
+        if (!panel || (panel == ctrl_p && m->lock_device)) continue;
+        if (!first) ImGui::Dummy(ImVec2(0, gap));
+        panel->draw(m, &th);
+        first = false;
+    }
+    if (start && !beside) {
+        if (!first) ImGui::Dummy(ImVec2(0, gap));
+        draw_start_from(m, th, block_w, 0.0f);
+    }
+    end_container();
+    if (beside) {
+        const float col_h = ImGui::GetItemRectSize().y;
+        ImGui::SameLine(0, gap);
+        draw_start_from(m, th, ImGui::GetContentRegionAvail().x, col_h > game_h ? col_h : game_h);
+    }
+}
+
 // The dashboard COMPOSES whichever panels this game's SystemProfile lists in
 // panels_dashboard — it does not hardcode a fixed set. GAME is always
 // present; the side column stacks CONTROLLERS plus any optional modules
@@ -3923,7 +4982,9 @@ void draw_dashboard(LauncherModel* m, const LauncherTheme& th, int logical_w) {
         // controller cards — so N64 takes the ordinary else-branch below and
         // the fill-to-height columns are back for it too.
         const bool has_save = (save_p != nullptr);
-        if (has_save) {
+        if (has_save && launcher_model_dashboard_tabbed(m)) {
+            draw_dashboard_tabbed(m, th, game_p, ctrl_p, tpak_p, ident_p, save_p);
+        } else if (has_save) {
             // Capture body height before the row so multitap can grow the right
             // column to the footer.
             const float row_h = ImGui::GetContentRegionAvail().y;
@@ -4025,6 +5086,10 @@ void draw_dashboard(LauncherModel* m, const LauncherTheme& th, int logical_w) {
         if (tpak_p) { ImGui::Spacing(); tpak_p->draw(m, &th); }
         if (ident_p) { ImGui::Spacing(); ident_p->draw(m, &th); }
         if (save_p) { ImGui::Spacing(); save_p->draw(m, &th); }
+        if (launcher_model_start_from_available(m)) {
+            ImGui::Spacing();
+            draw_start_from(m, th, ImGui::GetContentRegionAvail().x, 0.0f);
+        }
     }
 }
 
@@ -4627,6 +5692,8 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         }
     }
 
+    if (m->profile && !strcmp(m->profile->id,"psx")) draw_render_pipeline(m,th);
+
     // Frame interpolation is only meaningful under OpenGL (Software has no
     // interpolation pass); Presentation target only matters once frame
     // interpolation is actually on.
@@ -4803,6 +5870,13 @@ void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
     // volume stepper, which stretches its value field to reach it -- so the
     // column is flush on both sides.
     const float cb = ImGui::GetFrameHeight();   // a checkbox is square
+    /* One control width for the whole card. In the PSX compact layout the
+     * fields are fitted to the card, so a control hard-coded to 150 would sit
+     * narrower than the rows above and below it (and the volume stepper's
+     * right edge would not line up with them). */
+    const float ctrl_w = g_psx_compact_settings
+                             ? settings_fit_w("Volume", th, 0, true)
+                             : ctrl_w;
     // Sample rate: hidden for consoles whose runtime has no audio-frequency
     // setting (SystemProfile.hide_audio_freq — NES has Volume only).
     const SystemProfile* audio_prof = (const SystemProfile*)m->profile;
@@ -4815,8 +5889,8 @@ void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
             launcher_model_cycle_freq(m);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Choose the host audio output sample rate. Game and music speed stay unchanged.");
     }
-    row_label_right("Volume", th, px(SETTINGS_CTRL_W));
-    int dv = 0; stepper("vol", m->s.volume, "%", &dv, px(SETTINGS_CTRL_W));
+    row_label_right("Volume", th, ctrl_w);
+    int dv = 0; stepper("vol", m->s.volume, "%", &dv, ctrl_w);
     if (dv) launcher_model_volume_delta(m, dv);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Adjust the game's output volume.");
 
@@ -5047,9 +6121,12 @@ void draw_system_controls(LauncherModel* m, const LauncherTheme& th) {
     row_label("BIOS", th);
     float avail = ImGui::GetContentRegionAvail().x - browse_w - px(th.spacing_sm);
     if (avail < px(50)) avail = px(50);
+    // With nothing chosen a PlayStation build runs its own OpenBIOS, when it
+    // holds one. A build that holds none has nothing selected (A16).
     const char* bp = has_pick ? m->s.bios_path
                               : (is_gba ? ui_text("Retail GBA BIOS required")
-                                        : "OpenBIOS");
+                                        : (launcher_model_bundled_bios_offered(m)
+                                               ? "OpenBIOS" : "(none selected)"));
     char elided[192]; elide_left(bp, avail, elided, sizeof(elided));
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(col(has_pick ? th.text : th.text_muted), "%s", elided);
@@ -5063,8 +6140,11 @@ void draw_system_controls(LauncherModel* m, const LauncherTheme& th) {
                             false);
     }
 
-    // Line 2: secondary action under the path (PSX OpenBIOS / GBA Clear).
-    if (is_psx || has_pick) {
+    // Line 2: secondary action under the path (PSX OpenBIOS / GBA Clear). A
+    // PlayStation build that holds no BIOS of its own offers none: "Use
+    // OpenBIOS" would clear the player's BIOS and switch to nothing (A16).
+    const bool psx_bundled = is_psx && launcher_model_bundled_bios_offered(m);
+    if (psx_bundled || (!is_psx && has_pick)) {
         const float indent = ImGui::CalcTextSize("BIOS").x + px(th.spacing_md);
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + indent);
         if (is_psx) {
@@ -5274,6 +6354,14 @@ void panel_solar_draw(LauncherModel* m, const LauncherTheme* th) {
 // catalog, grid byte-identical to the original hardcoded panel. PSX opts into
 // a narrower everyday-transport subset (launcher_system.h), so its grid packs
 // only the set bits — no holes, columns re-wrap around the smaller count.
+// The grid cell width, shared by the table and by the card that holds it: the
+// card is sized to a whole number of these, so its right edge lands on the
+// grid instead of running out to the page edge.
+static const float kHotkeyCellW = 300.0f;
+// The column count the enclosing card was sized for. The card cannot measure
+// its own grid (padding and scrollbar width differ inside a child), so the two
+// agree through this instead of recomputing and disagreeing by one column.
+static int s_hotkey_cols = 0;
 void draw_hotkeys_controls(LauncherModel* m, const LauncherTheme& th) {
     eyebrow("HOTKEYS");
     const SystemProfile* prof = (const SystemProfile*)m->profile;
@@ -5285,6 +6373,98 @@ void draw_hotkeys_controls(LauncherModel* m, const LauncherTheme& th) {
     // Likewise a host capability: only a host that reopens this launcher
     // mid-game has anything to bind.
     if (m->has_open_launcher_hotkey) mask |= 1u << LNG_HK_OPEN_LAUNCHER;
+    if (ImGui::Button(ui_text("Reset hotkeys to defaults")))
+        launcher_binds_reset_hotkeys(m, mask);
+    ImGui::Spacing();
+    if (prof && prof->id && !std::strcmp(prof->id, "psx")) {
+        int columns = s_hotkey_cols;
+        if (columns <= 0) {
+            columns = (int)(ImGui::GetContentRegionAvail().x / px(kHotkeyCellW));
+            columns = columns < 1 ? 1 : (columns > 3 ? 3 : columns);
+        }
+        if (ImGui::BeginTable("psx_hotkeys", columns)) {
+            for (int h = 0; h < LNG_HK_COUNT; ++h) {
+                if (!(mask & (1u << h))) continue;
+                ImGui::TableNextColumn();
+                ImGui::PushID(h);
+                ImGui::TextUnformatted(ui_text(launcher_hotkey_name((LngHotkey)h)));
+                char bindings[4][64] = {};
+                const int count = launcher_binds_hotkey_slots(m, (LngHotkey)h, bindings);
+                /* One row per function: its bindings, then + to add one and - to
+                 * drop the last extra. The first (default) binding can only be
+                 * changed, never removed, so a function always has at least one
+                 * key to press — that is why - is greyed at a single binding. */
+                /* Fixed chip widths: one binding gets a comfortable chip, extra
+                 * bindings share the row at a smaller one. Sizing from the
+                 * cell's remaining width measured a different value per row and
+                 * clipped the label on the longer-named actions. */
+                const float add_w = px(26.0f), add_gap = px(4.0f), chip_gap = px(4.0f);
+                const int chips = count > 0 ? count : 1;
+                // Fit every chip inside one grid cell: the row has to end at the
+                // cell's right edge whatever the binding count, otherwise four
+                // keys spill into the next column.
+                const float chip_room = px(kHotkeyCellW) - add_w * 2.0f - add_gap * 2.0f;
+                const float chip_w = chips > 1
+                    ? std::min(px(104.0f), (chip_room - chip_gap * (float)(chips - 1)) / (float)chips)
+                    : std::min(px(150.0f), chip_room);
+                for (int slot = 0; slot < chips; ++slot) {
+                    if (slot) ImGui::SameLine(0, chip_gap);
+                    ImGui::PushID(slot);
+                    const bool bound = slot < count;
+                    const bool capture = m->hk_capturing && m->capture_hk == (LngHotkey)h &&
+                                         m->capture_hk_slot == slot;
+                    int duplicate = -1;
+                    if (bound) for (int other = 0; other < LNG_HK_COUNT; ++other) {
+                        if (other == h || !(mask & (1u << other))) continue;
+                        char theirs[4][64] = {};
+                        const int n = launcher_binds_hotkey_slots(m, (LngHotkey)other, theirs);
+                        for (int index = 0; index < n; ++index)
+                            if (launcher_binds_hotkeys_equal(bindings[slot], theirs[index])) duplicate = other;
+                    }
+                    if (duplicate >= 0) ImGui::PushStyleColor(ImGuiCol_Text, col(th.warn));
+                    const char* text = capture ? ui_text("[ press... ]")
+                                     : bound   ? bindings[slot]
+                                               : ui_text("(unbound)");
+                    if (centered_button("chip", text, ImVec2(chip_w, px(26)))) {
+                        launcher_model_begin_hk_capture(m, (LngHotkey)h);
+                        m->capture_hk_slot = slot;
+                    }
+                    if (duplicate >= 0) {
+                        ImGui::PopStyleColor();
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("Also assigned to %s",
+                                              ui_text(launcher_hotkey_name((LngHotkey)duplicate)));
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::SameLine(0, add_gap);
+                const bool can_add = count < 4;
+                ImGui::BeginDisabled(!can_add);
+                if (glyph_button("hk_add", "+", ImVec2(add_w, px(26)))) {
+                    launcher_model_begin_hk_capture(m, (LngHotkey)h);
+                    m->capture_hk_slot = count;
+                }
+                ImGui::EndDisabled();
+                if (!can_add && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip("%s", ui_text("Up to four keys for this action."));
+                ImGui::SameLine(0, add_gap);
+                const bool can_remove = count > 1;
+                ImGui::BeginDisabled(!can_remove);
+                if (glyph_button("hk_del", "-", ImVec2(add_w, px(26)))) {
+                    launcher_binds_set_hotkey_slot(m, (LngHotkey)h, count - 1, 0, 0);
+                    launcher_model_cancel_hk_capture(m);
+                }
+                ImGui::EndDisabled();
+                if (!can_remove && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip("%s", ui_text(
+                        "The default binding can only be changed, not removed."));
+                ImGui::Spacing();
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+        return;
+    }
     // Same responsive grid treatment as the bindings list.
     const float cell_w = px(280.0f);
     int cols = (int)(ImGui::GetContentRegionAvail().x / cell_w);
@@ -5328,7 +6508,7 @@ void draw_hotkeys_controls(LauncherModel* m, const LauncherTheme& th) {
             }
             if (duplicate >= 0) ImGui::PushStyleColor(ImGuiCol_Text, col(th.warn));
             if (cap) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
-            if (ImGui::Button(lbl, ImVec2(px(130), 0)))
+            if (centered_button("bind", lbl, ImVec2(px(130), px(26))))
                 launcher_model_begin_hk_capture(m, (LngHotkey)h);
             if (cap) ImGui::PopStyleColor();
             if (duplicate >= 0) {
@@ -5341,9 +6521,21 @@ void draw_hotkeys_controls(LauncherModel* m, const LauncherTheme& th) {
         ImGui::EndTable();
     }
 }
+// How wide the hotkey card has to be to hold its grid and nothing more.
+// Non-PSX profiles keep the full width: their grid is packed with other panels.
+static float hotkeys_panel_logical_width(LauncherModel* m) {
+    const SystemProfile* prof = (const SystemProfile*)m->profile;
+    if (!prof || !prof->id || std::strcmp(prof->id, "psx")) return 0.0f;
+    int columns = (int)(ImGui::GetContentRegionAvail().x / px(kHotkeyCellW));
+    columns = columns < 1 ? 1 : (columns > 3 ? 3 : columns);
+    s_hotkey_cols = columns;
+    return (float)columns * kHotkeyCellW + 26.0f;   /* + window padding */
+}
 void panel_hotkeys_draw(LauncherModel* m, const LauncherTheme* th) {
-    if (begin_panel("hotkeys", 0)) draw_hotkeys_controls(m, *th);
+    const float w = hotkeys_panel_logical_width(m);
+    if (begin_panel("hotkeys", w)) draw_hotkeys_controls(m, *th);
     end_panel();
+    s_hotkey_cols = 0;
 }
 
 // The settings VIEW composes whichever panels this game's SystemProfile
@@ -5913,23 +7105,98 @@ static void bind_row_label(const char* label, const ImVec4& colour,
 // ControllerSpec.buttons[]/button_count (launcher_system.h) so each system
 // renders its own real vocabulary (SNES: A/B/X/Y/L/R/...; PSX: Triangle/
 // Circle/Cross/Square/L1/L2/R1/R2/L3/R3/...) instead of a hardcoded SNES set.
-void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
-    const int p = m->cfg_player;
+
+/* Two stacked, right-aligned actions. Rename sits on the row that follows the
+ * Input source control and Delete on its own row directly below it, at the same
+ * width and against the same right edge, so the pair reads as one column
+ * instead of Delete floating alone at the far right of a row of its own (where
+ * it was also off the text baseline of the row it shared). */
+static void cfg_action_column(const char* rename_label, const char* delete_label,
+                              float col_w, bool can_rename, bool can_delete,
+                              bool* rename_clicked, bool* delete_clicked) {
+    const float right = ImGui::GetWindowContentRegionMax().x;
+    if (right - col_w > ImGui::GetCursorPosX()) ImGui::SameLine(right - col_w);
+    else ImGui::SameLine();
+    ImGui::BeginDisabled(!can_rename);
+    *rename_clicked = ImGui::Button(rename_label, ImVec2(col_w, px(30)));
+    ImGui::EndDisabled();
+    if (!can_rename && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("%s", ui_text("Choose a gamepad as the input source first."));
+    // The next row, at the same right edge: ImGui advances a line only when the
+    // next item is submitted without SameLine, so place the cursor explicitly.
+    const float next_y = ImGui::GetCursorPosY() + px(30.0f) +
+                         ImGui::GetStyle().ItemSpacing.y;
+    ImGui::SetCursorPos(ImVec2(right - col_w, next_y));
+    ImGui::BeginDisabled(!can_delete);
+    *delete_clicked = ImGui::Button(delete_label, ImVec2(col_w, px(30)));
+    ImGui::EndDisabled();
+    if (!can_delete && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("%s", ui_text("Choose a gamepad as the input source first."));
+    ImGui::NewLine();
+}
+
+/* Player tabs above the Controller card. Every seat the launcher can ever show
+ * gets a tab, so the header is the same shape on a one-player title as on an
+ * eight-player one; the seats this title cannot fill are greyed and inert. */
+static int draw_cfg_player_tabs(LauncherModel* m, const LauncherTheme& th, int current) {
+    const int seats = launcher_model_visible_player_count(m);
+    const int shown = LNG_MAX_PLAYERS;
+    const float gap = px(4.0f);
+    const float full = ImGui::GetContentRegionAvail().x;
+    int per_row = shown;
+    float seg = (full - gap * (float)(shown - 1)) / (float)shown;
+    if (seg < px(88.0f)) {
+        per_row = 4;
+        seg = (full - gap * 3.0f) / 4.0f;
+    }
+    int picked = current;
+    ImGui::PushID("cfgtabs");
+    for (int i = 0; i < shown; ++i) {
+        if (i % per_row != 0) ImGui::SameLine(0, gap);
+        const bool enabled = i < seats;
+        char lbl[32], sid[16];
+        std::snprintf(lbl, sizeof(lbl), "%s %d", ui_text("Player"), i + 1);
+        std::snprintf(sid, sizeof(sid), "tab%d", i);
+        if (segment_button(sid, lbl, ImVec2(seg, px(30)), i == current && enabled,
+                           enabled, th) && enabled)
+            picked = i;
+    }
+    ImGui::PopID();
+    ImGui::Dummy(ImVec2(0, px(6)));
+    if (picked != current) launcher_model_open_config(m, picked);
+    return picked;
+}
+
+// The controller card, addressable on its own so the Configure view can lay it out.
+static bool cfg_card_source(LauncherModel* m, const LauncherTheme& th, int p) {
     const SystemProfile* cfg_prof = (const SystemProfile*)m->profile;
     const bool cfg_psx = cfg_prof && cfg_prof->id && !strcmp(cfg_prof->id, "psx");
     const bool cfg_snes = cfg_prof && cfg_prof->id && !strcmp(cfg_prof->id, "snes");
     const bool cfg_n64 = cfg_prof && cfg_prof->id && !strcmp(cfg_prof->id, "n64");
-    if (cfg_psx && m->s.player_src[p] == 2 &&
-        m->s.player_gamepad_guid[p][0] && !m->player_pad_name[p][0])
-        launcher_binds_hydrate_psx_pad_names(m);
-
+    // The pad next to Player 1's PS1 Mouse (PS1B-279) is Player 1's, in the
+    // other port: say so, and offer no second mouse there.
+    const bool cfg_pair_pad = launcher_model_mouse_pair_port(m) &&
+                              p == launcher_model_mouse_pair_pad_seat(m);
     if (begin_panel("cfg_src", 0)) {
         ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
-        ImGui::Text("%s %d", ui_text("CONTROLLER - PLAYER"), p + 1); ImGui::PopStyleColor(); ImGui::Spacing();
+        if (cfg_pair_pad)
+            ImGui::Text("%s 1 - %s %d", ui_text("CONTROLLER - PLAYER"), ui_text("PORT"), p + 1);
+        else
+            ImGui::Text("%s %d", ui_text("CONTROLLER - PLAYER"), p + 1);
+        ImGui::PopStyleColor(); ImGui::Spacing();
+        /* Input source and the per-controller actions share one row: the combo
+         * takes what the action column leaves, so the two never collide and
+         * Delete is never pushed off the card. */
         row_label("Input source", th);
-        ImGui::SetNextItemWidth(px(200));
+        const float card_right = ImGui::GetWindowContentRegionMax().x;
+        const float action_w = px(150.0f);
+        const float action_gap = px(th.spacing_md);
+        const float combo_x = ImGui::GetCursorPosX();
+        float combo_w = card_right - action_w - action_gap - combo_x;
+        if (combo_w < px(120.0f)) combo_w = px(120.0f);
+        ImGui::SetNextItemWidth(combo_w);
         if (ImGui::BeginCombo("##csrc", ui_text(launcher_model_player_src_label(m, p)))) {
-            draw_source_selectables(m, p);
+            draw_source_selectables(m, p, cfg_pair_pad ? kPickPadOnly : kPickSeat);
             ImGui::EndCombo();
         }
         /* SNES: Save / Rename / Delete for the selected controller.
@@ -6083,25 +7350,16 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
             static char s_rename_buf[64] = {};
             const bool can_pad = m->s.player_src[p] == 2 &&
                                  m->s.player_gamepad_guid[p][0];
-            ImGui::SameLine();
-            if (!can_pad) ImGui::BeginDisabled();
-            if (ImGui::Button(ui_text("Rename Gamepad"))) {
+            bool want_rename = false, want_delete = false;
+            cfg_action_column(ui_text("Rename Gamepad"), ui_text("Delete Gamepad"),
+                              action_w, can_pad, can_pad,
+                              &want_rename, &want_delete);
+            if (want_rename) {
                 std::snprintf(s_rename_buf, sizeof(s_rename_buf), "%s",
                               m->player_pad_name[p]);
                 s_rename_open = true;
             }
-            if (!can_pad) ImGui::EndDisabled();
-
-            // Delete sits on the right of the Input source row.
-            {
-                const float del_w = px(130.0f);
-                const float right = ImGui::GetWindowContentRegionMax().x;
-                ImGui::SameLine(right - del_w);
-                if (!can_pad) ImGui::BeginDisabled();
-                if (ImGui::Button(ui_text("Delete Gamepad"), ImVec2(del_w, 0)))
-                    launcher_binds_delete_psx_gamepad(m, p + 1);
-                if (!can_pad) ImGui::EndDisabled();
-            }
+            if (want_delete) launcher_binds_delete_psx_gamepad(m, p + 1);
 
             if (s_rename_open) ImGui::OpenPopup(ui_text("Rename Gamepad"));
             ImVec2 center = ImGui::GetMainViewport()->GetCenter();
@@ -6119,7 +7377,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
-                const bool ok = s_rename_buf[0] != '\0';
+                const bool ok = s_rename_buf[0] != 0;
                 ImGui::BeginDisabled(!ok);
                 if ((ImGui::Button("OK", ImVec2(px(120), 0)) || enter) && ok) {
                     launcher_binds_rename_psx_gamepad(m, p + 1, s_rename_buf);
@@ -6130,11 +7388,16 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                 ImGui::EndPopup();
             }
         }
-        // Deadzone: a drag slider, not a stepper. The stepper moves in 5%
-        // steps, which is the wrong granularity for a stick whose resting
-        // noise a player is trying to just clear -- 8% and 12% are different
-        // controllers. Whole percent, because the runner consumes a raw stick
-        // radius derived from this and a fraction would not survive the trip.
+        /* Deadzone: a drag slider, not a stepper. The stepper moves in 5%
+         * steps, which is the wrong granularity for a stick whose resting noise
+         * a player is trying to just clear -- 8% and 12% are different
+         * controllers. Whole percent, because the runner consumes a raw stick
+         * radius derived from this and a fraction would not survive the trip.
+         *
+         * The bar starts under the Input source control (same left edge) and
+         * ends where that control ends, so it lines up with the rows above
+         * instead of hanging off the label. */
+        ImGui::Dummy(ImVec2(0, px(4)));
         row_label("Deadzone", th);
         {
             int dz = m->s.deadzone[p];
@@ -6143,13 +7406,25 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
             // gets the full scale rather than a handle pinned at the end
             // showing a number the slider would silently rewrite.
             const int hi = dz > 50 ? 100 : 50;
-            ImGui::SetNextItemWidth(px(240));
+            ImGui::SetCursorPosX(combo_x);
+            ImGui::SetNextItemWidth(combo_w);
             if (ImGui::SliderInt("##dz", &dz, 0, hi, "%d%%",
                                  ImGuiSliderFlags_AlwaysClamp))
                 launcher_model_set_deadzone(m, p, dz);
         }
+        // Per-device host options (PS1 Mouse sensitivity/capture, JogCon force
+        // feedback, anti-deadzone, fallback Select): they belong to the device
+        // this card configures, not to the machine's Settings.
+        if (cfg_psx) {
+            ImGui::Dummy(ImVec2(0, px(4)));
+            draw_psx_pad_options(m, th, p);
+        }
     } end_panel();
+    return true;
+}
 
+// The pak card, addressable on its own so the Configure view can lay it out.
+static bool cfg_card_pak(LauncherModel* m, const LauncherTheme& th, int p) {
     // Pak for THIS controller port, so it's reachable from the Controller page
     // without going back to the dashboard. Literally the same picker and the
     // same kind body the dashboard draws — one pak surface, one set of
@@ -6169,7 +7444,11 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
             ImGui::PopID();
         } end_panel();
     }
+    return p < launcher_model_pak_ports(m);
+}
 
+// The mouse card, addressable on its own so the Configure view can lay it out.
+static bool cfg_card_mouse(LauncherModel* m, const LauncherTheme& th, int p) {
     // MOUSE card (opt-in, has_mouse_controls games only — Snap): shown whenever
     // this player's source is a keyboard family. Sensitivity + Invert X/Y +
     // three rebindable mouse buttons, each mapping to an N64 action. Placed
@@ -6219,7 +7498,11 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
             }
         } end_panel();
     }
+    return m->has_mouse_controls && m->s.player_src[p] == 1;
+}
 
+// The motion card, addressable on its own so the Configure view can lay it out.
+static bool cfg_card_motion(LauncherModel* m, const LauncherTheme& th, int p) {
     // MOTION card (opt-in): the host owns controller discovery and axis
     // mapping; recomp-ui owns only the portable sensitivity setting.
     if (m->has_gyro_controls && p == 0) {
@@ -6315,7 +7598,11 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
             ImGui::PopStyleColor();
         } end_panel();
     }
+    return m->has_gyro_controls && p == 0;
+}
 
+// The camera card, addressable on its own so the Configure view can lay it out.
+static bool cfg_card_camera(LauncherModel* m, const LauncherTheme& th, int p) {
     /* Voxel/3D camera bindings are feature-driven, not a permanent NES
      * capability. The card appears only while at least one enabled feature
      * advertises camera_controls, and only on Player 1's page because the
@@ -6391,11 +7678,17 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                     col(th.warn), "Listening... (Esc cancels, Backspace unbinds)");
         } end_panel();
     }
+    return p == 0 && enabled_camera_controls(m);
+}
 
+// The binds card, addressable on its own so the Configure view can lay it out.
+static bool cfg_card_binds(LauncherModel* m, const LauncherTheme& th, int p) {
+    const SystemProfile* cfg_prof = (const SystemProfile*)m->profile;
+    const bool cfg_psx = cfg_prof && cfg_prof->id && !strcmp(cfg_prof->id, "psx");
     // Some systems ship no rebindable input layer (N64 Snap / PMS-J read no
     // input.cfg): GameInfo.hide_rebind drops the bindings card entirely and the
     // Controller view is source+deadzone only.
-    if (m->hide_rebind) return;
+    if (m->hide_rebind) return false;
 
     if (begin_panel("cfg_binds", 0)) {
         // Responsive grid: fit as many label+chip columns as the width allows
@@ -6421,6 +7714,9 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         // keyboard map when no gamepad is selected, and the capture handler
         // already accepts keys and mouse buttons into either slot.
         if (is_psx) {
+            // Half-width cards cannot hold the four action buttons on one
+            // row; they fall back to two rows instead of overflowing the card.
+            const bool cfg_narrow = ImGui::GetContentRegionAvail().x < px(620.0f);
             const bool has_pad_src = m->s.player_src[p] == 2 &&
                                      m->s.player_gamepad_guid[p][0];
 
@@ -6429,11 +7725,24 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
             else             ImGui::Text("KEYBOARD BINDINGS - PLAYER %d", p + 1);
             ImGui::PopStyleColor();
             // Both slots have a visible chip (see the grid below), so the
-            // hint only has to say how to edit them.
+            // hint only has to say how to edit them. In a half-width card it
+            // goes on its own line and wraps instead of running off the edge.
             if (!has_pad_src) {
-                ImGui::SameLine();
-                ImGui::TextColored(col(th.text_muted),
-                    "  (click to rebind, right-click to clear; yellow = bound more than once)");
+                static const char* kHint =
+                    "(click to rebind, right-click to clear; yellow = bound more than once)";
+                // Same line only when the sentence actually fits beside the
+                // title; otherwise it takes its own wrapped line instead of
+                // running off the card (the card is half-width in the
+                // two-column Configure layout).
+                if (ImGui::GetContentRegionAvail().x <
+                    ImGui::CalcTextSize(kHint).x + px(16.0f)) {
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextColored(col(th.text_muted), "%s", kHint);
+                    ImGui::PopTextWrapPos();
+                } else {
+                    ImGui::SameLine();
+                    ImGui::TextColored(col(th.text_muted), "  %s", kHint);
+                }
             }
             ImGui::Spacing();
 
@@ -6476,16 +7785,25 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                     return n;
                 };
                 const float cell_w = label_col_w + 2.0f * chip_w + chip_gap + px(16.0f);
-                if (ImGui::BeginTable("psx_key_binds", LNG_PSX_GAMEPAD_BIND_COLS,
+                // As many columns as the card can actually hold: the bindings
+                // card is half-width in the two-column Configure layout, and a
+                // fixed 3x8 grid there overflows the card and clips the
+                // right-most chips.
+                int cols = (int)((ImGui::GetContentRegionAvail().x + chip_gap) / cell_w);
+                if (cols < 1) cols = 1;
+                if (cols > LNG_PSX_GAMEPAD_BIND_COLS) cols = LNG_PSX_GAMEPAD_BIND_COLS;
+                const int rows = (LNG_PSX_PAD_BUTTON_COUNT + cols - 1) / cols;
+                if (ImGui::BeginTable("psx_key_binds", cols,
                                       ImGuiTableFlags_SizingFixedFit)) {
-                    for (int c = 0; c < LNG_PSX_GAMEPAD_BIND_COLS; ++c)
+                    for (int c = 0; c < cols; ++c)
                         ImGui::TableSetupColumn(nullptr,
                             ImGuiTableColumnFlags_WidthFixed, cell_w);
-                    for (int row = 0; row < LNG_PSX_GAMEPAD_BIND_ROWS; ++row) {
-                        for (int c = 0; c < LNG_PSX_GAMEPAD_BIND_COLS; ++c) {
-                            const int order_i = c * LNG_PSX_GAMEPAD_BIND_ROWS + row;
-                            const int b = kPsxGamepadBindOrder[order_i];
+                    for (int row = 0; row < rows; ++row) {
+                        for (int c = 0; c < cols; ++c) {
+                            const int order_i = c * rows + row;
                             ImGui::TableNextColumn();
+                            if (order_i >= LNG_PSX_PAD_BUTTON_COUNT) continue;
+                            const int b = kPsxGamepadBindOrder[order_i];
                             ImGui::PushID(b);
                             bind_row_label(spec.buttons[b].label,
                                            col(th.text_muted), label_col_w,
@@ -6569,10 +7887,27 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                 // Save Profile -- keyboard captures already write keybinds.ini
                 // on every rebind, so this is the explicit commit + flush.
                 static double s_kb_profile_saved_until = 0.0;
+                // Load Profile -- replace this player's keys from another
+                // keybinds.ini (its [playerN] section, else [player1]).
+                static double s_kb_profile_loaded_until = 0.0;
+                static int s_kb_profile_load_ok = 0;
                 {
                     const float save_w = px(120.0f);
                     const float right = ImGui::GetWindowContentRegionMax().x;
-                    ImGui::SameLine(right - save_w);
+                    if (cfg_narrow) ImGui::NewLine();
+                    else ImGui::SameLine(right - 2.0f * save_w - ImGui::GetStyle().ItemSpacing.x);
+                    if (ImGui::Button("Load Profile", ImVec2(save_w, 0))) {
+                        const int player = p + 1;
+                        ui_pick_file(m, "Load keyboard profile", {"*.ini"},
+                                     "Keybinds profile (*.ini)",
+                                     [m, player](const char* picked) {
+                            s_kb_profile_load_ok =
+                                launcher_binds_load_psx_keyboard(m, player, picked);
+                            s_kb_profile_loaded_until = ImGui::GetTime() + 3.0;
+                        });
+                    }
+                    if (cfg_narrow) ImGui::SameLine();
+                    else ImGui::SameLine(right - save_w);
                     if (ImGui::Button("Save Profile", ImVec2(save_w, 0))) {
                         launcher_binds_save_psx_keyboard(m, p + 1);
                         s_kb_profile_saved_until = ImGui::GetTime() + 2.5;
@@ -6592,6 +7927,13 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                 }
                 if (ImGui::GetTime() < s_kb_profile_saved_until)
                     ImGui::TextColored(col(th.accent2), "Input Profile Saved!");
+                if (ImGui::GetTime() < s_kb_profile_loaded_until) {
+                    if (s_kb_profile_load_ok)
+                        ImGui::TextColored(col(th.accent2), "Input Profile Loaded!");
+                    else
+                        ImGui::TextColored(col(th.warn),
+                            "Not a keybinds profile; keys unchanged.");
+                }
             } else {
                 float label_col_w = px(90.0f);
                 for (int i = 0; i < LNG_PSX_PAD_BUTTON_COUNT; ++i) {
@@ -6600,16 +7942,21 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                 }
                 const float chip_w = px(140.0f);
                 const float cell_w = label_col_w + chip_w + px(16.0f);
-                if (ImGui::BeginTable("psx_pad_binds", LNG_PSX_GAMEPAD_BIND_COLS,
+                int cols = (int)((ImGui::GetContentRegionAvail().x + px(6.0f)) / cell_w);
+                if (cols < 1) cols = 1;
+                if (cols > LNG_PSX_GAMEPAD_BIND_COLS) cols = LNG_PSX_GAMEPAD_BIND_COLS;
+                const int rows = (LNG_PSX_PAD_BUTTON_COUNT + cols - 1) / cols;
+                if (ImGui::BeginTable("psx_pad_binds", cols,
                                       ImGuiTableFlags_SizingFixedFit)) {
-                    for (int c = 0; c < LNG_PSX_GAMEPAD_BIND_COLS; ++c)
+                    for (int c = 0; c < cols; ++c)
                         ImGui::TableSetupColumn(nullptr,
                             ImGuiTableColumnFlags_WidthFixed, cell_w);
-                    for (int row = 0; row < LNG_PSX_GAMEPAD_BIND_ROWS; ++row) {
-                        for (int c = 0; c < LNG_PSX_GAMEPAD_BIND_COLS; ++c) {
-                            const int order_i = c * LNG_PSX_GAMEPAD_BIND_ROWS + row;
-                            const int b = kPsxGamepadBindOrder[order_i];
+                    for (int row = 0; row < rows; ++row) {
+                        for (int c = 0; c < cols; ++c) {
+                            const int order_i = c * rows + row;
                             ImGui::TableNextColumn();
+                            if (order_i >= LNG_PSX_PAD_BUTTON_COUNT) continue;
+                            const int b = kPsxGamepadBindOrder[order_i];
                             ImGui::PushID(b);
                             bind_row_label(spec.buttons[b].label,
                                            col(th.text_muted), label_col_w,
@@ -6657,7 +8004,8 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                 {
                     const float save_w = px(120.0f);
                     const float right = ImGui::GetWindowContentRegionMax().x;
-                    ImGui::SameLine(right - save_w);
+                    if (cfg_narrow) ImGui::NewLine();
+                    else ImGui::SameLine(right - save_w);
                     if (ImGui::Button("Save Profile", ImVec2(save_w, 0))) {
                         launcher_binds_save_psx_gamepad(m, p + 1);
                         s_profile_saved_until = ImGui::GetTime() + 2.5;
@@ -6968,7 +8316,11 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         }
         } // !is_psx
     } end_panel();
+    return !m->hide_rebind;
+}
 
+// The zapper card, addressable on its own so the Configure view can lay it out.
+static bool cfg_card_zapper(LauncherModel* m, const LauncherTheme& th, int p) {
     // Zapper (light gun) block — NES Zapper games only (gi.zapper). The mouse
     // is the gun on a PC: position aims, left click pulls the trigger. Both
     // switches persist to keybinds.ini's [zapper] section immediately (same
@@ -6989,14 +8341,104 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                 launcher_model_toggle_zapper_crosshair(m);
         } end_panel();
     }
+    return m->zapper;
+}
 
+// The assist card, addressable on its own so the Configure view can lay it out.
+static bool cfg_card_assist(LauncherModel* m, const LauncherTheme& th, int p) {
     /* Named host actions stand on their own; see the note in
-     * draw_assist_binding_editor. */
+     * draw_assist_binding_editor. The PSX runtime fires them from Player 1's
+     * pad only, so every other player's page shows the same card greyed with
+     * the reason, rather than a list that would silently do nothing. */
     if (m->assist_binding_count > 0 && m->assist_binding_labels) {
         if (begin_panel("cfg_assist_binds", 0)) {
-            draw_controller_assist_shortcuts(m, th);
+            if (p != 0) {
+                ImGui::TextColored(col(th.text_muted), "%s", ui_text(
+                    "Host shortcuts fire from Player 1's controller."));
+                ImGui::Dummy(ImVec2(0, px(4)));
+                ImGui::BeginDisabled();
+                draw_controller_assist_shortcuts(m, th);
+                ImGui::EndDisabled();
+            } else {
+                draw_controller_assist_shortcuts(m, th);
+            }
         } end_panel();
     }
+    return m->assist_binding_count > 0 && m->assist_binding_labels;
+}
+
+void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
+    int p = m->cfg_player;
+    const SystemProfile* cfg_prof = (const SystemProfile*)m->profile;
+    const bool cfg_psx = cfg_prof && cfg_prof->id && !strcmp(cfg_prof->id, "psx");
+    if (cfg_psx && m->s.player_src[p] == 2 &&
+        m->s.player_gamepad_guid[p][0] && !m->player_pad_name[p][0])
+        launcher_binds_hydrate_psx_pad_names(m);
+
+    // Which player this page edits comes from the tab header, so reaching
+    // Player 3 no longer means going back a step and opening its Configure.
+    p = draw_cfg_player_tabs(m, th, p);
+
+    /* Full-screen launcher: the controller card and the bindings that belong to
+     * it on the left, the host shortcuts and the other per-pad cards on the
+     * right. In a window there is not enough width for two columns that each
+     * still hold a legible row, so the same cards follow one another as before.
+     */
+    const bool two_col = m->s.fullscreen != 0 &&
+                         ImGui::GetContentRegionAvail().x >= px(760.0f);
+    if (!two_col) {
+        cfg_card_source(m, th, p);
+        cfg_card_pak(m, th, p);
+        cfg_card_mouse(m, th, p);
+        cfg_card_motion(m, th, p);
+        cfg_card_camera(m, th, p);
+        cfg_card_binds(m, th, p);
+        cfg_card_zapper(m, th, p);
+        cfg_card_assist(m, th, p);
+        return;
+    }
+
+    const float gap = px(th.spacing_md);
+    const float half = (ImGui::GetContentRegionAvail().x - gap) * 0.5f;
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+
+    // Host option rows right-align their control inside the card, the way the
+    // Settings cards do: at half width the default left-aligned field would run
+    // past the card edge.
+    g_psx_compact_settings = true;
+    begin_container("cfg_left", ImVec2(half, 0), ImGuiChildFlags_AutoResizeY);
+    cfg_card_source(m, th, p);
+    if (!m->hide_rebind) {
+        ImGui::Dummy(ImVec2(0, gap));
+        cfg_card_binds(m, th, p);
+    }
+    end_container();
+    const float left_bottom = ImGui::GetItemRectMax().y;
+
+    // The right column starts at the top of the left one, so HOST SHORTCUTS sits
+    // beside CONTROLLER - PLAYER 1 rather than under the bindings grid.
+    ImGui::SetCursorScreenPos(ImVec2(origin.x + half + gap, origin.y));
+    begin_container("cfg_right", ImVec2(half, 0), ImGuiChildFlags_AutoResizeY);
+    {
+        bool drew = false;
+        auto separate = [&]() { if (drew) ImGui::Dummy(ImVec2(0, gap)); };
+        separate();
+        if (cfg_card_assist(m, th, p)) drew = true;
+        const bool has_pak = p < launcher_model_pak_ports(m);
+        if (has_pak) { separate(); cfg_card_pak(m, th, p); drew = true; }
+        const bool has_mouse = m->has_mouse_controls && m->s.player_src[p] == 1;
+        if (has_mouse) { separate(); cfg_card_mouse(m, th, p); drew = true; }
+        const bool has_motion = m->has_gyro_controls && p == 0;
+        if (has_motion) { separate(); cfg_card_motion(m, th, p); drew = true; }
+        const bool has_camera = p == 0 && enabled_camera_controls(m);
+        if (has_camera) { separate(); cfg_card_camera(m, th, p); drew = true; }
+        if (m->zapper) { separate(); cfg_card_zapper(m, th, p); drew = true; }
+    }
+    end_container();
+    const float right_bottom = ImGui::GetItemRectMax().y;
+    g_psx_compact_settings = false;
+    ImGui::SetCursorScreenPos(
+        ImVec2(origin.x, (left_bottom > right_bottom ? left_bottom : right_bottom) + gap));
 }
 
 void panel_controller_config_draw(LauncherModel* m, const LauncherTheme* th) {
@@ -11815,6 +13257,32 @@ static void request_mod_commit_launch(LauncherModel* m) {
     }
 }
 
+/* The launch work of the PLAY button: prepare the effective image, commit the
+ * mod plan, ask the host to launch. It blocks until done; the mod commit of a
+ * host can read a whole disc image. Returns true when the launch was asked. */
+static bool launch_play_now(LauncherModel* m) {
+    if (!launcher_model_prepare_rom_patch(m)) {
+        /* The effective image could not be prepared. Send the user to
+         * the page that owns the patch selection instead of launching
+         * an image the runtime's identity gate would reject. */
+        if (m->rom_patch_supported && m->s.rom_patch_enabled)
+            launcher_model_set_view(m, LNG_VIEW_MODS);
+        return false;
+    }
+    request_mod_commit_launch(m);
+    return m->action == LNG_ACTION_LAUNCH || launch_commit_pending();
+}
+
+/* Once per frame, before the frame is drawn. A PLAY click is answered two
+ * frames later: the frame between them has drawn the button greyed as
+ * "Launching...", and that picture is on screen while the work runs. Done in
+ * the frame of the click, the window stood still showing PLAY for the whole
+ * wait and Windows could mark it "Not responding" (PS1B-340). */
+static void launch_play_if_due(LauncherModel* m) {
+    if (!launcher_model_launch_due(m)) return;
+    launcher_model_launch_finish(m, launch_play_now(m));
+}
+
 struct ModIntegerEditState {
     int64_t value = 0;
     std::string provider_value;
@@ -13182,6 +14650,29 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
         ImGui::SetCursorScreenPos(ImVec2(origin.x, cta_y + (play_h - ImGui::GetFrameHeight()) * 0.5f));
         if (ImGui::Checkbox(ui_text("Skip launcher on boot"), &skip))
             launcher_model_request_skip_toggle(m);
+        if (m->has_record_replay) {
+            ImGui::SameLine(0, px(18.0f));
+            bool rec = m->s.record_replay != 0;
+            if (ImGui::Checkbox(ui_text("Record replay"), &rec))
+                launcher_model_toggle_record_replay(m);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+                ImGui::SetTooltip(
+                    "Record this session from power-on until you quit, or stop\n"
+                    "with the replay hotkey (F12 by default). Files go to\n"
+                    "saves/replays in the\n"
+                    "game folder. Only for this launch: it is not remembered.\n\n"
+                    "Recorded: Player 1's pad, the memory cards at boot and the\n"
+                    "settings that change game timing.\n"
+                    "Not recorded: Player 2 (port 2 gets no input while\n"
+                    "recording).\n"
+                    "Needs a pad or the keyboard in port 1: with a mouse, neGcon\n"
+                    "or GunCon in either port, nothing is recorded.\n\n"
+                    "The replay plays on this build for Windows, Linux and\n"
+                    "macOS, with the same disc file and BIOS. A later build may\n"
+                    "not stay in sync with it: record again on that build.\n\n"
+                    "While it records, save states and rewind are off, and\n"
+                    "overlays run interpreted, so some games run slower.");
+        }
     } else if (m->view == LNG_VIEW_SETTINGS &&
                launcher_model_can_restore_defaults(m)) {
         ImGui::SetCursorScreenPos(
@@ -13414,8 +14905,22 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
     // submitted item — PLAY's button.
     // Not while the player is typing, and not over an open modal --
     // rui_nav_rehome_to_play() carries the why.
-    if (rui_nav_rehome_to_play())
+    const ImGuiID ps1b482_play_id = ImGui::GetID("##play");
+    const bool ps1b482_play_focused_before_rehome =
+        GImGui && GImGui->NavId == ps1b482_play_id;
+    const bool ps1b482_nav_cursor_before_rehome =
+        GImGui && GImGui->NavCursorVisible;
+    const bool ps1b482_rehome = rui_nav_rehome_to_play();
+    if (ps1b482_rehome) {
         ImGui::SetKeyboardFocusHere();
+#if defined(IMGUI_VERSION_NUM) && IMGUI_VERSION_NUM >= 19140
+        // SetKeyboardFocusHere intentionally preserves cursor visibility. This
+        // is a real keyboard/gamepad re-home, so restore the focus ring through
+        // ImGui's public 1.91.4+ API. Older host-owned ImGui copies keep their
+        // existing compatible focus request and do not use private state.
+        ImGui::SetNavCursorVisible(true);
+#endif
+    }
     float play_x = origin.x + fullw - play_w;
     if (m->in_session) {
         /* Opened from a running game: closing the window resumes it, so
@@ -13446,29 +14951,104 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
     ImGui::SetCursorScreenPos(ImVec2(play_x, cta_y));
     const bool can_play = launcher_model_can_launch(m);
     const bool bios_block = launcher_model_bios_blocks_play(m);
-    const bool play_enabled = can_play || bios_block;
-    if (neon_cta("##play", ui_text(m->in_session ? "RESUME" : "PLAY"),
-                 ImVec2(play_w, play_h), play_enabled)) {
+    /* From the click until the window closes the button is greyed and reads
+     * "Launching...": the launch work runs two frames later, in the frame
+     * loop (launch_play_if_due), and can take seconds. A greyed button takes
+     * no second click. */
+    const bool launching = launcher_model_launch_announced(m);
+    const bool play_enabled = (can_play || bios_block) && !launching;
+    const char* play_label = launching ? "Launching..."
+                           : m->in_session ? "RESUME" : "PLAY";
+    const bool play_clicked = neon_cta("##play", ui_text(play_label),
+                                       ImVec2(play_w, play_h), play_enabled);
+    const bool ps1b482_play_focused = ImGui::IsItemFocused();
+    if (ps1b482_settings_actions_trace_enabled() &&
+        (ps1b482_rehome || ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+         ImGui::IsKeyPressed(ImGuiKey_Space, false))) {
+        ImGuiContext& ps1b482_ctx = *GImGui;
+        const ImGuiID ps1b482_enter_owner =
+            ImGui::GetKeyOwner(ImGuiKey_Enter);
+        const bool ps1b482_enter_noowner_down =
+            ImGui::IsKeyDown(ImGuiKey_Enter, ImGuiKeyOwner_NoOwner);
+        const bool ps1b482_enter_noowner_pressed = ImGui::IsKeyPressed(
+            ImGuiKey_Enter, ImGuiInputFlags_None, ImGuiKeyOwner_NoOwner);
+        int ps1b482_nav_always = -1;
+#if defined(IMGUI_VERSION_NUM) && IMGUI_VERSION_NUM >= 19140
+        ps1b482_nav_always =
+            ps1b482_ctx.IO.ConfigNavCursorVisibleAlways ? 1 : 0;
+#endif
+        const bool ps1b482_no_nav_inputs =
+            ps1b482_ctx.NavWindow &&
+            (ps1b482_ctx.NavWindow->Flags & ImGuiWindowFlags_NoNavInputs);
+        std::fprintf(stderr,
+                     "[ps1b482-trace] play backspace=%d enter=%d space=%d "
+                     "rehome=%d focused_before=%d nav_cursor_before=%d "
+                     "item=%u focused=%d clicked=%d enabled=%d "
+                     "can_launch=%d bios_block=%d rom_present=%d rom_size=%s "
+                     "verify=%d has_bios=%d bios_ok=%d bios_regen=%d "
+                     "preparing=%d launch_pending=%d setup_open=%d "
+                     "nav_cursor=%d nav_always=%d nav_window=%d "
+                     "nav_window_flags=%llu no_nav_inputs=%d windowing=%d "
+                     "active=%u nav=%u activate=%u activate_down=%u "
+                     "activate_pressed=%u activate_flags=%u enter_owner=%u "
+                     "enter_noowner_down=%d enter_noowner_pressed=%d\n",
+                     ImGui::IsKeyPressed(ImGuiKey_Backspace, false) ? 1 : 0,
+                     ImGui::IsKeyPressed(ImGuiKey_Enter, false) ? 1 : 0,
+                     ImGui::IsKeyPressed(ImGuiKey_Space, false) ? 1 : 0,
+                     ps1b482_rehome ? 1 : 0,
+                     ps1b482_play_focused_before_rehome ? 1 : 0,
+                     ps1b482_nav_cursor_before_rehome ? 1 : 0,
+                     (unsigned int)ImGui::GetItemID(),
+                     ps1b482_play_focused ? 1 : 0, play_clicked ? 1 : 0,
+                     play_enabled ? 1 : 0, can_play ? 1 : 0,
+                     bios_block ? 1 : 0, m->rom_present ? 1 : 0,
+                     m->rom_size[0] ? m->rom_size : "<empty>",
+                     m->verify.verdict, m->has_bios ? 1 : 0,
+                     m->setup_bios_ok ? 1 : 0,
+                     m->setup_bios_needs_regen ? 1 : 0,
+                     m->setup_preparing ? 1 : 0, m->launch_pending,
+                     m->setup_wizard_open ? 1 : 0,
+                     ps1b482_ctx.NavCursorVisible ? 1 : 0,
+                     ps1b482_nav_always,
+                     ps1b482_ctx.NavWindow ? 1 : 0,
+                     ps1b482_ctx.NavWindow
+                         ? (unsigned long long)ps1b482_ctx.NavWindow->Flags
+                         : 0ull,
+                     ps1b482_no_nav_inputs ? 1 : 0,
+                     ps1b482_ctx.NavWindowingTarget ? 1 : 0,
+                     (unsigned int)ps1b482_ctx.ActiveId,
+                     (unsigned int)ps1b482_ctx.NavId,
+                     (unsigned int)ps1b482_ctx.NavActivateId,
+                     (unsigned int)ps1b482_ctx.NavActivateDownId,
+                     (unsigned int)ps1b482_ctx.NavActivatePressedId,
+                     (unsigned int)ps1b482_ctx.NavActivateFlags,
+                     (unsigned int)ps1b482_enter_owner,
+                     ps1b482_enter_noowner_down ? 1 : 0,
+                     ps1b482_enter_noowner_pressed ? 1 : 0);
+    }
+    if (play_clicked) {
         /* Prefer mismatch prompt over launch even if can_play races true. */
         if (bios_block)
             launcher_model_bios_play_prompt(m);
-        else if (!launcher_model_prepare_rom_patch(m)) {
-            /* The effective image could not be prepared. Send the user to
-             * the page that owns the patch selection instead of launching
-             * an image the runtime's identity gate would reject. */
-            if (m->rom_patch_supported && m->s.rom_patch_enabled)
-                launcher_model_set_view(m, LNG_VIEW_MODS);
-        } else {
-            request_mod_commit_launch(m);
-        }
+        else if (m->in_session)
+            /* RESUME returns to a game that is already running: nothing is
+             * prepared that could take long, so it stays in this frame. */
+            launch_play_now(m);
+        else
+            launcher_model_launch_request(m);
+    } else if (launching) {
+        /* No tooltip and no setup wizard while the launch is under way. */
     } else if (!play_enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         const char* noun = m->rom_noun ? m->rom_noun : "ROM";
         if (m->bios_name && launcher_model_bios_missing(m)) {
             ImGui::SetTooltip("Select the %s first", m->bios_name);
-        } else if (m->has_bios && !m->setup_bios_ok) {
+        } else if (m->has_bios && !m->setup_bios_ok &&
+                   launcher_model_bundled_bios_offered(m)) {
             ImGui::SetTooltip(
                 "Select a valid BIOS first (or Use OpenBIOS when this build "
                 "allows it).");
+        } else if (m->has_bios && !m->setup_bios_ok) {
+            ImGui::SetTooltip("Select a valid BIOS first.");
         } else if (!m->rom_present || strcmp(m->rom_size, "--") == 0) {
             ImGui::SetTooltip("Select a valid %s first", noun);
         } else if (m->profile && m->profile->verify.mode == 1 &&
@@ -13489,7 +15069,8 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
             ImGui::SetTooltip("Select a valid %s first", noun);
         }
     }
-    if (!play_enabled && ImGui::IsItemClicked() && m->setup_wizard_supported)
+    if (!play_enabled && !launching && ImGui::IsItemClicked() &&
+        m->setup_wizard_supported)
         m->setup_wizard_open = true;
     ImGui::SetItemDefaultFocus();   // gamepad/keyboard start on the primary action
     (void)win;
@@ -13536,10 +15117,12 @@ static SetupPlatKind setup_platform_kind(const char* platform) {
     return SETUP_PLAT_GENERIC;
 }
 
+#if defined(_WIN32)
 static const char* kRetcommToolchainsUrl =
     "https://github.com/TechnicallyComputers/retcomm-toolchains";
 static const char* kRetcommToolchainsReleasesUrl =
     "https://github.com/TechnicallyComputers/retcomm-toolchains/releases";
+#endif
 
 /* TextLinkOpenURL is 1.91+; HOST_IMGUI may be older — fall back to a button. */
 static void setup_url_link(const char* label, const char* url) {
@@ -13828,14 +15411,20 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
         return;
     }
 
-    /* ---- Page 0: portable toolchain ------------------------------------ */
+    /* ---- Page 0: build tools ------------------------------------------- */
     if (m->setup_needs_toolchain && m->setup_page == 0) {
+#if defined(_WIN32)
         const bool want_update =
             m->setup_tc_ready && m->setup_tc_update_available &&
             !m->setup_tc_update_skipped;
+#else
+        const bool want_update = false;
+#endif
         ImGui::TextColored(col(th.accent),
                            want_update ? "Toolchain update" : "Build tools");
         ImGui::PushTextWrapPos(wrap_x);
+#if defined(_WIN32)
+        /* SETUP_TOOLCHAIN_WINDOWS_BEGIN */
         if (want_update) {
             ImGui::TextColored(col(th.text_muted),
                 "%s found a newer portable cmake/clang pack. Update now "
@@ -13927,6 +15516,25 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
             }
             ImGui::PopStyleVar();
         }
+        /* SETUP_TOOLCHAIN_WINDOWS_END */
+#else
+        /* SETUP_TOOLCHAIN_POSIX_BEGIN */
+        ImGui::TextColored(col(th.text_muted),
+            "%s builds game sources on your machine. Linux and macOS use "
+            "build tools installed on your system.",
+            game);
+        ImGui::PopTextWrapPos();
+        ImGui::Dummy(ImVec2(0, px(12)));
+
+        ImGui::TextUnformatted("1. Native build tools");
+        ImGui::PushTextWrapPos(wrap_x);
+        ImGui::TextColored(col(th.text_muted),
+            "Install CMake, Ninja, Python 3, and either Clang or GCC with "
+            "your package manager. Make sure they are on PATH, then select "
+            "Check tools.");
+        ImGui::PopTextWrapPos();
+        /* SETUP_TOOLCHAIN_POSIX_END */
+#endif
 
         if (m->setup_status[0]) {
             ImGui::Dummy(ImVec2(0, px(8)));
@@ -13942,9 +15550,18 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
         }
 
         ImGui::Dummy(ImVec2(0, px(14)));
+#if defined(_WIN32)
         const bool can_next = launcher_model_can_advance_toolchain(m);
+#else
+        const bool can_next = true;
+#endif
         if (!can_next) ImGui::BeginDisabled();
-        if (ImGui::Button(want_update ? "Update##tc_next" : "Next##tc_next",
+        if (ImGui::Button(
+#if defined(_WIN32)
+                          want_update ? "Update##tc_next" : "Next##tc_next",
+#else
+                          "Check tools##tc_next",
+#endif
                           ImVec2(px(140), px(34)))) {
             launcher_model_start_ensure_toolchain(m);
             if (m->setup_preparing) {
@@ -13960,6 +15577,7 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                 ImGui::SetTooltip(
                     "Enable automatic download or select a toolchain zip");
         }
+#if defined(_WIN32)
         if (want_update) {
             ImGui::SameLine();
             if (ImGui::Button("Skip for now##tc_skip", ImVec2(px(140), px(34))))
@@ -13968,6 +15586,7 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                 ImGui::SetTooltip(
                     "Keep the installed toolchain for this session.");
         }
+#endif
         ImGui::SameLine();
         if (ImGui::Button("Quit", ImVec2(px(100), px(34))))
             m->action = LNG_ACTION_QUIT;
@@ -14000,11 +15619,18 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
     } else if (bios_regen) {
         ImGui::TextColored(col(th.accent), "Rebuild required for this BIOS");
         ImGui::PushTextWrapPos(wrap_x);
-        ImGui::TextColored(col(th.text_muted),
-            "%s was built against a different BIOS. Keep your selection below "
-            "and choose Generate & rebuild to compile this one in (you need a "
-            "disc image for that), or switch back to OpenBIOS to play now.",
-            game);
+        if (launcher_model_bundled_bios_offered(m))
+            ImGui::TextColored(col(th.text_muted),
+                "%s was built against a different BIOS. Keep your selection below "
+                "and choose Generate & rebuild to compile this one in (you need a "
+                "disc image for that), or switch back to OpenBIOS to play now.",
+                game);
+        else
+            ImGui::TextColored(col(th.text_muted),
+                "%s was built against a different BIOS. Keep your selection below "
+                "and choose Generate & rebuild to compile this one in (you need a "
+                "disc image for that).",
+                game);
         ImGui::PopTextWrapPos();
     } else if (media_confirm) {
         // "Confirm disc" on a cartridge console asked a SNES player to confirm
@@ -14015,12 +15641,20 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                            medium);
         ImGui::PushTextWrapPos(wrap_x);
         if (plat == SETUP_PLAT_PSX && m->has_bios) {
-            ImGui::TextColored(col(th.text_muted),
-                "This build is already generated. Select a PlayStation BIOS "
-                "(or keep OpenBIOS) and a Redump-style .cue with sibling .bin "
-                "tracks so %s can launch. Your previous disc/BIOS picks were "
-                "cleared from settings.",
-                game);
+            if (launcher_model_bundled_bios_offered(m))
+                ImGui::TextColored(col(th.text_muted),
+                    "This build is already generated. Select a PlayStation BIOS "
+                    "(or keep OpenBIOS) and a Redump-style .cue with sibling .bin "
+                    "tracks so %s can launch. Your previous disc/BIOS picks were "
+                    "cleared from settings.",
+                    game);
+            else
+                ImGui::TextColored(col(th.text_muted),
+                    "This build is already generated. Select a PlayStation BIOS "
+                    "and a Redump-style .cue with sibling .bin "
+                    "tracks so %s can launch. Your previous disc/BIOS picks were "
+                    "cleared from settings.",
+                    game);
         } else if (m->has_bios) {
             ImGui::TextColored(col(th.text_muted),
                 "This build is already ready. Confirm a BIOS image and a "
@@ -14071,10 +15705,16 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
 
     if (m->has_bios) {
         const bool has_pick = m->s.bios_path[0] != 0;
-        const bool offers_bundled = (plat == SETUP_PLAT_PSX);
+        /* A PlayStation build that holds no BIOS of its own (every pin H
+         * kit) needs the player's image: the BIOS is not optional there, and
+         * there is no OpenBIOS to use (Alex, 2026-10-02, A16). The host says
+         * which it is by its answer for an empty BIOS path. */
+        const bool offers_bundled = (plat == SETUP_PLAT_PSX) &&
+                                    launcher_model_bundled_bios_offered(m);
         const char* bios_section =
             (plat == SETUP_PLAT_GBA) ? "1. GBA BIOS (required)"
-            : (plat == SETUP_PLAT_PSX) ? "1. PlayStation BIOS (optional)"
+            : (plat == SETUP_PLAT_PSX) ? (offers_bundled ? "1. PlayStation BIOS (optional)"
+                                                         : "1. PlayStation BIOS")
                                       : "1. BIOS";
         const char* bios_help =
             (plat == SETUP_PLAT_GBA)
@@ -14082,14 +15722,17 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                   "300c20df… — dumped from a Game Boy Advance). Setup packages "
                   "do not ship a redistributable GBA BIOS."
             : (plat == SETUP_PLAT_PSX)
-                ? "Optional \u2014 OpenBIOS is used unless you browse for a "
-                  "retail dump (exactly 512 KB)."
+                ? (offers_bundled
+                       ? "Optional \u2014 OpenBIOS is used unless you browse for a "
+                         "retail dump (exactly 512 KB)."
+                       : "This build needs a PlayStation BIOS image (exactly 512 KB). "
+                         "Select your own dump.")
                 : "Browse for a BIOS image required by this console.";
         const char* empty_bios_label =
             offers_bundled ? "OpenBIOS" : "(none selected)";
         const char* bios_picker =
             (plat == SETUP_PLAT_GBA) ? "Select GBA BIOS (gba_bios.bin)"
-            : (plat == SETUP_PLAT_PSX) ? "Select PlayStation BIOS (SCPH1001.BIN)"
+            : (plat == SETUP_PLAT_PSX) ? "Select PlayStation BIOS"
                                       : "Select BIOS file";
 
         ImGui::TextUnformatted(bios_section);
@@ -14283,9 +15926,13 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                                                  ? "Prepare disc…"
                                                  : "Convert raw dump…"));
         const bool use_selected = m->prepare_use_selected_rom;
+        /* In a build that holds no BIOS of its own, Generate with no BIOS
+         * chosen ran the disc check and then stopped with the command line's
+         * hint ("... Pass --bios <dump> ..."). It waits for a BIOS instead. */
+        const bool needs_bios = launcher_model_setup_bios_blocks_generate(m);
         const bool can_prep_selected = use_selected && m->rom_present &&
                                        m->rom_full[0] &&
-                                       strcmp(m->rom_size, "--") != 0;
+                                       strcmp(m->rom_size, "--") != 0 && !needs_bios;
         if (use_selected && !can_prep_selected) ImGui::BeginDisabled();
         if (ImGui::Button(prep_lbl, ImVec2(px(240), px(32)))) {
             if (use_selected) {
@@ -14316,8 +15963,12 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
         }
         if (use_selected && !can_prep_selected) {
             ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("Select a verified %s first", noun);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                if (needs_bios)
+                    ImGui::SetTooltip("Select a PlayStation BIOS first");
+                else
+                    ImGui::SetTooltip("Select a verified %s first", noun);
+            }
         }
         if (m->setup_preparing) {
             ImGui::CloseCurrentPopup();
@@ -14367,11 +16018,13 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                 ImGui::SetTooltip("%s", blocker);
         }
         ImGui::SameLine();
-        if (ImGui::Button("Use OpenBIOS", ImVec2(px(130), px(34))))
-            launcher_model_request_bios_path(m, "");
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Play now with the bundled OpenBIOS (no rebuild).");
-        ImGui::SameLine();
+        if (launcher_model_bundled_bios_offered(m)) {
+            if (ImGui::Button("Use OpenBIOS", ImVec2(px(130), px(34))))
+                launcher_model_request_bios_path(m, "");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Play now with the bundled OpenBIOS (no rebuild).");
+            ImGui::SameLine();
+        }
     } else if (!m->prepare_required_before_continue) {
         const bool ready = launcher_model_can_finish_setup(m);
         char confirm_lbl[64];
@@ -14393,11 +16046,17 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                     ImGui::SetTooltip("Select a %s first", noun);
                 else if (m->setup_preparing)
                     ImGui::SetTooltip("Wait for the current job to finish");
-                else if (m->has_bios && m->setup_bios_needs_regen)
+                else if (m->has_bios && m->setup_bios_needs_regen &&
+                         launcher_model_bundled_bios_offered(m))
                     ImGui::SetTooltip(launcher_model_bios_prepare_available(m)
                                       ? "Prepare this BIOS first, or switch to OpenBIOS"
                                       : "Generate & rebuild with this BIOS "
                                         "first, or switch to OpenBIOS");
+                else if (m->has_bios && m->setup_bios_needs_regen)
+                    ImGui::SetTooltip(launcher_model_bios_prepare_available(m)
+                                      ? "Prepare this BIOS first"
+                                      : "Generate & rebuild with this BIOS "
+                                        "first");
                 else if (m->has_bios && !m->setup_bios_ok)
                     ImGui::SetTooltip("BIOS check required");
                 else if (m->netplay_supported &&
@@ -14446,18 +16105,26 @@ void draw_bios_confirm_modal(LauncherModel* m, const LauncherTheme& th) {
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(420));
     if (bios_prep)
         ImGui::TextWrapped("%s", launcher_model_bios_prepare_note(m));
-    else
+    else if (launcher_model_bundled_bios_offered(m))
         ImGui::TextWrapped(
             "This retail BIOS is not compiled into the current build yet. "
             "Generate & rebuild will emit its BIOS C and rebuild the game binary "
             "with your current disc and toolchain. OpenBIOS switches never need "
             "this — use Use OpenBIOS instead.");
+    else
+        ImGui::TextWrapped(
+            "This retail BIOS is not compiled into the current build yet. "
+            "Generate & rebuild will emit its BIOS C and rebuild the game binary "
+            "with your current disc and toolchain.");
     if (m->bios_pending_path[0]) {
         ImGui::Dummy(ImVec2(0, px(8)));
         ImGui::TextColored(col(th.text_muted), "Selected:");
         ImGui::TextWrapped("%s", m->bios_pending_path);
     } else {
         ImGui::Dummy(ImVec2(0, px(8)));
+        /* Not reached: this box opens only for a chosen file that still has
+         * to be built in (launcher_model_request_bios_path), and an empty
+         * choice is applied without it. Left as it was. */
         ImGui::TextColored(col(th.text_muted), "Selected: OpenBIOS");
     }
     if (m->setup_bios_detail[0]) {
@@ -14479,11 +16146,13 @@ void draw_bios_confirm_modal(LauncherModel* m, const LauncherTheme& th) {
             ImGui::SetTooltip("%s", generate_disabled_reason(m));
     }
     ImGui::SameLine();
-    if (ImGui::Button("Use OpenBIOS", ImVec2(px(130), px(32)))) {
-        launcher_model_bios_confirm_cancel(m);
-        launcher_model_request_bios_path(m, "");
+    if (launcher_model_bundled_bios_offered(m)) {
+        if (ImGui::Button("Use OpenBIOS", ImVec2(px(130), px(32)))) {
+            launcher_model_bios_confirm_cancel(m);
+            launcher_model_request_bios_path(m, "");
+        }
+        ImGui::SameLine();
     }
-    ImGui::SameLine();
     if (ImGui::Button("Cancel", ImVec2(px(100), px(32))))
         launcher_model_bios_confirm_cancel(m);
     if (!m->bios_confirm_open) ImGui::CloseCurrentPopup();
@@ -14501,17 +16170,25 @@ void draw_bios_play_modal(LauncherModel* m, const LauncherTheme& th) {
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(440));
     if (bios_prep)
         ImGui::TextWrapped("%s", launcher_model_bios_prepare_note(m));
-    else
+    else if (launcher_model_bundled_bios_offered(m))
         ImGui::TextWrapped(
             "The selected retail BIOS is not compiled into this build. Generate & "
             "rebuild with it (same disc and toolchain), switch to OpenBIOS to Play "
             "without rebuilding, or cancel and keep the current selection.");
+    else
+        ImGui::TextWrapped(
+            "The selected retail BIOS is not compiled into this build. Generate & "
+            "rebuild with it (same disc and toolchain), "
+            "or cancel and keep the current selection.");
     if (m->s.bios_path[0]) {
         ImGui::Dummy(ImVec2(0, px(8)));
         ImGui::TextColored(col(th.text_muted), "Current selection:");
         ImGui::TextWrapped("%s", m->s.bios_path);
     } else {
         ImGui::Dummy(ImVec2(0, px(8)));
+        /* Not reached: an empty choice never blocks PLAY
+         * (launcher_model_bios_blocks_play), so this box opens only with a
+         * chosen file. Left as it was. */
         ImGui::TextColored(col(th.text_muted), "Current selection: OpenBIOS");
     }
     if (m->setup_bios_detail[0]) {
@@ -14533,9 +16210,11 @@ void draw_bios_play_modal(LauncherModel* m, const LauncherTheme& th) {
             ImGui::SetTooltip("%s", generate_disabled_reason(m));
     }
     ImGui::SameLine();
-    if (ImGui::Button("Use OpenBIOS", ImVec2(px(130), px(32))))
-        launcher_model_bios_play_use_openbios(m);
-    ImGui::SameLine();
+    if (launcher_model_bundled_bios_offered(m)) {
+        if (ImGui::Button("Use OpenBIOS", ImVec2(px(130), px(32))))
+            launcher_model_bios_play_use_openbios(m);
+        ImGui::SameLine();
+    }
     if (ImGui::Button("Cancel", ImVec2(px(100), px(32))))
         launcher_model_bios_play_cancel(m);
     if (!m->bios_play_modal_open) ImGui::CloseCurrentPopup();
@@ -14874,6 +16553,7 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
         case LNG_VIEW_CREDITS:      draw_credits(m, th);             break;
         case LNG_VIEW_LOBBY:        draw_lobby(m, th);               break;
     }
+    reveal_disc_note_in_body();
     end_container();
 
     draw_footer(m, th, footer_h);
@@ -14951,7 +16631,7 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
             return true;
         }
         if (m->hk_capturing) {
-            launcher_binds_set_hotkey(m, m->capture_hk, 0, 0);
+            launcher_binds_set_hotkey_slot(m, m->capture_hk, m->capture_hk_slot, 0, 0);
             launcher_model_cancel_hk_capture(m);
             return true;
         }
@@ -15234,7 +16914,7 @@ bool try_capture(LauncherModel* m, const SDL_Event& ev) {
     }
     // hotkey capture: wait past a bare modifier press for the real key
     if (is_modifier_scancode((SDL_Scancode)LNG_EVSCAN(ev))) return true;
-    launcher_binds_set_hotkey(m, m->capture_hk, (int)LNG_EVKEY(ev), (int)LNG_EVMOD(ev));
+    launcher_binds_set_hotkey_slot(m, m->capture_hk, m->capture_hk_slot, (int)LNG_EVKEY(ev), (int)LNG_EVMOD(ev));
     launcher_model_cancel_hk_capture(m);
     return true;
 }
@@ -15259,10 +16939,18 @@ std::string asset(const char* rel) {
     std::string path = normalized_path(rel);
     if (is_absolute_path(path)) return path;
 
+#if defined(RECOMP_LAUNCHER_V2_BUILD_MODULE)
+    const RecompLauncherV2Run* run = launcher_v2_current_run();
+    if (!run) return {};
+    const bool module_asset = path.rfind("assets/", 0) == 0;
+    const char* base = module_asset ? run->assets_root : run->product_root;
+    if (module_asset) path.erase(0, 7);
+#else
 #if defined(__ANDROID__)
     const char* base = SDL_AndroidGetInternalStoragePath();
 #else
     const char* base = SDL_GetBasePath();
+#endif
 #endif
     std::string out = normalized_path(base ? base : "");
     if (!out.empty() && !path.empty() && out.back() != '/')
@@ -15349,6 +17037,8 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     g_boxart = launcher_texture_load(
         asset(m->boxart_path && m->boxart_path[0] ? m->boxart_path
                                                   : "assets/img/boxart.tga").c_str());
+    // A cover the player fetched (the cover button) goes in front of it.
+    if (launcher_model_dashboard_tabbed(m)) cover_show(m);
     // Controller art comes from the active SystemProfile's ControllerSpec —
     // never hardcoded console filenames in this common backend. Conventions:
     // a 32-bit TGA carries real alpha -> the plain alpha-respecting loader;
@@ -15476,6 +17166,7 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
             } else {
                 std::snprintf(m->mod_status, sizeof m->mod_status, "%s",
                               launch_commit.error());
+                launcher_model_launch_finish(m, false);
                 launcher_model_set_view(m, LNG_VIEW_MODS);
             }
             if (p->should_quit || m->action != LNG_ACTION_NONE) break;
@@ -15535,6 +17226,7 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
                 break;
             }
             LNG_ImplSDL_ProcessEvent(&ev);
+            ps1b482_trace_key_event(ev, p, true);
         } while (SDL_PollEvent(&ev));
         if (!launch_commit.job.pending() && p->should_quit && card_manager_ui::has_dirty()) {
             p->should_quit = false;
@@ -15629,12 +17321,20 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
          * and Enter still work while listening. */
         {
             ImGuiIO& nav_io = ImGui::GetIO();
-            if (launch_commit.job.pending() || m->capturing || m->hk_capturing || m->camera_capturing ||
-                automap_in_progress() || !s_pad_nav_armed)
+            const bool pad_nav = !(launch_commit.job.pending() || m->capturing || m->hk_capturing || m->camera_capturing ||
+                                   automap_in_progress() || !s_pad_nav_armed);
+            if (!pad_nav)
                 nav_io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
             else
                 nav_io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+            /* Pad buttons already held as pad nav turns on must be released
+             * first (launcher_pad_nav.h). */
+            static bool s_pad_nav_was_on = false;
+            if (pad_nav && !s_pad_nav_was_on)
+                launcher_pad_nav_lock_held_keys();
+            s_pad_nav_was_on = pad_nav;
         }
+        launch_play_if_due(m);
         LNG_ImplSDL_NewFrame();
         apply_logical_display(p);   // logical DisplaySize + pixel-density frame
         ImGui::NewFrame();
@@ -15704,6 +17404,8 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     launcher_boot_timing_mark("rui:input_closed");
     g_artwork.clear();
     launcher_texture_free(&g_boxart);
+    for (StartThumb& t : g_start_thumbs) launcher_texture_free(&t.tex);
+    g_start_thumbs.clear();
     launcher_texture_free(&g_pad);
     launcher_texture_free(&g_pad_analog);
     launcher_texture_free(&g_pad_digital);
@@ -15742,3 +17444,5 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
         launcher_binds_prepare_psx_launch(m, g_pads, g_pad_count);
     return m->action;
 }
+
+

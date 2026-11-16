@@ -145,6 +145,7 @@ static const SystemProfile kSystemProfilePsx = {
     /* hide_audio_freq   */ 1,       // psxrecomp opens audio at its built-in rate; Volume only
     /* brand             */ "brand_psx.tga",
     /* wordmark_image    */ NULL,
+    /* start_from        */ 1,      // psx_start_from.h lists states and replays
 };
 
 // ---- name aliases + ABI capability defaults -------------------------------------

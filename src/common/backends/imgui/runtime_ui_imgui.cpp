@@ -60,13 +60,25 @@ void value_text(RecompRuntimeUi *ui, const RecompRuntimeUiItem *item,
     }
 }
 
+void reveal_selection(bool selected, const char *key, ImGuiID state) {
+    if (!selected) return;
+    ImGuiStorage *storage = ImGui::GetStateStorage();
+    const int row = static_cast<int>(ImGui::GetID(key));
+    if (storage->GetInt(state, -1) != row) {
+        ImGui::SetScrollHereY(0.5f);
+        storage->SetInt(state, row);
+    }
+}
+
 void draw_sections(RecompRuntimeUi *ui, const LauncherTheme &theme,
                    bool enter_on_click) {
+    const ImGuiID selection_state = ImGui::GetID("##visible-selection");
     for (size_t index = 0; index < ui->section_count; ++index) {
         ImGui::PushID(static_cast<int>(index));
         const bool selected = index == ui->section_index;
         const bool clicked = ImGui::Selectable(ui->sections[index], selected, 0,
                                                ImVec2(0.0f, theme.row_height));
+        reveal_selection(selected, ui->sections[index], selection_state);
         if ((clicked || ImGui::IsItemHovered()) &&
             (index != ui->section_index || (clicked && enter_on_click))) {
             const int was_in_section = ui->in_section;
@@ -106,6 +118,7 @@ void draw_items(RecompRuntimeUi *ui, const LauncherTheme &theme,
                 ui->row_index = index;
                 ui->in_section = 1;
             }
+            reveal_selection(selected, folder, selection_state);
             ImGui::PopID();
             continue;
         }
@@ -154,6 +167,7 @@ void draw_items(RecompRuntimeUi *ui, const LauncherTheme &theme,
             ui->row_index = index;
             ui->in_section = 1;
         }
+        reveal_selection(selected, item->key, selection_state);
 
         ImDrawList *draw = ImGui::GetWindowDrawList();
         const ImVec2 end = ImGui::GetItemRectMax();

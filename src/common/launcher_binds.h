@@ -113,6 +113,10 @@ void launcher_binds_save_psx_gamepad(LauncherModel* m, int player /*1-based*/);
 // Save Profile with a KEYBOARD input source: flush this player's keyboard map
 // to keybinds.ini (captures already persist; this is the explicit commit).
 void launcher_binds_save_psx_keyboard(LauncherModel* m, int player /*1-based*/);
+// Load Profile with a KEYBOARD input source: replace this player's keyboard map
+// from another keybinds.ini and persist. Returns 1 on success, 0 if refused.
+int launcher_binds_load_psx_keyboard(LauncherModel* m, int player /*1-based*/,
+                                     const char* src);
 // Rename the selected gamepad (custom display name for the GUID).
 void launcher_binds_rename_psx_gamepad(LauncherModel* m, int player /*1-based*/,
                                        const char* name);
@@ -146,6 +150,10 @@ int launcher_binds_psx_name_is_custom(const char* guid);
 // modifier mask; pass keycode==0 to UNBIND. Persists to config.ini [KeyMap]
 // and refreshes the model's display string.
 void launcher_binds_set_hotkey(LauncherModel* m, LngHotkey h, int keycode, int kmod);
+int launcher_binds_hotkey_slots(const LauncherModel* m, LngHotkey h, char slots[4][64]);
+int launcher_binds_hotkeys_equal(const char* a,const char* b);
+void launcher_binds_set_hotkey_slot(LauncherModel* m, LngHotkey h, int slot, int keycode, int kmod);
+void launcher_binds_reset_hotkeys(LauncherModel* m, uint32_t mask);
 
 // NES Zapper switches were toggled (mouse-as-gun / crosshair). Persists to
 // keybinds.ini [zapper] via the NES-native bridge's surgical writer; the

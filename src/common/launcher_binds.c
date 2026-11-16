@@ -418,6 +418,14 @@ static const char* config_path(void) {
              ? g_launcher_config_path : "config.ini";
 }
 
+static const char* hotkey_default(const LauncherModel* m, int h) {
+    if (is_psx_profile(m)) {
+        if (h==LNG_HK_FULLSCREEN) return "F11,Alt+Return,Ctrl+F";
+        if (h==LNG_HK_OPEN_LAUNCHER) return "Ctrl+L,F10";
+    }
+    return kHotkeyDef[h];
+}
+
 // Fill m->hotkeys[] from config.ini [KeyMap] (or defaults where absent).
 static void reload_hotkey_display(LauncherModel* m) {
     for (int h = 0; h < LNG_HK_COUNT; ++h)
@@ -1271,6 +1279,19 @@ static int psx_guid_claimed_by_other(const LauncherModel* m, int self,
     return 0;
 }
 
+static int psx_instance_claimed_by_other(const LauncherModel* m, int self,
+                                         uint32_t pad_id) {
+    if (!m) return 0;
+    const uint32_t instance = pad_id + 1;
+    for (int o = 0; o < LNG_MAX_PLAYERS; ++o) {
+        if (o == self) continue;
+        if (m->s.player_src[o] == 2 &&
+            m->s.player_gamepad_instance[o] == instance)
+            return 1;
+    }
+    return 0;
+}
+
 static void psx_fallback_pad_label(const char* guid, char* out, size_t cap) {
     if (!out || !cap) return;
     if (guid && guid[0]) {
@@ -1318,7 +1339,8 @@ void launcher_binds_sync_psx_pad_sources(LauncherModel* m,
             if (pads && pad_count > 0) {
                 for (int i = 0; i < pad_count; ++i) {
                     if (!pads[i].guid[0]) continue;
-                    if (psx_guid_claimed_by_other(m, p, pads[i].guid)) continue;
+                    if (psx_instance_claimed_by_other(m, p, pads[i].id))
+                        continue;
                     chosen = i;
                     break;
                 }
@@ -1344,11 +1366,27 @@ void launcher_binds_sync_psx_pad_sources(LauncherModel* m,
         const char* guid = m->s.player_gamepad_guid[p];
         if (!guid[0]) continue;
 
-        // Prefer the live SDL name when this GUID is connected.
+        // Prefer the same live SDL instance while it remains connected. A GUID
+        // identifies a mapping, not a physical seat: two identical pads share
+        // it and must still resolve to different process-local instances.
         int live = -1;
         if (pads) {
+            const uint32_t instance = m->s.player_gamepad_instance[p];
+            if (instance) {
+                for (int i = 0; i < pad_count; ++i) {
+                    if (pads[i].id + 1 == instance && pads[i].guid[0] &&
+                        !strcmp(pads[i].guid, guid) &&
+                        !psx_instance_claimed_by_other(m, p, pads[i].id)) {
+                        live = i;
+                        break;
+                    }
+                }
+            }
+        }
+        if (pads && live < 0) {
             for (int i = 0; i < pad_count; ++i) {
-                if (pads[i].guid[0] && !strcmp(pads[i].guid, guid)) {
+                if (pads[i].guid[0] && !strcmp(pads[i].guid, guid) &&
+                    !psx_instance_claimed_by_other(m, p, pads[i].id)) {
                     live = i;
                     break;
                 }
@@ -1357,6 +1395,7 @@ void launcher_binds_sync_psx_pad_sources(LauncherModel* m,
         const int custom = rui_psx_pad_binds_name_is_custom(path, guid);
         if (live >= 0) {
             m->player_pad_id[p] = pads[live].id;
+            m->s.player_gamepad_instance[p] = pads[live].id + 1;
             if (custom) {
                 // Keep the user's rename in the model / dropdown.
                 char reg[64] = {0};
@@ -1386,6 +1425,7 @@ void launcher_binds_sync_psx_pad_sources(LauncherModel* m,
             psx_fallback_pad_label(guid, m->player_pad_name[p],
                                    sizeof(m->player_pad_name[p]));
         m->player_pad_id[p] = 0;
+        m->s.player_gamepad_instance[p] = 0;
     }
 }
 
@@ -1451,6 +1491,14 @@ void launcher_binds_save_psx_keyboard(LauncherModel* m, int player) {
     reload_player_display(m, player);
 }
 
+int launcher_binds_load_psx_keyboard(LauncherModel* m, int player, const char* src) {
+    if (!m || !is_psx_profile(m)) return 0;
+    if (player < 1 || player > LNG_MAX_PLAYERS) return 0;
+    const int ok = rui_psx_binds_load_profile(keybinds_file_path(), player - 1, src);
+    reload_player_display(m, player);
+    return ok;
+}
+
 void launcher_binds_delete_psx_gamepad(LauncherModel* m, int player) {
     if (!m || !is_psx_profile(m)) return;
     if (player < 1 || player > LNG_MAX_PLAYERS) return;
@@ -1480,16 +1528,10 @@ void launcher_binds_prepare_psx_launch(LauncherModel* m,
             // Prefer a pad not already claimed by an earlier player.
             int chosen = -1;
             for (int i = 0; i < pad_count; ++i) {
-                int claimed = 0;
-                for (int o = 0; o < p; ++o) {
-                    if (m->s.player_src[o] == 2 &&
-                        m->s.player_gamepad_guid[o][0] &&
-                        !strcmp(m->s.player_gamepad_guid[o], pads[i].guid)) {
-                        claimed = 1;
-                        break;
-                    }
+                if (!psx_instance_claimed_by_other(m, p, pads[i].id)) {
+                    chosen = i;
+                    break;
                 }
-                if (!claimed) { chosen = i; break; }
             }
             if (chosen < 0) chosen = 0;
             launcher_model_set_source(m, p, 2, pads[chosen].id,
@@ -1510,15 +1552,33 @@ void launcher_binds_prepare_psx_launch(LauncherModel* m,
             psx_fallback_pad_label(guid, name, sizeof(name));
         }
         if (!custom && pads) {
+            int live = -1;
+            const uint32_t instance = m->s.player_gamepad_instance[p];
+            if (instance) {
+                for (int i = 0; i < pad_count; ++i) {
+                    if (pads[i].id + 1 == instance && pads[i].guid[0] &&
+                        !strcmp(pads[i].guid, guid) &&
+                        !psx_instance_claimed_by_other(m, p, pads[i].id)) {
+                        live = i;
+                        break;
+                    }
+                }
+            }
             for (int i = 0; i < pad_count; ++i) {
-                if (pads[i].guid[0] && !strcmp(pads[i].guid, guid) &&
-                    pads[i].name[0]) {
-                    copy_str(name, sizeof(name), pads[i].name);
-                    copy_str(m->player_pad_name[p],
-                             sizeof(m->player_pad_name[p]), name);
-                    m->player_pad_id[p] = pads[i].id;
+                if (live < 0 && pads[i].guid[0] &&
+                    !strcmp(pads[i].guid, guid) &&
+                    !psx_instance_claimed_by_other(m, p, pads[i].id)) {
+                    live = i;
                     break;
                 }
+            }
+            if (live >= 0) {
+                if (pads[live].name[0])
+                    copy_str(name, sizeof(name), pads[live].name);
+                copy_str(m->player_pad_name[p],
+                         sizeof(m->player_pad_name[p]), name);
+                m->player_pad_id[p] = pads[live].id;
+                m->s.player_gamepad_instance[p] = pads[live].id + 1;
             }
         }
         int dz = m->s.deadzone[p];
@@ -1617,4 +1677,70 @@ void launcher_binds_set_hotkey(LauncherModel* m, LngHotkey h, int keycode, int k
     // missing line keeps the default.
     keymap_write(kHotkeyKey[h], val[0] ? val : "None");
     copy_str(m->hotkeys[h], sizeof(m->hotkeys[h]), val[0] ? val : "(unbound)");
+}
+
+static int hotkey_token(const char* token, SDL_Keycode* key, int* mods) {
+    char text[64];
+    snprintf(text,sizeof text,"%s",token?token:"");
+    char* p=text;
+    *mods=0;
+    while (*p==' ' || *p=='\t') ++p;
+    for (;;) {
+        if (!strncasecmp(p,"Ctrl+",5)) { *mods|=SDL_KMOD_CTRL; p+=5; }
+        else if (!strncasecmp(p,"Alt+",4)) { *mods|=SDL_KMOD_ALT; p+=4; }
+        else if (!strncasecmp(p,"Shift+",6)) { *mods|=SDL_KMOD_SHIFT; p+=6; }
+        else break;
+    }
+    while (*p==' ' || *p=='\t') ++p;
+    size_t n=strlen(p);
+    while(n && (p[n-1]==' ' || p[n-1]=='\t')) p[--n]=0;
+    *key=SDL_GetKeyFromName(p);
+    return *key!=SDLK_UNKNOWN;
+}
+int launcher_binds_hotkeys_equal(const char* a,const char* b) {
+    SDL_Keycode ka,kb; int ma,mb;
+    return hotkey_token(a,&ka,&ma) && hotkey_token(b,&kb,&mb) && ka==kb && ma==mb;
+}
+
+int launcher_binds_hotkey_slots(const LauncherModel* m, LngHotkey h, char slots[4][64]) {
+    if (!m || h < 0 || h >= LNG_HK_COUNT) return 0;
+    char text[260];
+    copy_str(text, sizeof text, m->hotkeys[h]);
+    int count = 0;
+    char* saved = NULL;
+    for (char* token = strtok_r(text, ",", &saved); token && count < 4;
+         token = strtok_r(NULL, ",", &saved)) {
+        while (*token == ' ' || *token == '\t') ++token;
+        size_t length = strlen(token);
+        while (length && (token[length-1] == ' ' || token[length-1] == '\t')) token[--length] = 0;
+        if (!length || ieq(token, length, "None") || ieq(token, length, "(unbound)")) continue;
+        copy_str(slots[count++], 64, token);
+    }
+    return count;
+}
+
+void launcher_binds_set_hotkey_slot(LauncherModel* m, LngHotkey h, int slot, int keycode, int kmod) {
+    char slots[4][64] = {{0}}, next[64], text[260] = "";
+    const int count = launcher_binds_hotkey_slots(m, h, slots);
+    if (!m || h < 0 || h >= LNG_HK_COUNT || slot < 0 || slot > count || slot >= 4) return;
+    format_hotkey(keycode, kmod, next, sizeof next);
+    for (int i = 0; i < count || i == slot; ++i) {
+        const char* value = i == slot ? next : slots[i];
+        if (!value[0]) continue;
+        if (text[0]) strncat(text, ",", sizeof text-strlen(text)-1);
+        strncat(text, value, sizeof text-strlen(text)-1);
+    }
+    keymap_write(kHotkeyKey[h], text[0] ? text : "None");
+    copy_str(m->hotkeys[h], sizeof m->hotkeys[h], text[0] ? text : "(unbound)");
+}
+
+void launcher_binds_reset_hotkeys(LauncherModel* m, uint32_t mask) {
+    if (!m) return;
+    launcher_model_cancel_hk_capture(m);
+    for (int h = 0; h < LNG_HK_COUNT; ++h) {
+        if (!(mask & (1u << h))) continue;
+        const char* value = hotkey_default(m,h);
+        keymap_write(kHotkeyKey[h], value[0] ? value : "None");
+    }
+    reload_hotkey_display(m);
 }

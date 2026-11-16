@@ -1,3 +1,6 @@
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include "recomp_runtime_ui.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -8,7 +11,16 @@
 #include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+
+/* Headless checks must never open the Windows CRT assertion dialog. */
+static void fixture_fail(const char *condition, int line) {
+    std::fprintf(stderr, "FAIL runtime UI line %d: %s\n", line, condition);
+    std::exit(1);
+}
+#undef assert
+#define assert(condition) ((condition) ? (void)0 : fixture_fail(#condition, __LINE__))
 
 namespace {
 
@@ -335,6 +347,9 @@ void footer_case(ImVec2 display, uint32_t flags) {
 } // namespace
 
 int main() {
+    int assertions_enabled = 0;
+    assert(++assertions_enabled);
+    if (!assertions_enabled) return 1;
     footer_case(ImVec2(640, 480), 0);
     footer_case(ImVec2(1280, 720), 0);
     footer_case(ImVec2(2880, 1800), 0);
@@ -347,5 +362,6 @@ int main() {
     render_case(0, ImVec2(2880.0f, 1800.0f), 1949.0f, 1679.0f, 1951.0f, 2.0f);
     render_case(RECOMP_RUNTIME_UI_PRESENTATION_TOUCH_FRIENDLY,
                 ImVec2(3088.0f, 1440.0f), 3000.0f, 1300.0f, 3020.0f);
+    std::puts("runtime UI: assertions enabled; three footer layouts/clicks, confirmation cadence, nested mouse, toast and render cases passed");
     return 0;
 }

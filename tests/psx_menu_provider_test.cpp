@@ -17,11 +17,14 @@
 #include <cstring>
 
 // Presentation stubs (the real ones need SDL + a GL context).
+#ifndef RUI_MENU_PRESENTATION_TEST
 namespace rui_psx {
+void set_window(void *) {}
 int sdl_event(const void *) { return 0; }
 void draw(int, int) {}
 void release_gl() {}
 }
+#endif
 
 static int g_fail = 0;
 #define CHECK(c) do { if (!(c)) { std::fprintf(stderr, "FAIL %s:%d %s\n", __FILE__, __LINE__, #c); ++g_fail; } } while (0)
@@ -136,10 +139,24 @@ int main() {
     CHECK(p && p->abi_version == PSX_MENU_ABI_VERSION && !std::strcmp(p->name, "recomp-ui"));
 
 #if defined(PSX_MENU_HOST_HAS_DEFAULT_SELECTION)
-    // Chosen by default for a single-disc title: keep its presentation.
-    g_discs = 1;
+    // Every title has a Disc page; only valid backend operations are enabled.
+    for (int count = 0; count <= 1; ++count) {
+    g_discs = count;
     PsxMenuHost dh = make_host(1);
-    CHECK(p->attach(p->ctx, nullptr, nullptr, &dh) == 0);
+    const int attached = p->attach(p->ctx, nullptr, nullptr, &dh);
+    CHECK(attached == 1);
+    if (attached) {
+        in(T);
+        CHECK(p->is_open(p->ctx));
+        CHECK(go("Graphics", "graphics.render_thread"));
+        CHECK(go("Disc", "media.disc"));
+        CHECK(go("Disc", "media.insert"));
+        g_inserted = 0;
+        in(A);
+        CHECK(g_inserted == (count ? 1 : 0));
+        p->detach(p->ctx);
+    }
+    }
 #endif
     // Chosen by default for a multi-disc title, or by the title: attach.
     g_discs = 3;

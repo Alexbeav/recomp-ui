@@ -52,6 +52,9 @@ extern "C" {
 #define RECOMP_LAUNCHER_HAS_MULTITAP_ENABLED 1
 /* Host may #ifdef this when reading multitap_analog (DualShock-on-tap hack). */
 #define RECOMP_LAUNCHER_HAS_MULTITAP_ANALOG 1
+/* Host may #ifdef this when setting GameInfo.has_record_replay and reading
+ * Settings.record_replay (the "Record replay" checkbox). */
+#define RECOMP_LAUNCHER_HAS_RECORD_REPLAY 1
 /* Host may #ifdef this when reading Settings.rewind_depth. */
 #define RECOMP_LAUNCHER_HAS_REWIND_DEPTH 1
 /* Host may #ifdef this when reading Settings.rewind_interval. */
@@ -1289,7 +1292,7 @@ struct RecompLauncherCSettings {
     int  enable_audio;      // bool
     int  audio_freq;        // Hz (the Sample rate row; SystemProfile.hide_audio_freq hides it)
     int  volume;            // 0..100
-    int  player_src[RECOMP_LAUNCHER_MAX_PLAYERS];  // 0 none, 1 keyboard, 2 gamepad
+    int  player_src[RECOMP_LAUNCHER_MAX_PLAYERS];  // 0 none, 1 keyboard, 2 gamepad, 3 mouse (RECOMP_LAUNCHER_SRC_MOUSE), 4 light gun (RECOMP_LAUNCHER_SRC_GUNCON)
     int  deadzone[RECOMP_LAUNCHER_MAX_PLAYERS];    // 0..100
     int  skip_launcher;     // bool: boot straight to the game next time
     int  msu1_enabled;      // bool
@@ -2641,3 +2644,4 @@ void recomp_launcher_set_preserve_sdl(int preserve);
 #endif
 
 #endif // RECOMP_LAUNCHER_H
+
