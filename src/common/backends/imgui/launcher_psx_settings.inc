@@ -221,3 +221,51 @@ static void draw_psx_settings_page(LauncherModel* m,const LauncherTheme& th,bool
     g_psx_compact_settings=false;
     if (!display) panel_hotkeys_draw(m,&th);
 }
+
+
+// ---- Configure page: per-device host options -------------------------------
+/* Mouse, JogCon, anti-deadzone and the fallback Select chord are properties of
+ * the DEVICE in the player's hands, not of the machine, so they are edited next
+ * to that device on the Configure page. Gating follows what the player has: the
+ * mouse rows appear for a PS1 Mouse seat, the JogCon row only for a pad that
+ * reports itself as one. */
+static bool psx_name_is_jogcon(const char* name) {
+    if (!name || !name[0]) return false;
+    static const char kNeedle[]="jogcon";
+    for (const char* s=name; *s; ++s) {
+        bool match=true;
+        for (int i=0;i<6 && match;++i) {
+            char c=s[i];
+            if (!c) { match=false; break; }
+            if (c>='A'&&c<='Z') c=(char)(c-'A'+'a');
+            match = c==kNeedle[i];
+        }
+        if (match) return true;
+    }
+    return false;
+}
+bool psx_player_has_jogcon(const LauncherModel* m,int p) {
+    return m && p>=0 && p<RECOMP_LAUNCHER_MAX_PLAYERS &&
+           m->s.player_src[p]==2 && psx_name_is_jogcon(m->player_pad_name[p]);
+}
+void draw_psx_pad_options(LauncherModel* m,const LauncherTheme& th,int p) {
+    const auto* mods=m->mods; RecompLauncherCModFeature f{};
+    if (!mods || !mods->feature_option_get ||
+        !psx_feature(m,"psx.runtime.settings","general",f)) return;
+    const int src=m->s.player_src[p];
+    const bool mouse=src==RECOMP_LAUNCHER_SRC_MOUSE;
+    const bool jogcon=psx_player_has_jogcon(m,p);
+    ImGui::PushID(f.package_id); ImGui::PushID(f.id);
+    ImGui::BeginDisabled(!launcher_model_can_open_mods(m));
+    for (int i=0;i<f.option_count;++i) {
+        RecompLauncherCModOption o{};
+        if (!mods->feature_option_get(mods->ctx,f.package_id,f.id,i,&o)) continue;
+        const bool is_mouse=!strncmp(o.id,"controller.mouse_",17);
+        const bool is_jogcon=!strcmp(o.id,"controller.experimental_jogcon_force_feedback_invert");
+        if (is_mouse && !mouse) continue;
+        if (is_jogcon && !jogcon) continue;
+        if (!is_mouse && !is_jogcon && strncmp(o.id,"controller.",11)) continue;
+        draw_mod_feature_option(m,f,o);
+    }
+    ImGui::EndDisabled(); ImGui::PopID(); ImGui::PopID();
+}
