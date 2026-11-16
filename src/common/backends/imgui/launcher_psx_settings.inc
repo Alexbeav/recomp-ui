@@ -197,8 +197,11 @@ static void psx_settings_card(LauncherModel* m,const LauncherTheme& th,const cha
         } else {
             if (!strcmp(group,"System")) draw_system_controls(m,th);
             if (!strcmp(group,"Audio")) draw_audio_controls(m,th);
-            if (!strcmp(group,"Input")) { draw_input_controls(m,th); }
-            psx_runtime_group(m,"general",group);
+            /* Input holds only the bus-level controls; the controller.* rows
+             * belong to the device and are drawn once, on its Configure card
+             * (draw_psx_pad_options, pin I). */
+            if (!strcmp(group,"Input")) draw_input_controls(m,th);
+            else psx_runtime_group(m,"general",group);
             if (!strcmp(group,"Audio")) psx_package_group(m,"psx.enhancement.enhanced-audio");
             if (!strcmp(group,"System")) psx_package_group(m,"psx.feature.rewind");
         }
