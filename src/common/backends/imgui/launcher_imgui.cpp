@@ -2460,8 +2460,12 @@ void draw_verdict_block(LauncherModel* m, const LauncherTheme& th, float availw,
         } else {
         // A tick only for a serial the build lists: a disc of another release
         // has a serial too, and a tick beside it told the player it was right.
+        // Its cross is the headline's red when the serial is why the disc is
+        // refused; the Tracks cross and every other one stay amber (A15).
+        const LngColor refused_red = lng_rgba(0.945f, 0.322f, 0.322f, 1.0f);
         kv_row("Serial",     pending ? dash : (v.serial[0] ? v.serial : dash),
-               th, !pending, launcher_model_disc_serial_ok(m));
+               th, !pending, launcher_model_disc_serial_ok(m),
+               launcher_model_disc_serial_refused(m) ? &refused_red : nullptr);
         kv_row("Region",     pending ? dash : (v.region[0] ? v.region : dash),
                th, !pending, v.region[0] != '\0');
         kv_row("ISO header", pending ? dash : (v.iso_ok ? "OK" : "Mismatch"),
@@ -2510,6 +2514,9 @@ void draw_verdict_block(LauncherModel* m, const LauncherTheme& th, float availw,
     char note_buf[256];
     bool wrong_disc = false;
     const char* note = launcher_model_disc_note(m, note_buf, sizeof(note_buf), &wrong_disc);
+    // Asked once per frame the dashboard's card is drawn, also when there is
+    // no sentence: that is how a sentence that went away is forgotten.
+    const bool reveal = reveal_note && launcher_model_disc_note_reveal(m);
     if (note[0]) {
         ImGui::Dummy(ImVec2(0, px(4)));
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + availw);
@@ -4018,19 +4025,33 @@ static void pad_mode_combo(LauncherModel* m, int p, float w, bool live,
 // keyboard entry splits into "Keyboard + Mouse" (mouse-aim on) and "Keyboard"
 // (off); otherwise it is the single legacy "Keyboard" entry, byte-for-byte
 // identical to before for every non-mouse game.
-void draw_source_selectables(LauncherModel* m, int p) {
-    auto choose=[&](int kind,uint32_t id,const char* name,const char* guid) {
-        if(p==0 && launcher_model_mouse_pair_available(m))
-            launcher_model_set_primary_source(m,kind,id,name,guid);
-        else launcher_model_set_source(m,p,kind,id,name,guid);
-    };
+//
+// pick selects what a click changes (PS1B-279, PS1 Mouse + pad):
+//   kPickSeat    - seat p, as always.
+//   kPickPrimary - the Player 1 card of a one-card PSX title, which owns both
+//                  ports while it holds the mouse (launcher_model_set_primary_source).
+//   kPickPadOnly - the pad port next to that mouse: no second mouse offered.
+enum SourcePick { kPickSeat = 0, kPickPrimary = 1, kPickPadOnly = 2 };
+
+void draw_source_selectables(LauncherModel* m, int p, int pick = kPickSeat) {
     const SystemProfile* src_prof = (const SystemProfile*)m->profile;
     const bool psx = src_prof && src_prof->id && !strcmp(src_prof->id, "psx");
     const bool snes_prof = src_prof && src_prof->id &&
                            !strcmp(src_prof->id, "snes");
     const bool n64_prof = src_prof && src_prof->id &&
                           !strcmp(src_prof->id, "n64");
-    if (ImGui::Selectable(ui_text("None"), m->s.player_src[p] == 0)) {
+    if (pick == kPickPrimary) p = 0;
+    const int pair_port = pick == kPickPrimary ? launcher_model_mouse_pair_port(m) : 0;
+    auto choose = [&](int kind, uint32_t id, const char* name, const char* guid) {
+        if (pick == kPickPrimary)
+            launcher_model_set_primary_source(m, kind, id, name, guid);
+        else
+            launcher_model_set_source(m, p, kind, id, name, guid);
+    };
+    // While Player 1 holds the mouse, the card reads "PS1 Mouse" whichever
+    // port it is in; no other entry is the current one.
+    auto current = [&](int kind) { return !pair_port && m->s.player_src[p] == kind; };
+    if (ImGui::Selectable(ui_text("None"), current(0))) {
         choose(0, 0, nullptr, nullptr);
         if (psx) launcher_binds_refresh(m);
     }
@@ -4042,7 +4063,7 @@ void draw_source_selectables(LauncherModel* m, int p) {
         if (ImGui::Selectable(ui_text("Keyboard"), kb))
             launcher_model_set_mouse_source(m, 0);
     } else {
-        if (ImGui::Selectable(ui_text("Keyboard"), m->s.player_src[p] == 1)) {
+        if (ImGui::Selectable(ui_text("Keyboard"), current(1))) {
             choose(1, 0, nullptr, nullptr);
             if (psx) launcher_binds_refresh(m);
         }
@@ -4076,12 +4097,12 @@ void draw_source_selectables(LauncherModel* m, int p) {
         if(o!=p && launcher_model_source_is_pointer(m->s.player_src[o])) pointer_taken=true;
     {
         ImGui::BeginDisabled(pointer_taken);
-        if(launcher_model_mouse_source_available(m) &&
-           ImGui::Selectable(ui_text("PS1 Mouse"),m->s.player_src[p]==RECOMP_LAUNCHER_SRC_MOUSE) && !pointer_taken) {
+        if(pick != kPickPadOnly && launcher_model_mouse_source_available(m) &&
+           ImGui::Selectable(ui_text("PS1 Mouse"),pair_port || m->s.player_src[p]==RECOMP_LAUNCHER_SRC_MOUSE) && !pointer_taken) {
             choose(RECOMP_LAUNCHER_SRC_MOUSE,0,nullptr,nullptr); launcher_binds_refresh(m);
         }
-        if(launcher_model_guncon_source_available(m) &&
-           ImGui::Selectable(ui_text("GunCon"),m->s.player_src[p]==RECOMP_LAUNCHER_SRC_GUNCON) && !pointer_taken) {
+        if(pick != kPickPadOnly && launcher_model_guncon_source_available(m) &&
+           ImGui::Selectable(ui_text("GunCon"),current(RECOMP_LAUNCHER_SRC_GUNCON)) && !pointer_taken) {
             choose(RECOMP_LAUNCHER_SRC_GUNCON,0,nullptr,nullptr); launcher_binds_refresh(m);
         }
         if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
@@ -4207,7 +4228,7 @@ void draw_source_selectables(LauncherModel* m, int p) {
         else
             std::snprintf(label, sizeof(label), "%s %s",
                           opts[i].name, ui_text("(disconnected)"));
-        const bool sel = seat_has(p, opts[i]);
+        const bool sel = !pair_port && seat_has(p, opts[i]);
         if (claimed) ImGui::BeginDisabled();
         if (ImGui::Selectable(label, sel) && !claimed) {
             choose(2, opts[i].id, opts[i].name,
@@ -5691,8 +5712,6 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
             ImGui::PopID();
         }
     }
-
-    if (m->profile && !strcmp(m->profile->id,"psx")) draw_render_pipeline(m,th);
 
     // Frame interpolation is only meaningful under OpenGL (Software has no
     // interpolation pass); Presentation target only matters once frame

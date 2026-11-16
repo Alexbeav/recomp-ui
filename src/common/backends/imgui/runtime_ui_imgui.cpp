@@ -91,6 +91,7 @@ void draw_sections(RecompRuntimeUi *ui, const LauncherTheme &theme,
 
 void draw_items(RecompRuntimeUi *ui, const LauncherTheme &theme,
                 bool touch_friendly, float desktop_scale = 1.0f) {
+    const ImGuiID selection_state = ImGui::GetID("##visible-selection");
     const size_t count = recomp_runtime_ui_page_entry_count(ui);
     for (size_t index = 0; index < count; ++index) {
         char folder[96];

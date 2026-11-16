@@ -1824,6 +1824,11 @@ bool launcher_model_disc_serial_ok(const LauncherModel* m) {
     return m->verify.serial_status != RECOMP_SERIAL_NOT_LISTED;
 }
 
+bool launcher_model_disc_serial_refused(const LauncherModel* m) {
+    return m && m->rom_present && m->verify.verdict == 3 &&
+           m->verify.serial_status == RECOMP_SERIAL_NOT_LISTED;
+}
+
 const char* launcher_model_disc_note(const LauncherModel* m, char* buf, size_t cap,
                                      bool* wrong_disc) {
     if (wrong_disc) *wrong_disc = false;
@@ -1851,6 +1856,40 @@ const char* launcher_model_disc_note(const LauncherModel* m, char* buf, size_t c
     if (m->netplay_supported && v->netplay_detail[0] && !v->netplay_ok)
         safe_copy(buf, cap, v->netplay_detail);
     return buf;
+}
+
+bool launcher_model_disc_note_reveal(LauncherModel* m) {
+    char note[sizeof(m->disc_note_revealed)];
+    bool wrong_disc = false;
+    if (!m) return false;
+    launcher_model_disc_note(m, note, sizeof(note), &wrong_disc);
+    if (!wrong_disc || !note[0]) {
+        m->disc_note_revealed[0] = '\0';
+        m->disc_note_reveal_frames = 0;
+        return false;
+    }
+    if (strcmp(note, m->disc_note_revealed) != 0) {
+        safe_copy(m->disc_note_revealed, sizeof(m->disc_note_revealed), note);
+        m->disc_note_reveal_frames = LNG_DISC_NOTE_REVEAL_FRAMES;
+    }
+    if (m->disc_note_reveal_frames > 0) {
+        m->disc_note_reveal_frames--;
+        return true;
+    }
+    return false;
+}
+
+float launcher_model_scroll_into_view(float item_top, float item_bottom,
+                                      float view_top, float view_bottom, float margin) {
+    if (item_bottom + margin > view_bottom) {
+        const float down = item_bottom + margin - view_bottom;
+        const float room = item_top - margin - view_top;   /* before the top leaves */
+        if (room <= 0.0f) return 0.0f;
+        return down < room ? down : room;
+    }
+    if (item_top - margin < view_top)
+        return item_top - margin - view_top;
+    return 0.0f;
 }
 
 const char* launcher_model_rom_path(const LauncherModel* m) {
@@ -4111,6 +4150,25 @@ bool launcher_model_setup_error_reveal(LauncherModel* m) {
     return false;
 }
 
+/* A prepare failed. The host may now judge the selected file differently: a
+ * setup host answers "bad" for a file its own disc check refused, and the
+ * panel must not say "Disc verified" above that refusal. So the disc check
+ * runs again. A failure that is not a refusal of the file (a build that
+ * failed, tools that are missing) leaves the host's answer as it was, and so
+ * the verdict.
+ *
+ * disc_refused_by_setup: the "bad" is setup's, not the game program's. It is
+ * so when this check turned a verdict that was not "bad" into "bad", and it
+ * stays so while a later failure leaves the verdict "bad". A file the game
+ * program itself calls bad (no header, another serial) never gets it. */
+static void lm_recheck_disc_after_failed_prepare(LauncherModel* m) {
+    const int  before = m->verify.verdict;
+    const bool was_refused = m->disc_refused_by_setup;
+    run_verify(m);
+    m->disc_refused_by_setup =
+        m->verify.verdict == 3 && (was_refused || before != 3);
+}
+
 void launcher_model_poll_prepare_disc(LauncherModel* m) {
     if (!m || !m->setup_preparing) return;
     m->setup_prepare_pulse += 0.02f;
@@ -5127,6 +5185,12 @@ static void apply_default_pad_mode_for_source(LauncherModel* m, int player) {
     if (!pad_mode_is_psx_legacy(m)) return;
     /* A neGcon is the device in the port, whichever host input drives it. */
     if (m->s.pad_mode[player] == RECOMP_LAUNCHER_PAD_MODE_NEGCON) return;
+    if (title_defaults_to_dpad(m)) {
+        // Keyboard presents D-Pad without replacing the saved pad choice.
+        if (m->s.pad_mode[player] != 1 && m->s.pad_mode[player] != 2)
+            m->s.pad_mode[player] = 2;
+        return;
+    }
     if (m->s.player_src[player] == 1)
         m->s.pad_mode[player] = 2;   // D-Pad / digital (no sticks)
     else if (m->s.player_src[player] == 2)

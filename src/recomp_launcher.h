@@ -1643,6 +1643,14 @@ struct RecompLauncherCSettings {
     int  fast_forward_toggle_mode;
     /* Host-owned policy: resolution/SSAA may be reduced to keep up. */
     int  automatic_quality;
+
+    /* "Record replay" (GameInfo.has_record_replay consoles): 1 = the host
+     * records the next session as a replay from power-on, for automated
+     * testing. A per-launch choice, not a preference: hosts seed it from
+     * their own session state and should not persist it, so a tick is never
+     * left on by accident. 0 = off (the default, and what a zero-initialized
+     * host predating this field gets). Appended for ABI stability. */
+    int  record_replay;
 };
 #define RECOMP_LAUNCHER_HAS_ZAPPER_SETTINGS 1
 
@@ -2527,6 +2535,10 @@ typedef struct RecompLauncherCGameInfo {
     int has_native_negcon;
     /* Opt-in Graphics control; hosts own persistence and live quality. */
     int                has_automatic_quality;
+    /* Dashboard footer checkbox for Settings.record_replay. 0 => no checkbox,
+     * so a console without a replay recorder keeps today's footer. Appended
+     * for ABI stability. */
+    int has_record_replay;
 } RecompLauncherCGameInfo;
 #define RECOMP_LAUNCHER_HAS_NATIVE_SAVE_PATH_PROVIDER 1
 #define RECOMP_LAUNCHER_HAS_VSYNC_VRR 1

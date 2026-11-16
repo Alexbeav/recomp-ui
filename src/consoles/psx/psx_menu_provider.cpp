@@ -65,77 +65,7 @@ RecompRuntimeUiItem g_extra[] = {
      RECOMP_RUNTIME_UI_INT, 1, 1, 1, nullptr, 0, nullptr},
     {"media.insert", "Disc", "Insert disc and resume", "Change the disc while the game keeps running.",
      RECOMP_RUNTIME_UI_ACTION, 0, 0, 0, nullptr, 0, nullptr},
-    // Session rows: only when the runtime offers them (PsxMenuHost session_*).
-    {"media.reinsert", "Disc", "Reinsert current disc", "Open and close the lid with the same disc.",
-     RECOMP_RUNTIME_UI_ACTION, 0, 0, 0, nullptr, 0, nullptr},
-    {"input.controller_port", "Input", "Controller 1 port",
-     "Move controller 1 to console port 2 or back, as if the plug were moved. Some games ask for it.",
-     RECOMP_RUNTIME_UI_CHOICE, 0, 1, 1, nullptr, 2, nullptr},
-    // Look rows: only when the runtime has them (PSX_MENU_HOST_HAS_LOOK_ROWS).
-    {"system.restart_game", "System", "Restart game",
-     "Reset the console: the game starts again from its boot screen. Unsaved progress is lost.",
-     RECOMP_RUNTIME_UI_ACTION, 0, 0, 0, nullptr, 0, nullptr},
-    {"graphics.internal_resolution", "Graphics", "Internal resolution",
-     "Render the 3D picture at a higher scale. Higher is sharper and uses more GPU.",
-     RECOMP_RUNTIME_UI_CHOICE, 0, 6, 1, kIresChoices, 7, nullptr},
-    {"graphics.pgxp", "Graphics", "PGXP precision",
-     "Steadier 3D: polygons stop wobbling and textures stop warping. Applies with a quick restart.",
-     RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, nullptr, 0, nullptr},
-    {"graphics.antialiasing", "Graphics", "Antialiasing",
-     "Smooth jagged edges of the finished picture.",
-     RECOMP_RUNTIME_UI_CHOICE, 0, 2, 1, kAaChoices, 3, nullptr},
-    {"graphics.crt_filter", "Graphics", "CRT filter",
-     "A period TV look (colour and scanlines). Applies with a quick restart.",
-     RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, nullptr, 0, nullptr},
-    {"display.scanlines", "Display", "Scanlines",
-     "Dark gaps between display lines, like a CRT. Uses the CRT filter.",
-     RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, nullptr, 0, nullptr},
-    {"display.smoothing", "Display", "Smoothing",
-     "How the picture is scaled to the window: Smooth blends pixels, Sharp keeps hard edges.",
-     RECOMP_RUNTIME_UI_CHOICE, 0, 2, 1, kSmoothChoices, 3, nullptr},
-    {"display.texture_filtering", "Display", "Texture filtering",
-     "Nearest is the console's look; Bilinear softens; xBR rounds pixel-art edges.",
-     RECOMP_RUNTIME_UI_CHOICE, 0, 3, 1, kTextureChoices, 4, nullptr},
-    {"display.dithering", "Display", "Dithering",
-     "The console's dither pattern. Off shows true colour; Fine dithers at the internal resolution.",
-     RECOMP_RUNTIME_UI_CHOICE, 0, 2, 1, kDitherChoices, 3, nullptr},
-    {"display.vsync", "Display", "Vsync",
-     "Wait for the display: no tearing. Off lowers latency. Applies with a quick restart.",
-     RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, nullptr, 0, nullptr},
 };
-constexpr size_t kBaseExtras = 3;
-constexpr size_t kSessionExtras = 5;
-
-#if defined(PSX_MENU_HOST_HAS_SESSION)
-bool has_session() { return g_host && g_host->session_get && g_host->session_set && g_host->session_enabled; }
-int session_of(const RecompRuntimeUiItem *item) {
-    if (!item || !item->key) return 0;
-    if (!std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_WINDOW_SCALE)) return PSX_MENU_SESSION_WINDOW_SCALE;
-    if (!std::strcmp(item->key, RECOMP_RUNTIME_UI_KEY_VOLUME)) return PSX_MENU_SESSION_VOLUME;
-    if (!std::strcmp(item->key, "input.controller_port")) return PSX_MENU_SESSION_CONTROLLER_PORT;
-    if (!std::strcmp(item->key, "media.reinsert")) return PSX_MENU_SESSION_REINSERT_DISC;
-#if defined(PSX_MENU_HOST_HAS_LOOK_ROWS)
-    static const struct { const char *key; int setting; } kLook[] = {
-        {"system.restart_game", PSX_MENU_SESSION_RESTART_GAME},
-        {"graphics.internal_resolution", PSX_MENU_SESSION_INTERNAL_RESOLUTION},
-        {"graphics.pgxp", PSX_MENU_SESSION_PGXP},
-        {"graphics.antialiasing", PSX_MENU_SESSION_ANTIALIASING},
-        {"graphics.crt_filter", PSX_MENU_SESSION_CRT_FILTER},
-        {"display.scanlines", PSX_MENU_SESSION_SCANLINES},
-        {"display.smoothing", PSX_MENU_SESSION_SMOOTHING},
-        {"display.texture_filtering", PSX_MENU_SESSION_TEXTURE_FILTERING},
-        {"display.dithering", PSX_MENU_SESSION_DITHERING},
-        {"display.vsync", PSX_MENU_SESSION_VSYNC},
-    };
-    for (const auto &l : kLook)
-        if (!std::strcmp(item->key, l.key)) return l.setting;
-#endif
-    return 0;
-}
-#else
-bool has_session() { return false; }
-int session_of(const RecompRuntimeUiItem *) { return 0; }
-#endif
 
 // Session rows: only when the runtime offers them (PsxMenuHost session_*).
 const char *const kPortChoices[] = {"Port 1", "Port 2"};
@@ -210,6 +140,7 @@ int session_of(const RecompRuntimeUiItem *item) {
 }
 #else
 bool has_session() { return false; }
+int session_of(const RecompRuntimeUiItem *) { return 0; }
 #endif
 
 bool is(const RecompRuntimeUiItem *item, const char *key) { return item && item->key && !std::strcmp(item->key, key); }
