@@ -386,22 +386,38 @@ if(BUILD_TESTING)
         COMMAND $<TARGET_FILE:recomp-ui-psx-binds-test>
                 "${CMAKE_CURRENT_BINARY_DIR}/psx-binds-test.ini")
 
+    # Link the same real binding/model sources as the host-bindings fixture.
+    add_executable(recomp-ui-hotkey-store-test tests/launcher_hotkey_store_test.c
+        src/common/launcher_model.c
+        src/common/keybinds.c
+        src/common/pad_binds.c
+        src/consoles/nes/nes_binds.c
+        src/consoles/psx/psx_binds.c
+        src/consoles/psx/psx_kb_profiles.c
+        src/consoles/psx/psx_pad_binds.c
+        src/consoles/snes/snes_pad_binds.c
+        src/consoles/n64/n64_binds.c
+        src/consoles/n64/n64_pad_binds.c
+        src/consoles/genesis/genesis_binds.c
+        src/consoles/gb/gb_binds.c
+        src/consoles/psx/memcard_format.c
+        src/common/crc32.c
+        src/common/sha1.c
+        src/common/sha256.c
+        src/common/ips_patch.c)
+    target_include_directories(recomp-ui-hotkey-store-test PRIVATE src src/common src/consoles/psx)
+    target_compile_definitions(recomp-ui-hotkey-store-test PRIVATE ${RUI_SDL_DEFS})
     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-        add_executable(recomp-ui-hotkey-store-test tests/launcher_hotkey_store_test.c)
-        target_include_directories(recomp-ui-hotkey-store-test PRIVATE src src/common)
-        target_compile_definitions(recomp-ui-hotkey-store-test PRIVATE ${RUI_SDL_DEFS})
-        target_compile_options(recomp-ui-hotkey-store-test PRIVATE
-            -UNDEBUG -ffunction-sections -fdata-sections)
-        if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
-            target_compile_options(recomp-ui-hotkey-store-test PRIVATE -flto)
-            target_link_options(recomp-ui-hotkey-store-test PRIVATE -flto)
-        endif()
-        target_link_libraries(recomp-ui-hotkey-store-test PRIVATE ${RUI_SDL_TARGET})
-        target_link_options(recomp-ui-hotkey-store-test PRIVATE
-            $<IF:$<PLATFORM_ID:Darwin>,-Wl$<COMMA>-dead_strip,-Wl$<COMMA>--gc-sections>)
-        add_test(NAME recomp-ui-hotkey-store COMMAND recomp-ui-hotkey-store-test
-            "${CMAKE_CURRENT_BINARY_DIR}/hotkey-store-test.ini")
+        target_compile_options(recomp-ui-hotkey-store-test PRIVATE -UNDEBUG)
     endif()
+    target_link_libraries(recomp-ui-hotkey-store-test PRIVATE ${RUI_SDL_TARGET})
+    if(RECOMP_UI_PSXRECOMP_ROOT AND EXISTS "${RECOMP_UI_PSXRECOMP_ROOT}/runtime/include/host_menu_shortcut.h")
+        target_sources(recomp-ui-hotkey-store-test PRIVATE "${RECOMP_UI_PSXRECOMP_ROOT}/runtime/src/host_keymap.c")
+        target_include_directories(recomp-ui-hotkey-store-test PRIVATE "${RECOMP_UI_PSXRECOMP_ROOT}/runtime/include")
+        target_compile_definitions(recomp-ui-hotkey-store-test PRIVATE RUI_TEST_PSX_HOST_KEYMAP=1 PSX_SDL3=1 PSX_HAS_RBENGINE_SNAP=1)
+    endif()
+    add_test(NAME recomp-ui-hotkey-store COMMAND recomp-ui-hotkey-store-test
+        "${CMAKE_CURRENT_BINARY_DIR}/hotkey-store-test.ini")
 
     # Named keyboard profiles: save as, load, rename, delete, the list, and
     # the built-in Default that none of them may change. Its folder is a
