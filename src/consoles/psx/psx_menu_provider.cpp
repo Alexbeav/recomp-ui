@@ -290,7 +290,8 @@ int cb_enabled(void *, const RecompRuntimeUiItem *item) {
     if (is(item, "graphics.render_thread")) return g_video.renderer == 1;
     if (is(item, "graphics.present_thread")) return g_video.renderer == 1 && g_video.render_thread;
     if (is(item, "graphics.vsync")) return !g_vsync_overridden;
-    if (item && item->key && !std::strncmp(item->key, "media.", 6)) return disc_count() > 1 && !netplay();
+    if (is(item, "media.insert")) return disc_count() > 0 && !netplay() && g_host && g_host->disc_insert;
+    if (is(item, "media.disc")) return disc_count() > 0 && !netplay();
     return 1;
 }
 
@@ -373,8 +374,8 @@ int p_attach(void *, void *window, void *, const PsxMenuHost *host) {
         cfg.features |= RECOMP_RUNTIME_UI_STANDARD_WINDOW_SCALE | RECOMP_RUNTIME_UI_STANDARD_VOLUME;
     cfg.window_scale_max = 4;
     size_t n = 0;
-    const size_t base = discs > 1 ? INSERT + 1 : DISC;
-    for (size_t i = 0; i < base; ++i) g_items[n++] = g_extra[i];
+    // Every title has a Disc page, one-disc titles too (pin I).
+    for (size_t i = 0; i <= INSERT; ++i) g_items[n++] = g_extra[i];
     if (session) {
         if (discs > 0) g_items[n++] = g_session_rows[REINSERT];
         g_items[n++] = g_session_rows[CONTROLLER_PORT];
