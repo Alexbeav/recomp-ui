@@ -2819,8 +2819,13 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
             launcher_model_disc_note(m, note_buf, sizeof(note_buf), &wrong_disc);
             if (wrong_disc) reserve += px(48.0f);
         }
-        // Disc Selection label + combo + spacing, for a multi-image title.
-        if (launcher_model_disc_count(m) > 1) reserve += px(62.0f);
+        // Disc Selection label + combo + spacing, for a multi-image title
+        // (more for the inset of the tabbed dashboard). The reserve must not
+        // be less than what is drawn: the card hugs its content, so a short
+        // reserve makes the art grow a little every frame.
+        const bool disc_inset = disc_verdict && launcher_model_dashboard_tabbed(m) &&
+                                launcher_model_disc_count(m) > 1;
+        if (launcher_model_disc_count(m) > 1) reserve += px(disc_inset ? 92.0f : 62.0f);
         if (m->saves_supported) reserve += px(96.0f);    // compact SAVES row below Change ROM
         if (m->password_save_path || m->password_sram_path)
             reserve += px(96.0f);                      // password-save row (same footprint)
