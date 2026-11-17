@@ -224,7 +224,8 @@ static const char* kHotkeyKey[] = {
     "WindowBigger", "WindowSmaller", "VolumeUp", "VolumeDown",
     "DisplayPerf", "ToggleRenderer",
     "SolarBrighter", "SolarDimmer", "SolarLive",
-    "Rewind", "SaveStateMenu", "OpenLauncher", "TurboToggle", "QuickSave", "QuickLoad"
+    "Rewind", "SaveStateMenu", "OpenLauncher", "TurboToggle", "QuickSave", "QuickLoad",
+    "Scanlines", "ReplayRecord", "AnalogMode", "RuntimeMenu", "SwapControllerPorts", "MouseCapture", "CaptureMark"
 };
 // Built-in defaults (shown when config.ini has no line; "" = unbound).
 static const char* kHotkeyDef[] = {
@@ -233,7 +234,8 @@ static const char* kHotkeyDef[] = {
      * (psxrecomp host_keymap reads these from [KeyMap]). */
     "", "", "Keypad +", "Keypad -", "F", "R",
     "", "", "",
-    "F8", "F7", "Ctrl+L", "F9", "F5", "Shift+F5"
+    "F8", "F7", "Ctrl+L", "F9", "F5", "Shift+F5",
+    "F6", "F12", "F3", "F1", "Ctrl+F6", "Ctrl+F10", "Ctrl+M"
 };
 /* Sized by their initializers, so a hotkey added to LngHotkey without a key
  * and a default here fails the build instead of reading a NULL. */
@@ -430,7 +432,7 @@ static const char* hotkey_default(const LauncherModel* m, int h) {
 // Fill m->hotkeys[] from config.ini [KeyMap] (or defaults where absent).
 static void reload_hotkey_display(LauncherModel* m) {
     for (int h = 0; h < LNG_HK_COUNT; ++h)
-        copy_str(m->hotkeys[h], sizeof(m->hotkeys[h]), kHotkeyDef[h]);
+        copy_str(m->hotkeys[h], sizeof(m->hotkeys[h]), hotkey_default(m,h));
     static const char* const psx_keys[] = {"Rewind", "SaveStateMenu", "Turbo", "TurboToggle"};
     static const SDL_Scancode psx_defaults[] = {SDL_SCANCODE_F8, SDL_SCANCODE_F7, SDL_SCANCODE_TAB, SDL_SCANCODE_F9};
     if (is_psx_profile(m))

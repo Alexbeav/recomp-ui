@@ -61,7 +61,9 @@ static const char* kHotkeyNames[] = {
     "FPS readout", "Toggle renderer",
     "Solar level up", "Solar level down", "Resume live solar",
     "Rewind", "Save states menu", "Open launcher", "Fast-forward toggle",
-    "Quick save", "Quick load"
+    "Quick save", "Quick load",
+    "Toggle scanlines", "Record replay", "Analog button",
+    "Runtime menu", "Swap controller ports", "Capture mouse", "Diagnostic capture mark"
 };
 typedef char kHotkeyNames_covers_every_hotkey[
     (sizeof(kHotkeyNames) / sizeof(kHotkeyNames[0]) == LNG_HK_COUNT) ? 1 : -1];
