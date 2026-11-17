@@ -177,6 +177,12 @@ if(BUILD_TESTING)
     add_executable(recomp-ui-directory-url-test tests/launcher_directory_url_test.cpp)
     target_include_directories(recomp-ui-directory-url-test PRIVATE src/common)
     add_test(NAME recomp-ui-directory-url COMMAND $<TARGET_FILE:recomp-ui-directory-url-test>)
+    add_executable(recomp-ui-launcher-module-contract-test
+        tests/launcher_module_contract_test.c
+        tests/launcher_module_contract_cpp.cpp
+        src/common/launcher_module_contract.c)
+    target_include_directories(recomp-ui-launcher-module-contract-test PRIVATE src src/common)
+    add_test(NAME recomp-ui-launcher-module-contract COMMAND $<TARGET_FILE:recomp-ui-launcher-module-contract-test>)
     add_executable(recomp-ui-mod-import-test
         tests/launcher_mod_import_test.c
         src/common/crc32.c src/common/sha1.c src/common/sha256.c
@@ -400,6 +406,19 @@ if(BUILD_TESTING)
         NAME recomp-ui-psx-binds
         COMMAND $<TARGET_FILE:recomp-ui-psx-binds-test>
                 "${CMAKE_CURRENT_BINARY_DIR}/psx-binds-test.ini")
+
+    # PS1B-305: a rebind keeps the runtime's [guncon] and other sections.
+    add_executable(recomp-ui-psx-binds-sections-test
+        tests/psx_binds_sections_test.c
+        src/consoles/psx/psx_binds.c)
+    target_include_directories(recomp-ui-psx-binds-sections-test PRIVATE
+        src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-psx-binds-sections-test PRIVATE ${RUI_SDL_TARGET})
+    target_compile_definitions(recomp-ui-psx-binds-sections-test PRIVATE ${RUI_SDL_DEFS})
+    add_test(
+        NAME recomp-ui-psx-binds-sections
+        COMMAND $<TARGET_FILE:recomp-ui-psx-binds-sections-test>
+                "${CMAKE_CURRENT_BINARY_DIR}/psx-binds-sections-test.ini")
 
     # Link the same real binding/model sources as the host-bindings fixture.
     add_executable(recomp-ui-hotkey-store-test tests/launcher_hotkey_store_test.c
@@ -770,6 +789,71 @@ if(BUILD_TESTING)
     target_link_libraries(recomp-ui-launcher-player-tabs-test PRIVATE ${RUI_SDL_TARGET})
     target_compile_definitions(recomp-ui-launcher-player-tabs-test PRIVATE ${RUI_SDL_DEFS})
     add_test(NAME recomp-ui-launcher-player-tabs COMMAND recomp-ui-launcher-player-tabs-test)
+
+    # The cover button's model side: serial and address, the check of what
+    # came back, the replace rule and the worker job, with fake fetchers. No
+    # network.
+    add_executable(recomp-ui-launcher-cover-test
+        tests/launcher_cover_test.c
+        src/common/launcher_cover.c)
+    target_include_directories(recomp-ui-launcher-cover-test PRIVATE src src/common)
+    if(UNIX)
+        find_package(Threads REQUIRED)
+        target_link_libraries(recomp-ui-launcher-cover-test PRIVATE Threads::Threads)
+    endif()
+    add_test(
+        NAME recomp-ui-launcher-cover
+        COMMAND $<TARGET_FILE:recomp-ui-launcher-cover-test>
+                ${CMAKE_CURRENT_BINARY_DIR})
+
+    # The desktop icon file: the square picture, the .ico and the .png as
+    # written, and the save icon read from a memory-card image the test
+    # builds itself.
+    add_executable(recomp-ui-launcher-icon-test
+        tests/launcher_icon_test.c
+        src/common/launcher_icon.c
+        src/common/crc32.c)
+    target_include_directories(recomp-ui-launcher-icon-test PRIVATE src src/common)
+    add_test(
+        NAME recomp-ui-launcher-icon
+        COMMAND $<TARGET_FILE:recomp-ui-launcher-icon-test>
+                ${CMAKE_CURRENT_BINARY_DIR})
+
+    # "Start from" on the dashboard: the list the model holds, the choice,
+    # what it does to Record replay and to the disc to boot, and what PLAY
+    # hands to the host. Same shape.
+    add_executable(recomp-ui-launcher-start-from-test
+        tests/launcher_start_from_test.c src/common/crc32.c src/common/sha1.c
+        src/common/sha256.c src/common/ips_patch.c src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-launcher-start-from-test PRIVATE src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-launcher-start-from-test PRIVATE ${RUI_SDL_TARGET})
+    target_compile_definitions(recomp-ui-launcher-start-from-test PRIVATE ${RUI_SDL_DEFS})
+    add_test(NAME recomp-ui-launcher-start-from COMMAND recomp-ui-launcher-start-from-test)
+
+    # The PlayStation lister of "Start from": the save states and replays it
+    # finds in a product folder the test builds itself, their build marks,
+    # and the start-up variables that carry the choice to the host.
+    add_executable(recomp-ui-psx-start-from-test
+        tests/psx_start_from_test.cpp src/consoles/psx/psx_start_from.cpp
+        src/common/launcher_model.c src/common/crc32.c src/common/sha1.c
+        src/common/sha256.c src/common/ips_patch.c src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-psx-start-from-test PRIVATE src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-psx-start-from-test PRIVATE ${RUI_SDL_TARGET})
+    target_compile_definitions(recomp-ui-psx-start-from-test PRIVATE ${RUI_SDL_DEFS})
+    add_test(
+        NAME recomp-ui-psx-start-from
+        COMMAND $<TARGET_FILE:recomp-ui-psx-start-from-test>
+                ${CMAKE_CURRENT_BINARY_DIR})
+
+    # The "Record replay" footer checkbox: gated on the host's
+    # has_record_replay, handed back on PLAY, kept by Restore Defaults.
+    add_executable(recomp-ui-launcher-record-replay-test
+        tests/launcher_record_replay_test.c src/common/crc32.c src/common/sha1.c
+        src/common/sha256.c src/common/ips_patch.c src/consoles/psx/memcard_format.c)
+    target_include_directories(recomp-ui-launcher-record-replay-test PRIVATE src src/common src/consoles/psx)
+    target_link_libraries(recomp-ui-launcher-record-replay-test PRIVATE ${RUI_SDL_TARGET})
+    target_compile_definitions(recomp-ui-launcher-record-replay-test PRIVATE ${RUI_SDL_DEFS})
+    add_test(NAME recomp-ui-launcher-record-replay COMMAND recomp-ui-launcher-record-replay-test)
 
     # Memory-card slot facts the Save panel paints: block-usage source order
     # (real inspect beats placeholder; a wired inspector never shows a made-up
