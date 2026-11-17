@@ -440,41 +440,130 @@ static void psx_vsync_row(LauncherModel* m, const LauncherTheme& th) {
             "Adaptive: vsync while the game keeps up, immediate when it drops.\n"
             "VRR: hand pacing to a variable-refresh display."));
 }
+static void psx_renderer_row(LauncherModel* m, const LauncherTheme& th) {
+    if (!launcher_model_renderer_offered(m)) return;
+    float widest=0.0f;
+    for (int i=0;i<launcher_model_renderer_count(m);++i) {
+        const char* lbl=launcher_model_renderer_label_at(m,i);
+        const float wtext=lbl?ImGui::CalcTextSize(ui_text(lbl)).x:0.0f;
+        if (wtext>widest) widest=wtext;
+    }
+    const float rw=settings_fit_w("Renderer",th,widest,true);
+    row_label_right("Renderer",th,rw);
+    ImGui::SetNextItemWidth(rw);
+    if (ImGui::BeginCombo("##renderer",ui_text(launcher_model_renderer_label(m)))) {
+        const int n=launcher_model_renderer_count(m);
+        for (int i=0;i<n;++i) {
+            const char* lbl=launcher_model_renderer_label_at(m,i);
+            if (!lbl||!lbl[0]) continue;
+            if (ImGui::Selectable(ui_text(lbl),m->s.renderer==i))
+                launcher_model_set_renderer(m,i);
+        }
+        ImGui::EndCombo();
+    }
+    const char* note=launcher_model_renderer_note(m);
+    if (note&&*note) ImGui::TextColored(col(th.text_muted),"%s",ui_text(note));
+}
+/* The fixed scale that a height preset asks of a 240-line title
+ * (psxrecomp internal_resolution.h: S = ceil(target_lines / 240)) carries the
+ * preset's name, so the list is one ladder of scales instead of two lists. */
+static const char* psx_ir_height_name(const char* value) {
+    static const struct { const char *scale, *name; } kHeights[] = {
+        {"3x","720p"}, {"5x","1080p"}, {"6x","1440p"}, {"9x","4K"}, {"12x","5K"}, {"18x","8K"},
+    };
+    for (const auto& h:kHeights) if (!strcmp(value,h.scale)) return h.name;
+    return nullptr;
+}
+/* The height presets themselves stay valid saved values; they are listed only
+ * while one of them is the saved choice, so that choice still reads as itself. */
+static bool psx_ir_height_preset(const char* value) {
+    for (const char* v:{"native","720p","1080p","1440p","4k","5k","8k"})
+        if (!strcmp(value,v)) return true;
+    return false;
+}
+static void psx_ir_choice_text(const RecompLauncherCModChoice& c, char* out, size_t size) {
+    const char* text=c.label[0]?c.label:c.value;
+    if (const char* name=psx_ir_height_name(c.value)) std::snprintf(out,size,"%s (%s)",text,name);
+    else std::snprintf(out,size,"%s",text);
+}
+/* The runtime reads a switched-off Internal Resolution feature as Native.
+ * With no switch on the page, a profile that left it off is moved to the same
+ * picture, 1x, and switched on, so its other rows are not left greyed. */
+static void psx_ir_switch_on(LauncherModel* m, RecompLauncherCModFeature& f) {
+    const auto* p=m->mods;
+    if (f.enabled || !p || !p->feature_set_option || !launcher_model_can_open_mods(m)) return;
+    if (!p->feature_set_option(p->ctx,f.package_id,f.id,"resolution","1x")) { mod_note_error(m); return; }
+    change_mod_feature(m,f,true);
+    f.enabled=1;
+}
+/* Internal resolution as one dropdown, with no Enabled switch: Game default
+ * and 1x already say "no scaling", and every other choice is the switch on. */
+static void psx_internal_resolution_row(LauncherModel* m, const LauncherTheme& th) {
+    static const char kPackage[]="psx.enhancement.internal-resolution";
+    const auto* p=m->mods; RecompLauncherCModFeature f{};
+    if (!p || !p->feature_option_get || !psx_package_feature(m,kPackage,f)) return;
+    const bool can_edit=launcher_model_can_open_mods(m);
+    psx_ir_switch_on(m,f);
+    for (int i=0;i<f.option_count;++i) {
+        RecompLauncherCModOption o{};
+        if (!p->feature_option_get(p->ctx,f.package_id,f.id,i,&o) || strcmp(o.id,"resolution")) continue;
+        if (o.type!=RECOMP_MOD_OPTION_CHOICE || !p->feature_choice_get || o.choice_count<=0) {
+            psx_package_option_row(m,th,kPackage,"resolution","Internal resolution");
+            return;
+        }
+        char preview[160]; std::snprintf(preview,sizeof preview,"%s",o.value);
+        float widest=0.0f;
+        for (int c=0;c<o.choice_count;++c) {
+            RecompLauncherCModChoice choice{};
+            if (!p->feature_choice_get(p->ctx,f.package_id,f.id,o.id,c,&choice)) continue;
+            char text[160]; psx_ir_choice_text(choice,text,sizeof text);
+            const float wtext=ImGui::CalcTextSize(ui_text(text)).x;
+            if (wtext>widest) widest=wtext;
+            if (!strcmp(choice.value,o.value)) std::snprintf(preview,sizeof preview,"%s",text);
+        }
+        const bool inert=o.disabled!=0 || !can_edit;
+        if (inert) ImGui::BeginDisabled();
+        const float w=settings_fit_w("Internal resolution",th,widest,true);
+        row_label_right("Internal resolution",th,w);
+        ImGui::SetNextItemWidth(w);
+        ImGui::PushID("psx_internal_resolution");
+        if (ImGui::BeginCombo("##choice",ui_text(preview))) {
+            for (int c=0;c<o.choice_count;++c) {
+                RecompLauncherCModChoice choice{};
+                if (!p->feature_choice_get(p->ctx,f.package_id,f.id,o.id,c,&choice)) continue;
+                const bool selected=!strcmp(choice.value,o.value);
+                if (psx_ir_height_preset(choice.value) && !selected) continue;
+                char text[160]; psx_ir_choice_text(choice,text,sizeof text);
+                if (ImGui::Selectable(ui_text(text),selected) && !inert && !selected)
+                    if (!p->feature_set_option(p->ctx,f.package_id,f.id,o.id,choice.value))
+                        mod_note_error(m);
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::PopID();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal|ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s",ui_text(
+                "The scale the 3D picture is drawn at before it is fitted to the screen.\n"
+                "Game default and 1x draw at the PlayStation's own resolution.\n"
+                "The names in brackets are the screen height each scale reaches for a 240-line game.\n"
+                "Hardware and memory limits may lower the scale."));
+        if (inert) ImGui::EndDisabled();
+        return;
+    }
+}
 /* Display tab, first column: the rows that decide how the picture reaches the
  * screen, in the order a player meets them. Everything else is Advanced. */
 static void psx_display_card(LauncherModel* m,const LauncherTheme& th) {
     if (begin_panel("Display")) {
         eyebrow("DISPLAY");
+        psx_renderer_row(m,th);
         psx_display_mode_row(m,th);
         draw_aspect_row(m,th);
         psx_window_size_row(m,th);
-        psx_package_option_row(m,th,"psx.enhancement.internal-resolution","resolution",
-                               "Internal resolution");
+        psx_internal_resolution_row(m,th);
         psx_vsync_row(m,th);
         if (ImGui::CollapsingHeader(ui_text("Advanced"))) {
-            if (launcher_model_renderer_offered(m)) {
-                float widest=0.0f;
-                for (int i=0;i<launcher_model_renderer_count(m);++i) {
-                    const char* lbl=launcher_model_renderer_label_at(m,i);
-                    const float wtext=lbl?ImGui::CalcTextSize(ui_text(lbl)).x:0.0f;
-                    if (wtext>widest) widest=wtext;
-                }
-                const float rw=settings_fit_w("Renderer",th,widest,true);
-                row_label_right("Renderer",th,rw);
-                ImGui::SetNextItemWidth(rw);
-                if (ImGui::BeginCombo("##renderer",ui_text(launcher_model_renderer_label(m)))) {
-                    const int n=launcher_model_renderer_count(m);
-                    for (int i=0;i<n;++i) {
-                        const char* lbl=launcher_model_renderer_label_at(m,i);
-                        if (!lbl||!lbl[0]) continue;
-                        if (ImGui::Selectable(ui_text(lbl),m->s.renderer==i))
-                            launcher_model_set_renderer(m,i);
-                    }
-                    ImGui::EndCombo();
-                }
-                const char* note=launcher_model_renderer_note(m);
-                if (note&&*note) ImGui::TextColored(col(th.text_muted),"%s",ui_text(note));
-            }
             if (m->has_frame_interp && m->s.renderer) {
                 row_label_right("Frame interpolation",th,ImGui::GetFrameHeight());
                 bool fi=m->s.frame_interp!=0;
@@ -496,7 +585,26 @@ static void psx_display_card(LauncherModel* m,const LauncherTheme& th) {
     }
     end_panel();
 }
+/* Dynamic resolution and its two companions, the internal-resolution package's
+ * other options, in their own card above PGXP. */
+static void psx_dynamic_resolution_card(LauncherModel* m,const LauncherTheme& th) {
+    static const char kPackage[]="psx.enhancement.internal-resolution";
+    RecompLauncherCModFeature f{};
+    if (!m->mods || !psx_package_feature(m,kPackage,f)) return;
+    psx_ir_switch_on(m,f);
+    if (begin_panel("Dynamic resolution")) {
+        eyebrow("DYNAMIC RESOLUTION");
+        ImGui::BeginDisabled(!launcher_model_can_open_mods(m));
+        psx_package_option_row(m,th,kPackage,"dynamic_resolution","Dynamic resolution");
+        psx_package_option_row(m,th,kPackage,"minimum","Lowest resolution");
+        psx_package_option_row(m,th,kPackage,"supersample","Supersample factor");
+        ImGui::EndDisabled();
+    }
+    end_panel();
+    ImGui::Dummy(ImVec2(0,px(th.spacing_md)));
+}
 static void psx_pgxp_card(LauncherModel* m,const LauncherTheme& th) {
+    psx_dynamic_resolution_card(m,th);
     if (begin_panel("PGXP")) {
         eyebrow("PGXP");
         psx_runtime_rows(m,"display","Display",false);

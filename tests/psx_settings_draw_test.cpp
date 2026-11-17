@@ -40,12 +40,28 @@ static int feature(void*,int index,RecompLauncherCModFeature* out) {
     } else {
         std::snprintf(out->package_id,sizeof out->package_id,"%s",packages[index-2]);
         std::snprintf(out->id,sizeof out->id,"feature");
-        std::snprintf(out->name,sizeof out->name,"%s",packages[index-2]);out->option_count=1;
+        std::snprintf(out->name,sizeof out->name,"%s",packages[index-2]);
+        out->option_count=strcmp(packages[index-2],"psx.enhancement.internal-resolution")?1:4;
     }
     return 1;
 }
 static int option(void*,const char* package,const char* group,int index,RecompLauncherCModOption* out) {
     *out={};out->type=RECOMP_MOD_OPTION_TEXT;
+    if(!strcmp(package,"psx.enhancement.internal-resolution")) {
+        // The package's real options, so the Display card's dropdown and the
+        // Dynamic resolution card draw what a player sees.
+        static const char* ids[]={"resolution","dynamic_resolution","minimum","supersample"};
+        static const char* labels[]={"Internal resolution","Dynamic resolution","Lowest resolution","Supersample factor"};
+        static const char* values[]={"9x","default","default","default"};
+        if(index<0 || index>3)return 0;
+        visited_packages.insert(package);
+        std::snprintf(out->id,sizeof out->id,"%s",ids[index]);
+        std::snprintf(out->label,sizeof out->label,"%s",labels[index]);
+        std::snprintf(out->value,sizeof out->value,"%s",values[index]);
+        out->type=index==3?RECOMP_MOD_OPTION_TEXT:RECOMP_MOD_OPTION_CHOICE;
+        out->choice_count=index==0?10:index==3?0:3;
+        return 1;
+    }
     if(strcmp(package,"psx.runtime.settings")) {
         if(index)return 0;
         visited_packages.insert(package);
@@ -68,6 +84,19 @@ static int option(void*,const char* package,const char* group,int index,RecompLa
     std::snprintf(out->id,sizeof out->id,"%s",id.c_str());
     std::snprintf(out->value,sizeof out->value,"saved-value");
     (!strcmp(page,"General")?visited_general:visited_display).insert(id);
+    return 1;
+}
+static int choice(void*,const char*,const char*,const char* option,int index,RecompLauncherCModChoice* out) {
+    *out={};
+    static const char* resolution[][2]={{"default","Game default"},{"1x","1x (Native)"},{"3x","3x"},{"4x","4x"},
+        {"5x","5x"},{"9x","9x"},{"10x","10x"},{"720p","720p"},{"4k","4K"},{"auto","Auto"}};
+    static const char* dynamic[][2]={{"default","Follow resolution choice"},{"on","On"},{"off","Off"}};
+    static const char* minimum[][2]={{"default","Game default"},{"native","Native"},{"720p","720p"}};
+    const char* const (*list)[2]=!strcmp(option,"resolution")?resolution:!strcmp(option,"dynamic_resolution")?dynamic:minimum;
+    const int count=!strcmp(option,"resolution")?10:3;
+    if(index<0 || index>=count)return 0;
+    std::snprintf(out->value,sizeof out->value,"%s",list[index][0]);
+    std::snprintf(out->label,sizeof out->label,"%s",list[index][1]);
     return 1;
 }
 static int enable(void*,const char*,const char*,int){return 1;}
@@ -230,12 +259,15 @@ static void render_config_matrix(LauncherModel& model,const LauncherTheme& theme
 int main() {
     RecompLauncherCModProvider provider{};
     provider.feature_count=features;provider.feature_get=feature;provider.feature_option_get=option;
-    provider.feature_enable=enable;provider.feature_set_option=set;
+    provider.feature_enable=enable;provider.feature_set_option=set;provider.feature_choice_get=choice;
     RecompLauncherCGameInfo game{};launcher_profile_apply("psx",&game);
     game.name="settings fixture";game.mods=&provider;game.has_bios=1;
     game.has_frame_interp=1;game.aspect_mask=7;game.has_render_pipeline=1;
     game.frame_generation_hidden=0; // The paired runtime offers this supported control.
     game.num_players=2;
+    static const char* const kRenderers[]={"Software","OpenGL (Recommended)"};
+    game.has_renderer=1;game.renderer_labels=kRenderers;game.num_renderers=2;
+    game.has_window_size=1;game.has_vsync=1;
     // Host shortcuts: the Configure page's right column needs them to exist.
     static const char* const kAssist[]={"Rewind","Fast forward","Quick save"};
     game.settings_bindings=1;game.assist_binding_labels=kAssist;game.assist_binding_count=3;
@@ -303,6 +335,41 @@ int main() {
         if (dlog.find(label)==std::string::npos)
             std::fprintf(stderr,"Missing display label: %s\nActual log:\n%s\n",label,dlog.c_str());
         assert(dlog.find(label)!=std::string::npos);
+    }
+    // Display sub-tab: Renderer leads the card, Internal resolution is one
+    // dropdown whose 9x reads as 4K, and the package has no Enabled row.
+    ImGui::NewFrame();ImGui::Begin("display-card-log");ImGui::LogToBuffer();
+    psx_display_card(&model,theme);
+    const std::string clog=ImGui::GetCurrentContext()->LogBuffer.c_str();ImGui::LogFinish();ImGui::End();ImGui::Render();
+    {
+        const size_t order[]={clog.find("Renderer"),clog.find("Display Mode"),clog.find("Aspect ratio"),
+                              clog.find("Window size"),clog.find("Internal resolution"),clog.find("VSync")};
+        for(size_t i=0;i<sizeof order/sizeof order[0];++i){
+            if(order[i]==std::string::npos)std::fprintf(stderr,"Display card row %zu missing:\n%s\n",i,clog.c_str());
+            assert(order[i]!=std::string::npos);
+            if(i)assert(order[i-1]<order[i]);
+        }
+        assert(clog.find("9x (4K)")!=std::string::npos);
+        assert(clog.find("Enabled")==std::string::npos);
+        assert(clog.find("Dynamic resolution")==std::string::npos);
+        char text[160];RecompLauncherCModChoice c{};
+        std::snprintf(c.value,sizeof c.value,"5x");std::snprintf(c.label,sizeof c.label,"5x");
+        psx_ir_choice_text(c,text,sizeof text);assert(!strcmp(text,"5x (1080p)"));
+        std::snprintf(c.value,sizeof c.value,"4x");std::snprintf(c.label,sizeof c.label,"4x");
+        psx_ir_choice_text(c,text,sizeof text);assert(!strcmp(text,"4x"));
+        assert(psx_ir_height_preset("4k") && !psx_ir_height_preset("9x"));
+    }
+    // PGXP sub-tab: the Dynamic resolution card sits above PGXP.
+    ImGui::NewFrame();ImGui::Begin("pgxp-card-log");ImGui::LogToBuffer();
+    psx_pgxp_card(&model,theme);
+    const std::string plog=ImGui::GetCurrentContext()->LogBuffer.c_str();ImGui::LogFinish();ImGui::End();ImGui::Render();
+    // Card eyebrows are painted, not logged: the rows prove the card and its order.
+    {
+        const size_t dyn=plog.find("Dynamic resolution"),low=plog.find("Lowest resolution"),
+                     ss=plog.find("Supersample factor"),adv=plog.find("PGXP tolerance");
+        if(dyn==std::string::npos || adv==std::string::npos)std::fprintf(stderr,"PGXP tab log:\n%s\n",plog.c_str());
+        assert(dyn!=std::string::npos && low!=std::string::npos && ss!=std::string::npos && adv!=std::string::npos);
+        assert(dyn<low && low<ss && ss<adv); // above the PGXP card's rows
     }
     for(const char* package:packages)assert(launcher_settings_group(package));
     assert(!launcher_settings_group("third.party.game-plugin"));
