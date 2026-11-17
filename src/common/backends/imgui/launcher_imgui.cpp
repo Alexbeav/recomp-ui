@@ -2017,8 +2017,7 @@ void row_label(const char* text, const LauncherTheme& th, float col_w = 0.0f) {
  * long to leave room keeps a minimum gap and lets its control run wide rather
  * than colliding with the text.
  */
-static bool g_psx_compact_settings=false;
-static void draw_psx_picture_controls(LauncherModel* m);
+static bool g_psx_compact_settings = false;
 static float settings_label_width() {
     return std::min(px(190), ImGui::GetContentRegionAvail().x * 0.48f);
 }
@@ -5347,7 +5346,6 @@ void draw_render_pipeline_controls(LauncherModel* m, const LauncherTheme& th) {
 
 void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
     eyebrow("DISPLAY");
-    if (g_psx_compact_settings) draw_psx_picture_controls(m);
 
     if (!any_deep_display(m)) {
         // ---- legacy minimal surface (SNES/NES etc.) ---------------------------
@@ -6563,7 +6561,6 @@ void panel_hotkeys_draw(LauncherModel* m, const LauncherTheme* th) {
 // AUDIO in the same right column in composition order; WIDE panels (HOTKEYS)
 // still stack full-width below that — driven by the composition array + the
 // registry's available() gate.
-static void draw_psx_settings_page(LauncherModel* m, const LauncherTheme& th, bool display);
 void draw_settings(LauncherModel* m, const LauncherTheme& th) {
     const auto* settings_profile = (const SystemProfile*)m->profile;
     if (settings_profile && settings_profile->id && !std::strcmp(settings_profile->id, "psx")) {
@@ -6572,11 +6569,17 @@ void draw_settings(LauncherModel* m, const LauncherTheme& th) {
         const bool first=frame!=last_settings_frame+1;
         last_settings_frame=frame;
         if (ImGui::BeginTabBar("Settings tabs")) {
-            if (ImGui::BeginTabItem(ui_text("General"),nullptr,first?ImGuiTabItemFlags_SetSelected:0)) {
-                draw_psx_settings_page(m,th,false);ImGui::EndTabItem();
+            if (ImGui::BeginTabItem(ui_text("General"), nullptr, first ? ImGuiTabItemFlags_SetSelected : 0)) {
+                draw_psx_settings_page(m, th, PSX_SETTINGS_GENERAL);
+                ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem(ui_text("Display"))) {
-                draw_psx_settings_page(m,th,true);ImGui::EndTabItem();
+                draw_psx_settings_page(m, th, PSX_SETTINGS_DISPLAY);
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem(ui_text("Hotkeys"))) {
+                draw_psx_settings_page(m, th, PSX_SETTINGS_HOTKEYS);
+                ImGui::EndTabItem();
             }
             ImGui::EndTabBar();
         }
